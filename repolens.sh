@@ -37,6 +37,7 @@ Options:
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
   --hosted                Spin up project's Docker Compose in isolated network for DAST scanning and testing
   --yes, -y               Skip confirmation prompt (for CI/automation)
+  --max-cost <amount>     Warn if estimated cost exceeds this dollar amount
   -h, --help              Show help
 
 Examples:
@@ -165,6 +166,7 @@ CHANGE_STATEMENT=""
 SOURCE_FILE=""
 HOSTED=false
 AUTO_YES=false
+MAX_COST=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -234,6 +236,11 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)
       AUTO_YES=true
       shift
+      ;;
+    --max-cost)
+      [[ $# -ge 2 ]] || die "Option --max-cost requires a dollar amount."
+      MAX_COST="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -336,6 +343,11 @@ fi
 # --- Validate max-issues ---
 if [[ -n "$MAX_ISSUES" ]]; then
   [[ "$MAX_ISSUES" =~ ^[1-9][0-9]*$ ]] || die "--max-issues must be a positive integer, got: $MAX_ISSUES"
+fi
+
+# --- Validate max-cost ---
+if [[ -n "$MAX_COST" ]]; then
+  [[ "$MAX_COST" =~ ^[0-9]+\.?[0-9]*$ ]] || die "--max-cost must be a numeric value, got: $MAX_COST"
 fi
 
 # --- Derive DONE streak threshold ---
@@ -478,6 +490,18 @@ mark_lens_completed() {
   echo "$1" >> "$completed_lenses_file"
 }
 
+# --- Cost per call lookup ---
+get_cost_per_call() {
+  local agent="$1"
+  case "$agent" in
+    claude)              echo "0.15" ;;
+    codex)               echo "0.10" ;;
+    spark|sparc)         echo "0.20" ;;
+    opencode|opencode/*) echo "0.10" ;;
+    *)                   echo "0.10" ;;
+  esac
+}
+
 # --- Confirmation gate ---
 confirm_run() {
   if $AUTO_YES; then
@@ -488,6 +512,12 @@ confirm_run() {
   if [[ ! -t 0 ]]; then
     die "Running non-interactively without --yes flag. Use --yes to skip confirmation."
   fi
+
+  # Cost estimation
+  local cost_per_call
+  cost_per_call="$(get_cost_per_call "$AGENT")"
+  local est_cost
+  est_cost="$(awk -v n="$TOTAL_LENSES" -v s="$DONE_STREAK_REQUIRED" -v c="$cost_per_call" 'BEGIN { printf "%.2f", n * s * c }')"
 
   echo ""
   echo "=== RepoLens Confirmation ==="
@@ -500,6 +530,18 @@ confirm_run() {
   else
     echo "Max issues:   (unlimited)"
   fi
+  echo "Est. cost:    ~\$${est_cost}  (~\$${cost_per_call}/call x ${TOTAL_LENSES} lenses x ${DONE_STREAK_REQUIRED} iterations)"
+
+  # Threshold warning
+  if [[ -n "$MAX_COST" ]]; then
+    local exceeds
+    exceeds="$(awk -v est="$est_cost" -v max="$MAX_COST" 'BEGIN { print (est > max) ? 1 : 0 }')"
+    if [[ "$exceeds" -eq 1 ]]; then
+      echo ""
+      echo "WARNING: Estimated cost (~\$${est_cost}) exceeds --max-cost threshold (\$${MAX_COST})"
+    fi
+  fi
+
   echo ""
   echo "This will run $TOTAL_LENSES analysis agent(s) against the repository above."
   echo "Each agent may create GitHub issues directly."

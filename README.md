@@ -123,6 +123,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--spec <file>` | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB) |
 | `--max-issues <n>` | Stop after creating *n* total issues |
 | `--hosted` | Spin up Docker Compose for DAST scanning (used with `toolgate` domain) |
+| `--max-cost <amount>` | Warn if estimated cost exceeds this dollar amount (e.g., `--max-cost 10`) |
 | `--yes, -y` | Skip confirmation prompt (for CI/automation) |
 | `-h, --help` | Show help |
 
@@ -169,7 +170,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 
 1. Validates target repo (or server for `deploy` mode), agent CLI, and `gh` auth
 2. Resolves lens list (all, `--domain`, or `--focus`)
-3. Shows confirmation prompt (target repo, mode, lens count) — requires `y` to proceed, or use `--yes` to skip
+3. Shows confirmation prompt (target repo, mode, lens count, estimated cost) — requires `y` to proceed, or use `--yes` to skip. If `--max-cost` is set and the estimate exceeds it, a warning is displayed
 4. Ensures GitHub labels exist (`audit:<domain>/<lens>`)
 5. For each lens:
    - Composes prompt from base template + lens expert focus

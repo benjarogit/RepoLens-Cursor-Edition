@@ -212,6 +212,16 @@ Completed lenses are skipped. The run ID is printed at startup and found in `log
 - **Logs** — `logs/<run-id>/<domain>/<lens>/iteration-N-TIMESTAMP.txt`
 - **Summary** — `logs/<run-id>/summary.json`
 
+## Testing
+
+Run the full test suite:
+
+```bash
+make check
+```
+
+This discovers and runs all `tests/test_*.sh` scripts, reports per-suite results, and exits non-zero if any suite fails.
+
 ## Legal
 
 ### License

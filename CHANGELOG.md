@@ -37,6 +37,7 @@ _This is the first public release. Previous development was private._
 - Apache 2.0 license
 - Contributor Covenant 2.1 Code of Conduct
 - Comprehensive README with CLI reference
+- AUTHORS.md with project credits and contributor listing
 - CONTRIBUTING.md with lens contribution workflow, domain taxonomy, and DCO sign-off guide
 - Test suite with 17 test suites
 - Modular library architecture (`lib/`)

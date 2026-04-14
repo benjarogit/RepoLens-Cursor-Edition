@@ -247,6 +247,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report bugs, suggest features,
 
 Please note that this project is released with a [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to abide by its terms.
 
+## Authors
+
+See [AUTHORS.md](AUTHORS.md) for credits and contributors.
+
 ## Security
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public issue for security vulnerabilities.

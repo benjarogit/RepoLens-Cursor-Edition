@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# Tests for the cost estimation and --max-cost threshold (issue #8)
+# Tests for the cost estimation and --max-cost threshold (issues #8 and #65).
 # Tests are BEHAVIORAL: they execute repolens.sh and assert on exit codes + output,
 # never on source code patterns.
+#
+# Issue #65: The estimator is now token-based and model-aware. These tests pin
+# structural properties (banner label, per-MTok price lines, repo-size scaling,
+# agent-differentiated pricing) rather than specific dollar amounts. Hard-coded
+# dollar assertions were removed because the formula intentionally depends on
+# repo size, pricing table, and iteration-factor — pinning them would ossify
+# the estimator and defeat the honesty fix.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOLENS="$SCRIPT_DIR/repolens.sh"
 
-# Timeout for each script invocation — prevents hangs when the gate
-# doesn't exist yet (TDD red phase) and the script runs into full execution.
-TIMEOUT=15
+TIMEOUT=20
 
 PASS=0
 FAIL=0
@@ -69,9 +74,7 @@ assert_exit_code() {
   fi
 }
 
-# Helper: run repolens.sh with timeout and capture output + exit code.
-# Usage: run_repolens [--stdin "input"] [args...]
-# Sets: RUN_OUTPUT (combined stdout+stderr), RUN_EXIT (exit code)
+# Run repolens.sh with a piped stdin. Used for --yes / non-interactive tests.
 run_repolens() {
   local stdin_data=""
   if [[ "${1:-}" == "--stdin" ]]; then
@@ -85,10 +88,15 @@ run_repolens() {
   rm -f "$tmp_out"
 }
 
-# Helper: run with script(1) for TTY simulation + timeout
+# Run with script(1) for TTY simulation. Sends a multi-line stdin so the
+# autonomous-mode gate (claude), deploy-authorization gate (deploy), and
+# confirm_run gate (all) each get their own answer.
+#
 # Usage: run_repolens_tty "stdin_data" [args...]
-# Sets: RUN_OUTPUT, RUN_EXIT
-# Returns 1 if script(1) is not available.
+#   stdin_data: literal string; "\n" joined lines as needed.
+# For claude + non-deploy: send "y\nN" → y accepts autonomous, N declines cost.
+# For deploy + claude:    send "y\ny\nN" → autonomous, authorization, cost.
+# For codex/opencode + non-deploy: send "N" is enough.
 run_repolens_tty() {
   local stdin_data="$1"
   shift
@@ -100,20 +108,27 @@ run_repolens_tty() {
     args_str+=" '${arg//\'/\'\\\'\'}'"
   done
   local tmp_out="$TMPDIR/.tty_output"
-  echo "$stdin_data" | timeout "$TIMEOUT" script -qec "bash '$REPOLENS' $args_str" /dev/null >"$tmp_out" 2>&1
+  printf "%b\n" "$stdin_data" | timeout "$TIMEOUT" script -qec "bash '$REPOLENS' $args_str" /dev/null >"$tmp_out" 2>&1
   RUN_EXIT=$?
   RUN_OUTPUT="$(cat "$tmp_out")"
   rm -f "$tmp_out"
   return 0
 }
 
+# Helper: extract the "Min. cost estimate" dollar amount from captured output.
+# Returns the bare number (e.g. "94.50"). Empty if not found.
+extract_min_cost() {
+  printf "%s\n" "$1" | grep -Eo 'Min\. cost estimate[^$]*\$[0-9]+\.[0-9]+' \
+    | grep -Eo '\$[0-9]+\.[0-9]+' | tr -d '$' | tail -1
+}
+
 # --- Setup test fixtures ---
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# Create a minimal git repo fixture for integration tests
-setup_test_repo() {
-  local repo_dir="$TMPDIR/test-repo"
+# Minimal git repo (small — few source tokens)
+setup_small_repo() {
+  local repo_dir="$TMPDIR/small-repo"
   mkdir -p "$repo_dir"
   git -C "$repo_dir" init -q
   git -C "$repo_dir" config user.email "test@test.com"
@@ -124,20 +139,38 @@ setup_test_repo() {
   echo "$repo_dir"
 }
 
-TEST_REPO="$(setup_test_repo)"
+# Larger git repo — fixed 200 KB of Python source so the token estimator has
+# a non-trivial input and the size-sensitivity test can compare against small.
+setup_large_repo() {
+  local repo_dir="$TMPDIR/large-repo"
+  mkdir -p "$repo_dir"
+  git -C "$repo_dir" init -q
+  git -C "$repo_dir" config user.email "test@test.com"
+  git -C "$repo_dir" config user.name "Test"
+  local i
+  for i in $(seq 1 20); do
+    # ~10 KB per file, 20 files → ~200 KB source
+    yes "def fn_${i}(x):" | head -c 10000 > "$repo_dir/mod_${i}.py"
+  done
+  echo "test" > "$repo_dir/README.md"
+  git -C "$repo_dir" add .
+  git -C "$repo_dir" commit -q -m "init"
+  echo "$repo_dir"
+}
+
+SMALL_REPO="$(setup_small_repo)"
+LARGE_REPO="$(setup_large_repo)"
 
 echo ""
-echo "=== Test Suite: Cost estimation and --max-cost threshold (issue #8) ==="
+echo "=== Test Suite: Cost estimation and --max-cost threshold (issues #8, #65) ==="
 echo ""
 
 # =====================================================================
 # Test 1: --max-cost flag is accepted by argument parser
 # =====================================================================
-# When --max-cost is passed with a dollar amount, the script should NOT
-# fail with "Unknown argument".
 
 echo "Test 1: --max-cost flag accepted by argument parser"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --max-cost 10
+run_repolens --stdin "" --project "$SMALL_REPO" --agent claude --yes --max-cost 10
 assert_not_contains "--max-cost not rejected as unknown" "Unknown argument: --max-cost" "$RUN_OUTPUT"
 
 # =====================================================================
@@ -152,38 +185,36 @@ assert_contains "--max-cost in help text" "--max-cost" "$help_output"
 # =====================================================================
 # Test 3: --max-cost requires a dollar amount argument
 # =====================================================================
-# When --max-cost is passed without a value, the script should error.
 
 echo ""
 echo "Test 3: --max-cost without value produces error"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --max-cost
+run_repolens --stdin "" --project "$SMALL_REPO" --agent claude --yes --max-cost
 assert_exit_code "exits with error" 1 "$RUN_EXIT"
 
 # =====================================================================
-# Test 4: Confirmation banner shows estimated cost line
+# Test 4: Confirmation banner uses honest "Min. cost estimate" label
 # =====================================================================
-# The confirmation banner must display an "Est. cost:" line so users
-# can see the approximate cost before confirming.
+# Post-#65: the label was changed from "Est. cost:" to the honest
+# "Min. cost estimate (lower bound — real runs typically 2–5x higher)".
 
 echo ""
-echo "Test 4: Confirmation banner shows Est. cost line"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude; then
-  assert_contains "banner shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+echo "Test 4: Banner shows honest Min. cost estimate label"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex; then
+  assert_contains "banner shows Min. cost estimate" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "banner notes lower bound" "lower bound" "$RUN_OUTPUT"
 else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped (counts as failure for TDD)"
+  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
 # Test 5: Cost estimate contains a dollar sign
 # =====================================================================
-# The cost estimate must include a "$" character to indicate currency.
 
 echo ""
 echo "Test 5: Cost estimate contains dollar sign"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude; then
-  # Extract just the Est. cost line area from the output
-  local_output="$(echo "$RUN_OUTPUT" | grep -i "Est. cost" || true)"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex; then
+  local_output="$(echo "$RUN_OUTPUT" | grep -i "Min. cost")"
   assert_contains "cost line has dollar sign" '$' "$local_output"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
@@ -193,12 +224,10 @@ fi
 # =====================================================================
 # Test 6: Threshold warning appears when estimate exceeds --max-cost
 # =====================================================================
-# When --max-cost is set to a very low value (e.g., 0.01), the cost
-# estimate for a full audit will exceed it and a warning must appear.
 
 echo ""
 echo "Test 6: Threshold warning when cost exceeds --max-cost"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --max-cost 0.01; then
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --max-cost 0.01; then
   assert_contains "warning about exceeding threshold" "WARNING" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
@@ -208,13 +237,11 @@ fi
 # =====================================================================
 # Test 7: No threshold warning when --max-cost is not specified
 # =====================================================================
-# Without --max-cost, no "exceeds threshold" or cost-related WARNING
-# should appear in the confirmation banner.
 
 echo ""
 echo "Test 7: No threshold warning without --max-cost"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude; then
-  assert_not_contains "no threshold warning without --max-cost" "exceeds" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex; then
+  assert_not_contains "no 'exceeds --max-cost' warning" "exceeds --max-cost" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
@@ -223,13 +250,11 @@ fi
 # =====================================================================
 # Test 8: No threshold warning when estimate is below --max-cost
 # =====================================================================
-# When --max-cost is set high enough (e.g., 99999), no warning should
-# appear even for a full audit run.
 
 echo ""
 echo "Test 8: No threshold warning when cost is below --max-cost"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --max-cost 99999; then
-  assert_not_contains "no warning when below threshold" "exceeds" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --max-cost 99999; then
+  assert_not_contains "no warning when below threshold" "exceeds --max-cost" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
@@ -238,75 +263,78 @@ fi
 # =====================================================================
 # Test 9: Discover mode shows lower cost than audit mode
 # =====================================================================
-# Discover mode has 14 lenses with single-pass (streak=1), while audit
-# mode has ~210 lenses with streak=3. The cost estimate must differ.
-# We capture both and verify discover's estimate is smaller.
+# Discover: 14 lenses × streak 1. Audit: 210 lenses × streak 3. Discover
+# must be materially cheaper.
 
 echo ""
 echo "Test 9: Discover mode cost lower than audit mode cost"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode discover; then
-  discover_output="$RUN_OUTPUT"
-  assert_contains "discover banner shows Est. cost:" "Est. cost:" "$discover_output"
+discover_cost=""
+audit_cost=""
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode discover; then
+  discover_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex; then
+  audit_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+TOTAL=$((TOTAL + 1))
+if [[ -n "$discover_cost" && -n "$audit_cost" ]] \
+   && awk -v d="$discover_cost" -v a="$audit_cost" 'BEGIN { exit !(d < a) }'; then
+  PASS=$((PASS + 1))
+  echo "  PASS: discover ($discover_cost) < audit ($audit_cost)"
 else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: discover ($discover_cost) should be < audit ($audit_cost)"
 fi
 
 # =====================================================================
 # Test 10: --focus single lens shows cost for 1 lens
 # =====================================================================
-# When --focus is used to run a single lens, the cost estimate should
-# reflect only 1 lens (not the full domain set).
 
 echo ""
 echo "Test 10: --focus single lens shows cost for 1 lens"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --focus injection; then
-  assert_contains "focus shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --focus injection; then
+  assert_contains "focus shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
   assert_contains "focus shows 1 lens" "Lenses:       1" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
-  echo "  FAIL: script(1) not available — skipped"
-  echo "  FAIL: script(1) not available — skipped"
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
-# Test 11: Cost estimate shows for codex agent
+# Test 11: Cost estimate shows for codex agent with GPT-5 pricing
 # =====================================================================
-# The cost estimate must work for all supported agents, not just claude.
 
 echo ""
 echo "Test 11: Cost estimate shows for codex agent"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent codex; then
-  assert_contains "codex banner shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex; then
+  assert_contains "codex banner shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "codex shows GPT-5 model label" "GPT-5" "$RUN_OUTPUT"
 else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
+  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
-# Test 12: Cost estimate shows for opencode agent (fallback cost)
+# Test 12: Cost estimate shows for opencode agent (fallback model)
 # =====================================================================
-# opencode/<model> has variable pricing. The system should use a fallback
-# cost-per-call value and still display an estimate.
 
 echo ""
-echo "Test 12: Cost estimate shows for opencode agent"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent opencode; then
-  assert_contains "opencode banner shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+echo "Test 12: Cost estimate shows for opencode agent (fallback)"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent opencode; then
+  assert_contains "opencode banner shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "opencode falls back to Sonnet-class label" "opencode" "$RUN_OUTPUT"
 else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
+  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
 # Test 13: Threshold warning mentions the configured threshold amount
 # =====================================================================
-# When the warning triggers, it should mention the threshold value so
-# users know what limit they set.
 
 echo ""
 echo "Test 13: Threshold warning mentions the threshold value"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --max-cost 5; then
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --max-cost 5; then
   assert_contains "warning mentions threshold value" "5" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
@@ -316,53 +344,44 @@ fi
 # =====================================================================
 # Test 14: --max-cost with --yes still exits cleanly
 # =====================================================================
-# --max-cost combined with --yes should not cause an error — the cost
-# warning is informational, not a hard block.
 
 echo ""
 echo "Test 14: --max-cost with --yes exits cleanly (no crash)"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --max-cost 0.01
+run_repolens --stdin "" --project "$SMALL_REPO" --agent claude --yes --max-cost 0.01
 assert_not_contains "--max-cost with --yes does not crash" "Unknown argument" "$RUN_OUTPUT"
 
 # =====================================================================
 # Test 15: --max-cost rejects non-numeric input
 # =====================================================================
-# When --max-cost is given a non-numeric value, the script should error.
 
 echo ""
 echo "Test 15: --max-cost rejects non-numeric input"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --max-cost abc
+run_repolens --stdin "" --project "$SMALL_REPO" --agent claude --yes --max-cost abc
 assert_exit_code "non-numeric --max-cost exits with error" 1 "$RUN_EXIT"
 
 # =====================================================================
-# Test 16: Cost estimate for discover mode is single-pass (streak=1)
+# Test 16: Cost estimate for discover mode shows streak 1
 # =====================================================================
-# Discover mode uses DONE_STREAK=1, so the minimum cost estimate should
-# be based on 1 iteration per lens, not 3.
 
 echo ""
-echo "Test 16: Discover mode cost reflects single-pass iterations"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode discover; then
-  # The banner must show "Est. cost:" — its value should be small for 14 lenses × 1 iteration
-  assert_contains "discover mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
-  # Should NOT show "3" as iterations multiplier in the cost breakdown (streak=1 for discover)
-  # Instead verify "1 iteration" or similar phrasing appears
-  assert_contains "discover shows single iteration reference" "1" "$RUN_OUTPUT"
+echo "Test 16: Discover mode banner reflects single-pass (streak 1)"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode discover; then
+  assert_contains "discover mode shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "discover shows streak 1" "streak 1" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
-  echo "  FAIL: script(1) not available — skipped"
-  echo "  FAIL: script(1) not available — skipped"
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
-# Test 17: Cost estimate for deploy mode shows in banner
+# Test 17: Deploy mode shows cost estimate
 # =====================================================================
-# Deploy mode (26 lenses, streak=1) should show a cost estimate.
+# Deploy adds an authorization gate before the cost banner → send y then N.
 
 echo ""
 echo "Test 17: Deploy mode shows cost estimate"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode deploy; then
-  assert_contains "deploy mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+if run_repolens_tty "y\nN" --project "$SMALL_REPO" --agent codex --mode deploy; then
+  assert_contains "deploy mode shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
@@ -371,41 +390,35 @@ fi
 # =====================================================================
 # Test 18: --max-cost with decimal values is accepted
 # =====================================================================
-# Users should be able to specify thresholds like 2.50 or 0.99.
 
 echo ""
 echo "Test 18: --max-cost accepts decimal values"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --max-cost 2.50
+run_repolens --stdin "" --project "$SMALL_REPO" --agent claude --yes --max-cost 2.50
 assert_not_contains "--max-cost decimal not rejected" "Unknown argument" "$RUN_OUTPUT"
 assert_not_contains "--max-cost decimal does not error" "must be" "$RUN_OUTPUT"
 
 # =====================================================================
-# Test 19: Threshold warning for --max-cost with low threshold on audit mode
+# Test 19: Audit mode exceeds low --max-cost threshold
 # =====================================================================
-# Audit mode with ~210 lenses and streak=3 will always exceed a $5 threshold.
-# This tests the common case that motivated the feature.
 
 echo ""
 echo "Test 19: Audit mode exceeds low --max-cost threshold"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --max-cost 5; then
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --max-cost 0.50; then
   assert_contains "audit mode exceeds low threshold" "WARNING" "$RUN_OUTPUT"
   assert_contains "audit mode still shows Proceed?" "Proceed?" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
-  echo "  FAIL: script(1) not available — skipped"
-  echo "  FAIL: script(1) not available — skipped"
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
 # Test 20: User can still proceed with y after cost warning
 # =====================================================================
-# The cost warning is informational — it does NOT block execution.
-# The user should be able to type "y" and proceed.
 
 echo ""
 echo "Test 20: User can proceed with y after cost warning"
-if run_repolens_tty "y" --project "$TEST_REPO" --agent claude --max-cost 0.01; then
-  assert_not_contains "y proceeds past warning" "Aborted" "$RUN_OUTPUT"
+if run_repolens_tty "y" --project "$SMALL_REPO" --agent codex --max-cost 0.01; then
+  assert_not_contains "y proceeds past warning" "Aborted." "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
@@ -414,11 +427,10 @@ fi
 # =====================================================================
 # Test 21: --max-cost 0 triggers warning for any non-zero cost
 # =====================================================================
-# Edge case: threshold of 0 means any run with lenses will warn.
 
 echo ""
 echo "Test 21: --max-cost 0 triggers warning"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --max-cost 0; then
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --max-cost 0; then
   assert_contains "--max-cost 0 triggers warning" "WARNING" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
@@ -426,252 +438,247 @@ else
 fi
 
 # =====================================================================
-# Test 22: Cost estimate for opensource mode shows in banner
+# Test 22: Opensource mode shows cost estimate
 # =====================================================================
-# OpenSource mode (13 lenses, streak=1) should show a cost estimate.
 
 echo ""
 echo "Test 22: OpenSource mode shows cost estimate"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode opensource; then
-  assert_contains "opensource mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode opensource; then
+  assert_contains "opensource mode shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
 fi
 
 # =====================================================================
-# Test 23: Cost estimate for content mode shows in banner
+# Test 23: Content mode shows cost estimate
 # =====================================================================
-# Content mode (17 lenses, streak=1) should show a cost estimate.
 
 echo ""
 echo "Test 23: Content mode shows cost estimate"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode content; then
-  assert_contains "content mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode content; then
+  assert_contains "content mode shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
 fi
 
 # =====================================================================
-# Test 24: --max-cost with --domain still works
+# Test 24: --max-cost with --domain works
 # =====================================================================
-# Using --domain to filter lenses should produce a cost estimate based
-# on the filtered lens count, and --max-cost should still function.
 
 echo ""
 echo "Test 24: --max-cost with --domain works"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --domain security --max-cost 1; then
-  assert_contains "domain filter shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --domain security --max-cost 1; then
+  assert_contains "domain filter shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
 fi
 
 # =====================================================================
-# Test 25: --max-issues with cost estimate
+# Test 25: --max-issues forces streak=1 → banner reflects that
 # =====================================================================
-# When --max-issues forces streak=1, the cost estimate should reflect
-# the reduced iteration count.
 
 echo ""
-echo "Test 25: --max-issues affects cost estimate (streak=1)"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --max-issues 3; then
-  assert_contains "max-issues mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 26: Cost calculation correctness — discover mode + claude
-# =====================================================================
-# Discover = 14 lenses × 1 iteration × $0.15/call = $2.10
-# Verify the actual computed dollar amount appears in the output.
-
-echo ""
-echo 'Test 26: Cost value correctness for discover+claude ($2.10)'
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode discover; then
-  assert_contains "discover+claude cost is \$2.10" '~$2.10' "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 27: Cost calculation correctness — audit mode + claude
-# =====================================================================
-# Audit = 210 lenses × 3 iterations × $0.15/call = $94.50
-
-echo ""
-echo 'Test 27: Cost value correctness for audit+claude ($94.50)'
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude; then
-  assert_contains "audit+claude cost is \$94.50" '~$94.50' "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 28: Cost calculation correctness — discover mode + codex
-# =====================================================================
-# Discover = 14 lenses × 1 iteration × $0.10/call = $1.40
-
-echo ""
-echo 'Test 28: Cost value correctness for discover+codex ($1.40)'
-if run_repolens_tty "N" --project "$TEST_REPO" --agent codex --mode discover; then
-  assert_contains "discover+codex cost is \$1.40" '~$1.40' "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 29: Spark agent cost displayed with correct rate
-# =====================================================================
-# Discover = 14 lenses × 1 iteration × $0.20/call = $2.80
-
-echo ""
-echo 'Test 29: Spark agent cost correctness ($0.20/call)'
-if run_repolens_tty "N" --project "$TEST_REPO" --agent spark --mode discover; then
-  assert_contains "spark shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
-  assert_contains "spark cost is \$2.80" '~$2.80' "$RUN_OUTPUT"
-  assert_contains "spark shows \$0.20/call rate" '$0.20/call' "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 3)); FAIL=$((FAIL + 3))
-  echo "  FAIL: script(1) not available — skipped"
-  echo "  FAIL: script(1) not available — skipped"
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 30: Audit mode cost breakdown shows "3 iterations"
-# =====================================================================
-# Audit uses DONE_STREAK_REQUIRED=3, so the cost line should include
-# "3 iterations" in the breakdown.
-
-echo ""
-echo "Test 30: Audit mode cost breakdown shows 3 iterations"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude; then
-  assert_contains "audit cost line shows 3 iterations" "3 iterations" "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 31: Discover mode cost breakdown shows "1 iterations"
-# =====================================================================
-# Discover uses DONE_STREAK_REQUIRED=1.
-
-echo ""
-echo "Test 31: Discover mode cost breakdown shows 1 iterations"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode discover; then
-  assert_contains "discover cost line shows 1 iterations" "1 iterations" "$RUN_OUTPUT"
-else
-  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-  echo "  FAIL: script(1) not available — skipped"
-fi
-
-# =====================================================================
-# Test 32: Feature mode shows cost with streak=3
-# =====================================================================
-# Feature mode uses the same streak=3 as audit and should display
-# an identical cost estimate.
-
-echo ""
-echo "Test 32: Feature mode shows cost with 3 iterations"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode feature; then
-  assert_contains "feature mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
-  assert_contains "feature mode shows 3 iterations" "3 iterations" "$RUN_OUTPUT"
+echo "Test 25: --max-issues affects cost estimate (streak 1)"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --max-issues 3; then
+  assert_contains "max-issues shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "max-issues shows streak 1" "streak 1" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
-  echo "  FAIL: script(1) not available — skipped"
-  echo "  FAIL: script(1) not available — skipped"
+  echo "  FAIL: script(1) not available — skipped (x2)"
 fi
 
 # =====================================================================
-# Test 33: Bugfix mode shows cost with streak=3
+# Test 26: Larger repo produces higher estimate than small repo
 # =====================================================================
-# Bugfix mode also uses streak=3.
+# New in #65: estimator samples repo bytes and feeds them into per-session
+# input tokens. A 200 KB source tree MUST cost more than a 5-byte README.
 
 echo ""
-echo "Test 33: Bugfix mode shows cost with 3 iterations"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode bugfix; then
-  assert_contains "bugfix mode shows Est. cost:" "Est. cost:" "$RUN_OUTPUT"
-  assert_contains "bugfix mode shows 3 iterations" "3 iterations" "$RUN_OUTPUT"
+echo "Test 26: Larger repo → higher cost estimate"
+small_cost=""
+large_cost=""
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode discover; then
+  small_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+if run_repolens_tty "N" --project "$LARGE_REPO" --agent codex --mode discover; then
+  large_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+TOTAL=$((TOTAL + 1))
+if [[ -n "$small_cost" && -n "$large_cost" ]] \
+   && awk -v s="$small_cost" -v l="$large_cost" 'BEGIN { exit !(l > s) }'; then
+  PASS=$((PASS + 1))
+  echo "  PASS: large ($large_cost) > small ($small_cost)"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: large ($large_cost) should be > small ($small_cost)"
+fi
+
+# =====================================================================
+# Test 27: Spark agent shows Spark/GPT-5 class pricing
+# =====================================================================
+
+echo ""
+echo "Test 27: Spark agent shows GPT-5 class pricing"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent spark --mode discover; then
+  assert_contains "spark shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "spark shows Spark label" "Spark" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
-  echo "  FAIL: script(1) not available — skipped"
+  echo "  FAIL: script(1) not available — skipped (x2)"
+fi
+
+# =====================================================================
+# Test 28: Audit mode banner reflects streak 3
+# =====================================================================
+
+echo ""
+echo "Test 28: Audit mode banner shows streak 3"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex; then
+  assert_contains "audit banner shows streak 3" "streak 3" "$RUN_OUTPUT"
+else
+  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
 fi
 
 # =====================================================================
-# Test 34: --yes mode does not display cost estimate
+# Test 29: Feature mode banner reflects streak 3
 # =====================================================================
-# When --yes is used, confirm_run() returns immediately without
-# displaying the banner or cost estimate. This is expected behavior.
 
 echo ""
-echo "Test 34: --yes mode skips cost display"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --mode discover
-assert_not_contains "--yes skips Est. cost line" "Est. cost:" "$RUN_OUTPUT"
+echo "Test 29: Feature mode banner shows streak 3"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode feature; then
+  assert_contains "feature banner shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "feature banner shows streak 3" "streak 3" "$RUN_OUTPUT"
+else
+  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
+  echo "  FAIL: script(1) not available — skipped (x2)"
+fi
 
 # =====================================================================
-# Test 35: --max-cost rejects negative values
+# Test 30: Bugfix mode banner reflects streak 3
 # =====================================================================
-# The regex validation ^[0-9]+\.?[0-9]*$ rejects negative numbers.
 
 echo ""
-echo "Test 35: --max-cost rejects negative value"
-run_repolens --stdin "" --project "$TEST_REPO" --agent claude --yes --max-cost -5
+echo "Test 30: Bugfix mode banner shows streak 3"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode bugfix; then
+  assert_contains "bugfix banner shows Min. cost" "Min. cost estimate" "$RUN_OUTPUT"
+  assert_contains "bugfix banner shows streak 3" "streak 3" "$RUN_OUTPUT"
+else
+  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
+  echo "  FAIL: script(1) not available — skipped (x2)"
+fi
+
+# =====================================================================
+# Test 31: --yes mode does not display cost estimate
+# =====================================================================
+
+echo ""
+echo "Test 31: --yes mode skips cost display"
+run_repolens --stdin "" --project "$SMALL_REPO" --agent codex --yes --mode discover
+assert_not_contains "--yes skips Min. cost line" "Min. cost estimate" "$RUN_OUTPUT"
+
+# =====================================================================
+# Test 32: --max-cost rejects negative values
+# =====================================================================
+
+echo ""
+echo "Test 32: --max-cost rejects negative value"
+run_repolens --stdin "" --project "$SMALL_REPO" --agent claude --yes --max-cost -5
 assert_exit_code "negative --max-cost exits with error" 1 "$RUN_EXIT"
 
 # =====================================================================
-# Test 36: Different agents produce different cost estimates
+# Test 33: Different agents produce different cost estimates
 # =====================================================================
-# Claude ($0.15) and codex ($0.10) should produce different cost values
-# for the same mode. Both run discover mode (14 lenses, streak=1).
+# codex (GPT-5: $1.25/$10.00) and opencode-default (Sonnet-class: $3/$15)
+# should produce clearly different estimates for the same mode.
 
 echo ""
-echo "Test 36: Claude and codex costs differ"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode discover; then
-  claude_cost_line="$(echo "$RUN_OUTPUT" | grep "Est. cost:")"
-  if run_repolens_tty "N" --project "$TEST_REPO" --agent codex --mode discover; then
-    codex_cost_line="$(echo "$RUN_OUTPUT" | grep "Est. cost:")"
-    TOTAL=$((TOTAL + 1))
-    if [[ "$claude_cost_line" != "$codex_cost_line" ]]; then
-      PASS=$((PASS + 1))
-      echo "  PASS: claude and codex cost lines differ"
-    else
-      FAIL=$((FAIL + 1))
-      echo "  FAIL: claude and codex cost lines differ"
-      echo "    Claude: $claude_cost_line"
-      echo "    Codex:  $codex_cost_line"
-    fi
-  else
-    TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
-    echo "  FAIL: script(1) not available — skipped"
-  fi
+echo "Test 33: codex and opencode costs differ (different pricing)"
+codex_cost=""
+opencode_cost=""
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode discover; then
+  codex_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent opencode --mode discover; then
+  opencode_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+TOTAL=$((TOTAL + 1))
+if [[ -n "$codex_cost" && -n "$opencode_cost" && "$codex_cost" != "$opencode_cost" ]]; then
+  PASS=$((PASS + 1))
+  echo "  PASS: codex ($codex_cost) != opencode ($opencode_cost)"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: codex ($codex_cost) should differ from opencode ($opencode_cost)"
+fi
+
+# =====================================================================
+# Test 34: Cost breakdown shows per-MTok pricing (input + output)
+# =====================================================================
+# Replaces the old "$0.15/call" assertion. The honest breakdown shows the
+# model pricing in "USD per MTok" form.
+
+echo ""
+echo "Test 34: Cost breakdown shows per-MTok pricing"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode discover; then
+  assert_contains "breakdown shows 'per MTok'" "per MTok" "$RUN_OUTPUT"
+  assert_contains "breakdown shows lens count" "14 lenses" "$RUN_OUTPUT"
+else
+  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
+  echo "  FAIL: script(1) not available — skipped (x2)"
+fi
+
+# =====================================================================
+# Test 35: opencode/<model> parses the model and picks matching pricing
+# =====================================================================
+# opencode/claude-opus-4-6 → Opus pricing ($15/$75), much higher than
+# opencode (defaults to Sonnet-class $3/$15).
+
+echo ""
+echo "Test 35: opencode/<model> picks up model-specific pricing (Opus > default)"
+default_cost=""
+opus_cost=""
+if run_repolens_tty "N" --project "$LARGE_REPO" --agent opencode --mode discover; then
+  default_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+if run_repolens_tty "N" --project "$LARGE_REPO" --agent opencode/claude-opus-4-6 --mode discover; then
+  opus_cost="$(extract_min_cost "$RUN_OUTPUT")"
+fi
+TOTAL=$((TOTAL + 1))
+if [[ -n "$default_cost" && -n "$opus_cost" ]] \
+   && awk -v d="$default_cost" -v o="$opus_cost" 'BEGIN { exit !(o > d) }'; then
+  PASS=$((PASS + 1))
+  echo "  PASS: opencode/opus ($opus_cost) > opencode default ($default_cost)"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: opencode/opus ($opus_cost) should be > opencode default ($default_cost)"
+fi
+
+# =====================================================================
+# Test 36: opencode/<unknown-model> falls back to default pricing
+# =====================================================================
+
+echo ""
+echo "Test 36: opencode/<unknown-model> falls back to default pricing"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent opencode/does-not-exist --mode discover; then
+  assert_contains "unknown model falls back" "opencode" "$RUN_OUTPUT"
 else
   TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
 fi
 
 # =====================================================================
-# Test 37: Cost breakdown format includes per-call rate
+# Test 37: Banner includes the lower-bound disclaimer note
 # =====================================================================
-# The cost line format is: ~$X.XX  (~$Y.YY/call x Z lenses x W iterations)
-# Verify the per-call rate for claude ($0.15) is shown.
 
 echo ""
-echo "Test 37: Cost breakdown shows per-call rate"
-if run_repolens_tty "N" --project "$TEST_REPO" --agent claude --mode discover; then
-  assert_contains "breakdown shows \$0.15/call" '$0.15/call' "$RUN_OUTPUT"
-  assert_contains "breakdown shows lens count" "14 lenses" "$RUN_OUTPUT"
+echo "Test 37: Banner includes 'Note:' disclaimer about real cost"
+if run_repolens_tty "N" --project "$SMALL_REPO" --agent codex --mode discover; then
+  assert_contains "banner has Note: disclaimer" "Note:" "$RUN_OUTPUT"
 else
-  TOTAL=$((TOTAL + 2)); FAIL=$((FAIL + 2))
-  echo "  FAIL: script(1) not available — skipped"
+  TOTAL=$((TOTAL + 1)); FAIL=$((FAIL + 1))
   echo "  FAIL: script(1) not available — skipped"
 fi
 

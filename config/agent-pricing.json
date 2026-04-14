@@ -1,0 +1,51 @@
+{
+  "_comment": "USD per 1M tokens. Update when model pricing changes. 'agent_default_model' maps --agent values to a model id in 'models'. opencode/<model> parses the <model> segment and looks it up in 'models'; unknown models fall back to opencode-default.",
+  "models": {
+    "claude-sonnet-4-5": {
+      "label": "Claude Sonnet 4.5",
+      "input_per_mtok": 3.00,
+      "output_per_mtok": 15.00
+    },
+    "claude-opus-4-6": {
+      "label": "Claude Opus 4.6",
+      "input_per_mtok": 15.00,
+      "output_per_mtok": 75.00
+    },
+    "claude-haiku-4-5": {
+      "label": "Claude Haiku 4.5",
+      "input_per_mtok": 1.00,
+      "output_per_mtok": 5.00
+    },
+    "gpt-5": {
+      "label": "GPT-5 (Codex)",
+      "input_per_mtok": 1.25,
+      "output_per_mtok": 10.00
+    },
+    "spark": {
+      "label": "Spark (GPT-5 class)",
+      "input_per_mtok": 1.25,
+      "output_per_mtok": 10.00
+    },
+    "opencode-default": {
+      "label": "opencode (Sonnet-class assumed)",
+      "input_per_mtok": 3.00,
+      "output_per_mtok": 15.00
+    }
+  },
+  "agent_default_model": {
+    "claude": "claude-sonnet-4-5",
+    "codex": "gpt-5",
+    "spark": "spark",
+    "sparc": "spark",
+    "opencode": "opencode-default"
+  },
+  "session_model": {
+    "_comment": "Assumptions used by the estimator. All values are per-session (one agent iteration).",
+    "base_prompt_tokens": 3000,
+    "per_session_input_cap_tokens": 200000,
+    "per_session_output_tokens": 8000,
+    "bytes_per_token": 4,
+    "iteration_factor": 1.7,
+    "_iteration_factor_note": "Empirical multiplier on DONE_STREAK_REQUIRED. Real runs rarely converge on the minimum streak; 1.7x is a conservative midpoint for streak=3 (→ ~5 iterations) and streak=1 (→ ~1.7 iterations)."
+  }
+}

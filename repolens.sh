@@ -63,7 +63,7 @@ Options:
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
   --hosted                Spin up project's Docker Compose in isolated network for DAST scanning and testing
   --yes, -y               Skip confirmation prompt (for CI/automation)
-  --max-cost <amount>     Warn if estimated cost exceeds this dollar amount
+  --max-cost <amount>     Warn if min. cost estimate exceeds this dollar amount (real cost typically 2–5x higher)
   --dry-run               Validate config and show what would run, then exit (no agents executed)
   --version               Show version and sponsor information, then exit
   --about                 Show tool description and sponsor information, then exit
@@ -532,16 +532,107 @@ mark_lens_completed() {
   echo "$1" >> "$completed_lenses_file"
 }
 
-# --- Cost per call lookup ---
-get_cost_per_call() {
-  local agent="$1"
-  case "$agent" in
-    claude)              echo "0.15" ;;
-    codex)               echo "0.10" ;;
-    spark|sparc)         echo "0.20" ;;
-    opencode|opencode/*) echo "0.10" ;;
-    *)                   echo "0.10" ;;
-  esac
+# --- Cost estimation (token-based, model-aware, repo-size-aware) ---
+# Resolve an --agent value to a model id in agent-pricing.json.
+# Handles: claude, codex, spark, sparc, opencode, opencode/<model>.
+# Unknown opencode/<model> falls back to "opencode-default".
+resolve_agent_model() {
+  local agent="$1" pricing_file="$2"
+  local default_model model_check
+  if [[ "$agent" == opencode/* ]]; then
+    local requested="${agent#opencode/}"
+    model_check="$(jq -r --arg m "$requested" '.models[$m] | .input_per_mtok // empty' "$pricing_file" 2>/dev/null)"
+    if [[ -n "$model_check" ]]; then
+      echo "$requested"
+      return
+    fi
+    echo "opencode-default"
+    return
+  fi
+  default_model="$(jq -r --arg a "$agent" '.agent_default_model[$a] // empty' "$pricing_file" 2>/dev/null)"
+  if [[ -n "$default_model" ]]; then
+    echo "$default_model"
+  else
+    echo "opencode-default"
+  fi
+}
+
+# Sum bytes of likely-source files in a project path, excluding common vendor dirs.
+# Prints integer byte count on stdout. Returns 0 on any failure.
+estimate_repo_bytes() {
+  local path="$1"
+  [[ -d "$path" ]] || { echo 0; return 0; }
+  find "$path" -type f \
+    \( -name '*.py' -o -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' \
+       -o -name '*.mjs' -o -name '*.cjs' -o -name '*.go' -o -name '*.rs' \
+       -o -name '*.rb' -o -name '*.java' -o -name '*.kt' -o -name '*.swift' \
+       -o -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.h' -o -name '*.hpp' \
+       -o -name '*.cs' -o -name '*.php' -o -name '*.sh' -o -name '*.bash' -o -name '*.zsh' \
+       -o -name '*.html' -o -name '*.htm' -o -name '*.css' -o -name '*.scss' -o -name '*.sass' \
+       -o -name '*.vue' -o -name '*.svelte' -o -name '*.dart' -o -name '*.ex' -o -name '*.exs' \
+       -o -name '*.clj' -o -name '*.scala' -o -name '*.elm' -o -name '*.sql' \
+       -o -name '*.md' -o -name '*.mdx' -o -name '*.rst' -o -name '*.txt' \
+       -o -name '*.yml' -o -name '*.yaml' -o -name '*.json' -o -name '*.toml' -o -name '*.xml' \
+       -o -name 'Dockerfile' -o -name 'Makefile' -o -name 'CMakeLists.txt' \) \
+    -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/vendor/*' \
+    -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/.venv/*' \
+    -not -path '*/venv/*' -not -path '*/target/*' -not -path '*/.next/*' \
+    -not -path '*/coverage/*' -not -path '*/.cache/*' -not -path '*/logs/*' \
+    -printf '%s\n' 2>/dev/null \
+    | awk 'BEGIN{s=0} {s+=$1} END{print s+0}'
+}
+
+# Compute min. cost estimate and emit a rich breakdown block on stdout.
+# Args: agent, lens_count, streak_required, project_path, pricing_file.
+# Emits a multi-line block whose first line is the min cost dollar string
+# prefixed with "MIN_COST="; subsequent lines are human-readable breakdown.
+compute_cost_breakdown() {
+  local agent="$1" lenses="$2" streak="$3" path="$4" pricing_file="$5"
+
+  local model
+  model="$(resolve_agent_model "$agent" "$pricing_file")"
+
+  local model_label in_price out_price
+  model_label="$(jq -r --arg m "$model" '.models[$m].label // $m' "$pricing_file" 2>/dev/null)"
+  in_price="$(jq -r --arg m "$model" '.models[$m].input_per_mtok // 3' "$pricing_file" 2>/dev/null)"
+  out_price="$(jq -r --arg m "$model" '.models[$m].output_per_mtok // 15' "$pricing_file" 2>/dev/null)"
+
+  local base_prompt input_cap out_per bytes_per_tok iter_factor
+  base_prompt="$(jq -r '.session_model.base_prompt_tokens // 3000' "$pricing_file" 2>/dev/null)"
+  input_cap="$(jq -r '.session_model.per_session_input_cap_tokens // 200000' "$pricing_file" 2>/dev/null)"
+  out_per="$(jq -r '.session_model.per_session_output_tokens // 8000' "$pricing_file" 2>/dev/null)"
+  bytes_per_tok="$(jq -r '.session_model.bytes_per_token // 4' "$pricing_file" 2>/dev/null)"
+  iter_factor="$(jq -r '.session_model.iteration_factor // 1.7' "$pricing_file" 2>/dev/null)"
+
+  local repo_bytes repo_tokens
+  repo_bytes="$(estimate_repo_bytes "$path")"
+  repo_tokens=$((repo_bytes / bytes_per_tok))
+
+  awk -v model_label="$model_label" -v model="$model" \
+      -v in_price="$in_price" -v out_price="$out_price" \
+      -v base_prompt="$base_prompt" -v input_cap="$input_cap" \
+      -v out_per="$out_per" -v repo_tokens="$repo_tokens" \
+      -v lenses="$lenses" -v streak="$streak" -v iter_factor="$iter_factor" \
+      'BEGIN {
+        session_input = (repo_tokens < input_cap ? repo_tokens : input_cap) + base_prompt
+        cost_per_session = (session_input / 1000000.0) * in_price + (out_per / 1000000.0) * out_price
+        avg_iters = streak * iter_factor
+        est = lenses * avg_iters * cost_per_session
+
+        printf "MIN_COST=%.2f\n", est
+
+        # Human-readable summary
+        if (repo_tokens >= 1000) {
+          repo_k = repo_tokens / 1000.0
+          printf "  model:      %s  —  $%.2f in / $%.2f out per MTok\n", model_label, in_price, out_price
+          printf "  repo:       ~%.0fk source tokens  (input capped at %dk/session)\n", repo_k, input_cap/1000
+        } else {
+          printf "  model:      %s  —  $%.2f in / $%.2f out per MTok\n", model_label, in_price, out_price
+          printf "  repo:       ~%d source tokens  (input capped at %dk/session)\n", repo_tokens, input_cap/1000
+        }
+        printf "  per session: ~$%.4f  (~%d in + %d out tokens)\n", cost_per_session, session_input, out_per
+        printf "  sessions:   %d lenses x ~%.1f iterations (streak %d x %.1f iter-factor)\n", lenses, avg_iters, streak, iter_factor
+      }'
 }
 
 # --- Confirmation gate ---
@@ -555,11 +646,12 @@ confirm_run() {
     die "Running non-interactively without --yes flag. Use --yes to skip confirmation."
   fi
 
-  # Cost estimation
-  local cost_per_call
-  cost_per_call="$(get_cost_per_call "$AGENT")"
-  local est_cost
-  est_cost="$(awk -v n="$TOTAL_LENSES" -v s="$DONE_STREAK_REQUIRED" -v c="$cost_per_call" 'BEGIN { printf "%.2f", n * s * c }')"
+  local pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
+  local breakdown min_cost
+  breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file")"
+  min_cost="$(printf "%s\n" "$breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+  local breakdown_lines
+  breakdown_lines="$(printf "%s\n" "$breakdown" | grep -v '^MIN_COST=')"
 
   echo ""
   echo "=== RepoLens Confirmation ==="
@@ -572,15 +664,20 @@ confirm_run() {
   else
     echo "Max issues:   (unlimited)"
   fi
-  echo "Est. cost:    ~\$${est_cost}  (~\$${cost_per_call}/call x ${TOTAL_LENSES} lenses x ${DONE_STREAK_REQUIRED} iterations)"
+  echo ""
+  echo "Min. cost estimate (lower bound — real runs typically 2–5x higher):  ~\$${min_cost}"
+  printf "%s\n" "$breakdown_lines"
+  echo "  Note: Estimator assumes one model per agent, 4 bytes/token, and a"
+  echo "  capped per-session input budget. Tool-call churn and iteration"
+  echo "  non-convergence push real cost higher. Budget accordingly."
 
   # Threshold warning
   if [[ -n "$MAX_COST" ]]; then
     local exceeds
-    exceeds="$(awk -v est="$est_cost" -v max="$MAX_COST" 'BEGIN { print (est > max) ? 1 : 0 }')"
+    exceeds="$(awk -v est="$min_cost" -v max="$MAX_COST" 'BEGIN { print (est > max) ? 1 : 0 }')"
     if [[ "$exceeds" -eq 1 ]]; then
       echo ""
-      echo "WARNING: Estimated cost (~\$${est_cost}) exceeds --max-cost threshold (\$${MAX_COST})"
+      echo "WARNING: Min. cost estimate (~\$${min_cost}) exceeds --max-cost threshold (\$${MAX_COST})"
     fi
   fi
 

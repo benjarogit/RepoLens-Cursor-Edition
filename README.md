@@ -128,7 +128,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--spec <file>` | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB) |
 | `--max-issues <n>` | Stop after creating *n* total issues |
 | `--hosted` | Spin up Docker Compose for DAST scanning (used with `toolgate` domain) |
-| `--max-cost <amount>` | Warn if estimated cost exceeds this dollar amount (e.g., `--max-cost 10`) |
+| `--max-cost <amount>` | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly. |
 | `--dry-run` | Validate config and show which lenses would run, then exit (no agents executed) |
 | `--yes, -y` | Skip confirmation prompt (for CI/automation) |
 | `--version` | Show version and sponsor information, then exit |

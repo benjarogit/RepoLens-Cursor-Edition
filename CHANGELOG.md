@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `--local` flag: write findings as local markdown files instead of creating GitHub issues — no `gh` CLI required
 - `--output <path>` flag: custom output directory for local markdown files (requires `--local`, defaults to `logs/<run-id>/issues/`)
 
+### Security
+
+- `.gitignore` now covers common sensitive file patterns (`.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.jks`, `*.keystore`, `*.pfx`, `key.properties`, `google-services.json`, `GoogleService-Info.plist`, `credentials.json`, `secrets.yaml`, `secrets.yml`) to prevent accidental secret commits
+
 ### Infrastructure
 
 - GitHub Actions CI workflow: ShellCheck linting and test suite (`make check`) run on every push to `master` and pull request

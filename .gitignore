@@ -5,3 +5,19 @@ logs/
 *.swo
 *~
 .DS_Store
+
+# Sensitive files — prevent accidental secret commits
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.pfx
+key.properties
+google-services.json
+GoogleService-Info.plist
+credentials.json
+secrets.yaml
+secrets.yml

@@ -272,6 +272,10 @@ See [AUTHORS.md](AUTHORS.md) for credits and contributors.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public issue for security vulnerabilities.
 
+## Governance
+
+For information about project leadership, decision-making, and contribution acceptance criteria, see [GOVERNANCE.md](GOVERNANCE.md).
+
 ## Legal
 
 ### License

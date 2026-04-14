@@ -55,6 +55,8 @@ Every issue MUST have this structure:
 
 {{MAX_ISSUES_SECTION}}
 
+{{LOCAL_MODE_SECTION}}
+
 ## Termination
 - When you have found and reported all real issues within your expertise area, or if there are no findings, output **DONE** as the very first word of your response AND **DONE** as the very last word.
 - If you created issues, list them briefly, then end with DONE.

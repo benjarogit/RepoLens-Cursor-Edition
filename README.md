@@ -14,7 +14,7 @@
 |------|----------|---------|---------|
 | `git` | Yes | Repo validation, cloning | OS package manager (`apt install git`, `brew install git`, `nix-env -i git`) |
 | `jq` | Yes | JSON config parsing | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`) |
-| `gh` | Yes (authenticated) | Create issues, labels, query repos | [cli.github.com](https://cli.github.com) — run `gh auth login` after install |
+| `gh` | Yes (unless `--local`) | Create issues, labels, query repos | [cli.github.com](https://cli.github.com) — run `gh auth login` after install |
 | Agent CLI | Yes (at least one) | Run analysis agents | See below |
 | `docker` + `docker compose` | Only for `--hosted` | DAST scanning environment | OS package manager |
 
@@ -38,7 +38,7 @@ cd RepoLens
 # 2. Make the entry point executable
 chmod +x repolens.sh
 
-# 3. Authenticate GitHub CLI (if not already done)
+# 3. Authenticate GitHub CLI (if not already done; not needed for --local)
 gh auth login
 
 # 4. Run your first audit — single lens, fast feedback
@@ -96,6 +96,15 @@ RepoLens supports 8 modes. Each mode controls which domains/lenses are visible a
 # CI — skip confirmation prompt for automation
 ./repolens.sh --project ~/my-app --agent claude --parallel --yes
 
+# Local — write findings as markdown files instead of GitHub issues
+./repolens.sh --project ~/my-app --agent claude --local
+
+# Local with custom output directory
+./repolens.sh --project ~/my-app --agent claude --local --output ~/reports/myapp-audit
+
+# Local with domain filter and parallel execution
+./repolens.sh --project ~/my-app --agent claude --local --domain security --parallel
+
 # Dry run — preview which lenses would run without executing anything
 ./repolens.sh --project ~/my-app --agent claude --mode deploy --dry-run
 ```
@@ -127,6 +136,8 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--resume <run-id>` | Resume a previous interrupted run |
 | `--spec <file>` | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB) |
 | `--max-issues <n>` | Stop after creating *n* total issues |
+| `--local` | Write findings as local markdown files instead of creating GitHub issues. No `gh` required |
+| `--output <path>` | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/issues/`) |
 | `--hosted` | Spin up Docker Compose for DAST scanning (used with `toolgate` domain) |
 | `--max-cost <amount>` | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly. |
 | `--dry-run` | Validate config and show which lenses would run, then exit (no agents executed) |
@@ -176,17 +187,17 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 
 ## How It Works
 
-1. Validates target repo (or server for `deploy` mode), agent CLI, and `gh` auth
+1. Validates target repo (or server for `deploy` mode), agent CLI, and `gh` auth (skipped with `--local`)
 2. Resolves lens list (all, `--domain`, or `--focus`)
 3. If `--dry-run`: prints mode, agent, project path, and the full lens list, then exits — no agents run and no prompts are shown
 4. For `--agent claude`: prompts for acknowledgment that `--dangerously-skip-permissions` only skips interactive permission prompts, not safety filters. `--yes` bypasses this prompt
 5. For `deploy` mode: prompts for explicit authorization confirmation (`I confirm I am authorized to audit this server [y/N]`). Displays legal references (§202a StGB, CFAA, EU Directive 2013/40/EU). `--yes` bypasses this prompt
 6. Shows confirmation prompt (target repo, mode, lens count, estimated cost) — requires `y` to proceed, or use `--yes` to skip. If `--max-cost` is set and the estimate exceeds it, a warning is displayed
-7. Ensures GitHub labels exist (`audit:<domain>/<lens>`)
+7. Ensures GitHub labels exist (skipped with `--local`)
 8. For each lens:
    - Composes prompt from base template + lens expert focus
    - Runs agent in target repo directory
-   - Agent reads code, finds issues, creates GitHub issues via `gh`
+   - Agent reads code, finds issues, and creates GitHub issues via `gh` (or writes markdown files in `--local` mode)
    - Loops until DONE detected (3× streak for audit/feature/bugfix, 1× for other modes)
 9. Generates `logs/<run-id>/summary.json`
 
@@ -225,7 +236,8 @@ Completed lenses are skipped. The run ID is printed at startup and found in `log
 
 ## Output
 
-- **GitHub Issues** — Created directly in the target repo with severity-prefixed titles and domain labels
+- **GitHub Issues** — Created directly in the target repo with severity-prefixed titles and domain labels (default)
+- **Local Markdown** — With `--local`, findings are written as individual markdown files to `<output-dir>/<domain>/<lens-id>/NNN-slug.md` with YAML frontmatter (title, severity, domain, lens, labels). Default output directory: `logs/<run-id>/issues/`
 - **Logs** — `logs/<run-id>/<domain>/<lens>/iteration-N-TIMESTAMP.txt`
 - **Summary** — `logs/<run-id>/summary.json`
 

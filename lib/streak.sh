@@ -55,3 +55,12 @@ count_repo_issues() {
   gh issue list -R "$repo" --label "$label" --state open --limit 1000 --json number 2>/dev/null \
     | jq 'length' 2>/dev/null || echo 0
 }
+
+# count_dry_run_issues <dir>
+#   Counts .md files in a directory (maxdepth 1, no subdirectories).
+#   Returns count on stdout. Returns 0 if directory is empty or missing.
+count_dry_run_issues() {
+  local dir="$1"
+  [[ -d "$dir" ]] || { echo 0; return 0; }
+  find "$dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null | wc -l
+}

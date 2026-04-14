@@ -86,6 +86,8 @@ Every issue MUST be scoped so that a human can complete it in approximately 1 ho
 
 {{MAX_ISSUES_SECTION}}
 
+{{LOCAL_MODE_SECTION}}
+
 ## Termination
 - When you have completed your audit and created all relevant issues, output **DONE** as the very first word of your response AND **DONE** as the very last word.
 - If you created issues, list them briefly, then end with DONE.

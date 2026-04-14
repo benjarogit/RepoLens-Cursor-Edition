@@ -4,6 +4,13 @@ All notable changes to RepoLens will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `--local` flag: write findings as local markdown files instead of creating GitHub issues — no `gh` CLI required
+- `--output <path>` flag: custom output directory for local markdown files (requires `--local`, defaults to `logs/<run-id>/issues/`)
+
 ## [0.1.0] - 2026-04-14
 
 ### Added

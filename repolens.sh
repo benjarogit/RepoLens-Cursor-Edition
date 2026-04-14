@@ -61,6 +61,8 @@ Options:
   --resume <run-id>       Resume a previous interrupted run
   --spec <file>           Spec/PRD/roadmap to guide analysis (any text file)
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
+  --local                 Write findings as local markdown files instead of creating GitHub issues
+  --output <path>         Output directory for local markdown files (requires --local, default: logs/<run-id>/issues/)
   --hosted                Spin up project's Docker Compose in isolated network for DAST scanning and testing
   --yes, -y               Skip confirmation prompt (for CI/automation)
   --max-cost <amount>     Warn if min. cost estimate exceeds this dollar amount (real cost typically 2–5x higher)
@@ -94,6 +96,9 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --mode content --focus topic-extraction --source ~/docs/textbook.pdf
   repolens.sh --project ~/myapp --agent claude --hosted --domain toolgate
   repolens.sh --project ~/myapp --agent claude --hosted --focus dast-web
+  repolens.sh --project ~/myapp --agent claude --local
+  repolens.sh --project ~/myapp --agent claude --local --output ~/reports/myapp-audit
+  repolens.sh --project ~/myapp --agent claude --local --domain security --parallel
 EOF
 
   # Dynamic section: list modes, domains, and lenses from config
@@ -197,6 +202,8 @@ HOSTED=false
 AUTO_YES=false
 MAX_COST=""
 DRY_RUN=false
+LOCAL_MODE=false
+OUTPUT_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -267,6 +274,15 @@ while [[ $# -gt 0 ]]; do
       AUTO_YES=true
       shift
       ;;
+    --local)
+      LOCAL_MODE=true
+      shift
+      ;;
+    --output)
+      [[ $# -ge 2 ]] || die "Option --output requires a path argument."
+      OUTPUT_DIR="$2"
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=true
       shift
@@ -297,6 +313,11 @@ done
 # --- Validate required args ---
 [[ -n "$AGENT" ]] || { usage; die "Missing required argument: --agent"; }
 [[ -n "$PROJECT_PATH" ]] || { usage; die "Missing required argument: --project"; }
+
+# --- Validate --output requires --local ---
+if [[ -n "$OUTPUT_DIR" ]] && ! $LOCAL_MODE; then
+  die "--output requires --local (use --local to write findings as local markdown files)"
+fi
 
 # --- Handle --change flag ---
 if [[ -n "$CHANGE_STATEMENT" ]]; then
@@ -412,7 +433,9 @@ fi
 # --- Validate agent and dependencies ---
 validate_agent "$AGENT"
 require_cmd git
-require_cmd gh
+if ! $LOCAL_MODE; then
+  require_cmd gh
+fi
 require_cmd jq
 
 case "$AGENT" in
@@ -422,7 +445,9 @@ case "$AGENT" in
 esac
 
 # --- Validate gh auth ---
-gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run 'gh auth login'."
+if ! $LOCAL_MODE; then
+  gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run 'gh auth login'."
+fi
 
 # --- Generate or resume run ID ---
 if [[ -n "$RESUME_RUN_ID" ]]; then
@@ -439,6 +464,15 @@ DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
 LENSES_DIR="$SCRIPT_DIR/prompts/lenses"
+
+# --- Resolve local mode output directory ---
+if $LOCAL_MODE; then
+  if [[ -z "$OUTPUT_DIR" ]]; then
+    OUTPUT_DIR="$LOG_BASE/issues"
+  fi
+  mkdir -p "$OUTPUT_DIR"
+  OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+fi
 
 # --- Validate config files exist ---
 [[ -f "$DOMAINS_FILE" ]] || die "Missing config: $DOMAINS_FILE"
@@ -460,6 +494,7 @@ log_info "Agent: $AGENT | Mode: $MODE | Parallel: $PARALLEL"
 [[ "$MODE" == "content" ]] && log_info "Content mode: content audit & creation (DONE streak: 1)"
 [[ -n "$CHANGE_STATEMENT" ]] && log_info "Change: $CHANGE_STATEMENT"
 [[ -n "$SOURCE_FILE" ]] && log_info "Source: $SOURCE_FILE"
+$LOCAL_MODE && log_info "Local mode: writing local markdown files to $OUTPUT_DIR"
 if $HOSTED; then
   log_info "Hosted mode: spinning up Docker environment..."
   if ! setup_hosted_env "$PROJECT_PATH" "$RUN_ID"; then
@@ -683,7 +718,11 @@ confirm_run() {
 
   echo ""
   echo "This will run $TOTAL_LENSES analysis agent(s) against the repository above."
-  echo "Each agent may create GitHub issues directly."
+  if $LOCAL_MODE; then
+    echo "Findings will be written as local markdown files to: $OUTPUT_DIR"
+  else
+    echo "Each agent may create GitHub issues directly."
+  fi
   echo ""
   read -rp "Proceed? [y/N] " answer
   case "$answer" in
@@ -760,6 +799,9 @@ if $DRY_RUN; then
   echo "Agent:        $AGENT"
   echo "Project:      $PROJECT_PATH"
   echo "Lenses:       $TOTAL_LENSES"
+  if $LOCAL_MODE; then
+    echo "Output:       local markdown ($OUTPUT_DIR)"
+  fi
   echo ""
   echo "Lenses that would run:"
   for lens_entry in "${LENS_LIST[@]}"; do
@@ -814,8 +856,10 @@ ensure_labels() {
   log_info "Labels ready."
 }
 
-# Only create labels if we have a remote repo
-if git -C "$PROJECT_PATH" remote get-url origin >/dev/null 2>&1; then
+# Only create labels if we have a remote repo and not in local mode
+if $LOCAL_MODE; then
+  log_info "Local mode — skipping label creation."
+elif git -C "$PROJECT_PATH" remote get-url origin >/dev/null 2>&1; then
   ensure_labels
 else
   log_warn "No remote origin — skipping label creation. Agent will create labels locally."
@@ -823,7 +867,11 @@ fi
 
 # --- Initialize summary ---
 if [[ ! -f "$SUMMARY_FILE" ]] || [[ -z "$RESUME_RUN_ID" ]]; then
-  init_summary "$SUMMARY_FILE" "$RUN_ID" "$PROJECT_PATH" "$MODE" "$AGENT" "$SPEC_FILE" "$MAX_ISSUES"
+  if $LOCAL_MODE; then
+    init_summary "$SUMMARY_FILE" "$RUN_ID" "$PROJECT_PATH" "$MODE" "$AGENT" "$SPEC_FILE" "$MAX_ISSUES" "local" "$OUTPUT_DIR"
+  else
+    init_summary "$SUMMARY_FILE" "$RUN_ID" "$PROJECT_PATH" "$MODE" "$AGENT" "$SPEC_FILE" "$MAX_ISSUES"
+  fi
 fi
 
 # --- Global issue counter ---
@@ -889,9 +937,15 @@ run_lens() {
   [[ -n "$SOURCE_FILE" ]] && vars+="|SOURCE_PATH=${SOURCE_FILE}"
   [[ -n "$HOSTED_NETWORK" ]] && vars+="|HOSTED_NETWORK=${HOSTED_NETWORK}"
 
-  # Compose prompt
-  local prompt
-  prompt="$(compose_prompt "$base_file" "$lens_file" "$vars" "$SPEC_FILE" "$MODE" "$MAX_ISSUES" "$SOURCE_FILE" "$HOSTED")"
+  # Compose prompt (pass local mode params)
+  local prompt lens_local_dir=""
+  if $LOCAL_MODE; then
+    lens_local_dir="$OUTPUT_DIR/$domain/$lens_id"
+    mkdir -p "$lens_local_dir"
+    prompt="$(compose_prompt "$base_file" "$lens_file" "$vars" "$SPEC_FILE" "$MODE" "$MAX_ISSUES" "$SOURCE_FILE" "$HOSTED" "true" "$lens_local_dir")"
+  else
+    prompt="$(compose_prompt "$base_file" "$lens_file" "$vars" "$SPEC_FILE" "$MODE" "$MAX_ISSUES" "$SOURCE_FILE" "$HOSTED")"
+  fi
 
   # Create lens log directory
   local lens_log_dir="$LOG_BASE/$domain/$lens_id"
@@ -899,9 +953,13 @@ run_lens() {
 
   log_info "[$domain/$lens_id] Starting lens: $lens_name"
 
-  # Snapshot issue count before loop (deterministic counting via gh API)
+  # Snapshot issue count before loop
   local issues_baseline=0
-  issues_baseline="$(count_repo_issues "$REPO_OWNER/$REPO_NAME" "$lens_label")"
+  if $LOCAL_MODE; then
+    issues_baseline="$(count_dry_run_issues "$lens_local_dir")"
+  else
+    issues_baseline="$(count_repo_issues "$REPO_OWNER/$REPO_NAME" "$lens_label")"
+  fi
 
   # Run lens loop with DONE streak detection
   local iteration=0
@@ -922,9 +980,13 @@ run_lens() {
       log_warn "[$domain/$lens_id] Agent returned non-zero on iteration $iteration. Continuing."
     fi
 
-    # Count issues created by this lens (deterministic: gh issue list delta)
+    # Count issues created by this lens
     local current_issue_count
-    current_issue_count="$(count_repo_issues "$REPO_OWNER/$REPO_NAME" "$lens_label")"
+    if $LOCAL_MODE; then
+      current_issue_count="$(count_dry_run_issues "$lens_local_dir")"
+    else
+      current_issue_count="$(count_repo_issues "$REPO_OWNER/$REPO_NAME" "$lens_label")"
+    fi
     lens_issues=$((current_issue_count - issues_baseline))
     [[ "$lens_issues" -lt 0 ]] && lens_issues=0
     local iter_issues=$((lens_issues - prev_lens_issues))

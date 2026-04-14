@@ -27,19 +27,21 @@ read_spec_file() {
   sed '1s/^\xEF\xBB\xBF//' "$file" | tr -d '\r'
 }
 
-# compose_prompt <base_template> <lens_file> <variables_string> [spec_file] [mode] [max_issues] [source_file] [hosted]
+# compose_prompt <base_template> <lens_file> <variables_string> [spec_file] [mode] [max_issues] [source_file] [hosted] [local_mode] [local_output_dir]
 #   1. Reads the base template
 #   2. Reads the lens body
 #   3. Substitutes {{LENS_BODY}} in base template with lens body
 #   4. Substitutes all other {{VARIABLE}} placeholders using an associative array
 #   5. Builds and substitutes {{MAX_ISSUES_SECTION}}
-#   6. Builds and substitutes {{SOURCE_SECTION}} (source material for content creation)
-#   7. Builds and substitutes {{SPEC_SECTION}} LAST (prevents placeholder injection)
+#   6. Builds and substitutes {{LOCAL_MODE_SECTION}} (local markdown export override)
+#   7. Builds and substitutes {{SOURCE_SECTION}} (source material for content creation)
+#   8. Builds and substitutes {{SPEC_SECTION}} LAST (prevents placeholder injection)
 #   Variables string format: "KEY1=VALUE1|KEY2=VALUE2|..."
 compose_prompt() {
   local base_file="$1" lens_file="$2" vars_string="$3"
   local spec_file="${4:-}" mode="${5:-audit}" max_issues="${6:-}" source_file="${7:-}"
   local hosted="${8:-false}"
+  local local_mode="${9:-false}" local_output_dir="${10:-}"
   local base_content lens_body spec_section prompt key value
 
   base_content="$(cat "$base_file")"
@@ -67,6 +69,61 @@ This limit overrides the instruction to find all issues. Prioritize your finding
   fi
 
   prompt="${prompt//\{\{MAX_ISSUES_SECTION\}\}/$max_issues_section}"
+
+  # Step 3b: Build and insert local mode section
+  local local_mode_section=""
+  if [[ "$local_mode" == "true" && -n "$local_output_dir" ]]; then
+    local_mode_section="## LOCAL MODE OVERRIDE
+
+**IMPORTANT: This overrides the Issue Creation rules above.**
+
+You are running in LOCAL MODE. Do **NOT** use \`gh issue create\` or \`gh label create\` commands. Instead, write each finding as a standalone markdown file.
+
+### Output Directory
+Write all findings to: \`${local_output_dir}\`
+
+### File Naming Convention
+Name files as: \`NNN-<slug>.md\` where NNN is a zero-padded sequence number (001, 002, ...) and \`<slug>\` is a lowercase, hyphenated slug derived from the finding title.
+
+### File Format
+Each markdown file must contain YAML frontmatter followed by the finding body:
+\`\`\`markdown
+---
+title: \"[SEVERITY] Finding title\"
+severity: HIGH|MEDIUM|LOW|INFO
+domain: <domain>
+lens: <lens-id>
+labels:
+  - \"<lens-label>\"
+---
+
+## Summary
+...
+
+## Impact
+...
+
+## Evidence
+...
+
+## Recommended Fix
+...
+
+## References
+...
+\`\`\`
+
+### Deduplication
+Before writing a new finding, check if a file with a similar title already exists in the output directory. If so, skip the duplicate.
+
+### Key Rules
+- Do **NOT** use \`gh issue create\` — write markdown files instead
+- Do **NOT** use \`gh label create\` — no GitHub labels needed
+- Do **NOT** use \`gh issue list\` — check existing files in the output directory instead
+- Create the output subdirectory with \`mkdir -p\` before writing files"
+  fi
+
+  prompt="${prompt//\{\{LOCAL_MODE_SECTION\}\}/$local_mode_section}"
 
   # Step 4: Build and insert source section
   local source_section=""

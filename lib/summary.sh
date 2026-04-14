@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # RepoLens — JSON summary generation
 
-# init_summary <summary_file> <run_id> <project_path> <mode> <agent> [spec_file] [max_issues]
+# init_summary <summary_file> <run_id> <project_path> <mode> <agent> [spec_file] [max_issues] [output_mode] [output_dir]
 #   Creates initial summary.json skeleton
 init_summary() {
   local file="$1" run_id="$2" project="$3" mode="$4" agent="$5"
   local spec_file="${6:-}" max_issues="${7:-}"
+  local output_mode="${8:-github}" output_dir="${9:-}"
   local spec_json="null"
   if [[ -n "$spec_file" ]]; then
     spec_json="$(jq -n --arg p "$spec_file" '$p')"
@@ -14,6 +15,12 @@ init_summary() {
   if [[ -n "$max_issues" ]]; then
     max_issues_json="$max_issues"
   fi
+  local output_dir_json="null"
+  if [[ -n "$output_dir" ]]; then
+    output_dir_json="$(jq -n --arg p "$output_dir" '$p')"
+  fi
+  local output_mode_json
+  output_mode_json="$(jq -n --arg m "$output_mode" '$m')"
   cat > "$file" <<ENDJSON
 {
   "run_id": "$run_id",
@@ -22,6 +29,8 @@ init_summary() {
   "agent": "$agent",
   "spec": $spec_json,
   "max_issues": $max_issues_json,
+  "output_mode": $output_mode_json,
+  "output_dir": $output_dir_json,
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "completed_at": null,
   "stopped_reason": null,

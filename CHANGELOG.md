@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Apache 2.0 license
 - Comprehensive README with CLI reference
+- CONTRIBUTING.md with lens contribution workflow, domain taxonomy, and DCO sign-off guide
 - Test suite with 17 test suites
 - Modular library architecture (`lib/`)
 

@@ -20,18 +20,71 @@
 | `git` | Yes | Repo validation, cloning | OS package manager (`apt install git`, `brew install git`, `nix-env -i git`) |
 | `jq` | Yes | JSON config parsing | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`) |
 | `gh` | Yes (unless `--local`) | Create issues, labels, query repos | [cli.github.com](https://cli.github.com) — run `gh auth login` after install |
-| Agent CLI | Yes (at least one) | Run analysis agents | See below |
+| Agent CLI | Yes (at least one) | Run analysis agents | See [Supported Agent CLIs](#supported-agent-clis) below for install + auth per CLI |
 | `docker` + `docker compose` | Only for `--hosted` | DAST scanning environment | OS package manager |
 
 ### Supported Agent CLIs
 
 | `--agent` value | CLI required | Notes |
 |-----------------|-------------|-------|
-| `claude` | `claude` | Primary, recommended |
+| `claude` | `claude` | Anthropic Claude Code |
 | `codex` | `codex` | OpenAI Codex CLI |
-| `spark` / `sparc` | `codex` | Uses Codex CLI with spark model |
-| `opencode` | `opencode` | Open-source agent CLI |
-| `opencode/<model>` | `opencode` | Specify a custom model |
+| `spark` / `sparc` | `codex` | Codex CLI with spark model |
+| `opencode` | `opencode` | Open-source agent CLI (75+ providers) |
+| `opencode/<model>` | `opencode` | opencode with a specific provider/model |
+
+You need **at least one** agent CLI installed and authenticated before running RepoLens. Install commands and auth flows differ per CLI — see below.
+
+> [!TIP]
+> **Recommendation:** Use `claude` for complex audits — it produces the highest-quality findings, but is also the most expensive option. For a cheaper alternative, run `opencode` with a MiniMax model — costs are a fraction of Claude, with the trade-off of more false positives. Calibrate on a single lens or domain (`--focus` / `--domain`) before committing to a full parallel run.
+
+#### Claude Code (`claude`)
+
+**Install** — Linux, macOS, WSL:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Other platforms: `brew install --cask claude-code` (macOS), `winget install Anthropic.ClaudeCode` (Windows), or see the [official setup guide](https://code.claude.com/docs/en/setup) for PowerShell and legacy npm options.
+
+**Authenticate:** run `claude` and follow the browser prompt. Requires a Claude **Pro, Max, Team, Enterprise, or Console** account — the free Claude.ai plan does not include Claude Code. Alternatives: export `ANTHROPIC_API_KEY`, or route through Amazon Bedrock / Google Vertex AI / Microsoft Foundry.
+
+#### OpenAI Codex (`codex`)
+
+**Install:**
+
+```bash
+npm install -g @openai/codex
+```
+
+Alternatives: `brew install --cask codex` (macOS), or prebuilt binaries from [github.com/openai/codex/releases](https://github.com/openai/codex/releases).
+
+**Authenticate** — pick one:
+
+- `codex login` — browser flow using a ChatGPT Plus / Pro / Business / Edu / Enterprise subscription (recommended; unlocks fast mode)
+- `printenv OPENAI_API_KEY | codex login --with-api-key` — pay-as-you-go API billing
+- Or export `OPENAI_API_KEY` in your shell
+
+The `spark` / `sparc` agent values reuse the same `codex` binary — installing once covers all three.
+
+#### opencode (`opencode`)
+
+**Install:**
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+Alternatives: `npm install -g opencode-ai` (npm package is `opencode-ai`, binary is `opencode`), `brew install anomalyco/tap/opencode`, `paru -S opencode-bin` (Arch), or see [opencode.ai/docs](https://opencode.ai/docs/) for Windows / Docker options.
+
+**Authenticate:**
+
+```bash
+opencode auth login
+```
+
+Pick a provider from the interactive list — opencode supports 75+ providers (Anthropic, OpenAI, Bedrock, Vertex, Azure, Groq, DeepSeek, xAI, OpenRouter, Together AI, MiniMax, local Ollama, …). Credentials are stored in `~/.local/share/opencode/auth.json`.
 
 ### Quickstart
 

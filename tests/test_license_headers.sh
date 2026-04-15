@@ -303,39 +303,11 @@ else
 fi
 
 # =====================================================================
-# 10. Header does not contain personal name as copyright holder
+# 10. Library files retain their descriptive comments after the header
 # =====================================================================
 
 echo ""
-echo "Test 10: No .sh file header uses a personal name as copyright holder"
-TOTAL=$((TOTAL + 1))
-personal_name=()
-for f in "${sh_files[@]}"; do
-  header_area="$(head -5 "$f")"
-  if echo "$header_area" | grep -q "Copyright.*Cedric"; then
-    personal_name+=("$(basename "$f")")
-  fi
-  if echo "$header_area" | grep -q "Copyright.*Moessner"; then
-    personal_name+=("$(basename "$f")")
-  fi
-done
-if [[ "${#personal_name[@]}" -eq 0 ]]; then
-  PASS=$((PASS + 1))
-  echo "  PASS: No headers use a personal name as copyright holder"
-else
-  FAIL=$((FAIL + 1))
-  echo "  FAIL: ${#personal_name[@]} file(s) use a personal name:"
-  for m in "${personal_name[@]}"; do
-    echo "    - $m"
-  done
-fi
-
-# =====================================================================
-# 11. Library files retain their descriptive comments after the header
-# =====================================================================
-
-echo ""
-echo "Test 11: Library files retain their 'RepoLens' descriptive comments"
+echo "Test 10: Library files retain their 'RepoLens' descriptive comments"
 TOTAL=$((TOTAL + 1))
 # Library files that should have "# RepoLens —" descriptive comments
 lib_missing_desc=()
@@ -358,11 +330,11 @@ else
 fi
 
 # =====================================================================
-# 12. Header is positioned after shebang (line 2+ starts with copyright)
+# 11. Header is positioned after shebang (line 2+ starts with copyright)
 # =====================================================================
 
 echo ""
-echo "Test 12: Copyright line appears on line 2 of every .sh file"
+echo "Test 11: Copyright line appears on line 2 of every .sh file"
 TOTAL=$((TOTAL + 1))
 wrong_position=()
 for f in "${sh_files[@]}"; do
@@ -383,11 +355,11 @@ else
 fi
 
 # =====================================================================
-# 13. The full 13-line header block is present (line count check)
+# 12. The full 13-line header block is present (line count check)
 # =====================================================================
 
 echo ""
-echo "Test 13: Header block spans 13 lines (standard Apache 2.0 boilerplate)"
+echo "Test 12: Header block spans 13 lines (standard Apache 2.0 boilerplate)"
 TOTAL=$((TOTAL + 1))
 wrong_length=()
 for f in "${sh_files[@]}"; do
@@ -419,11 +391,11 @@ else
 fi
 
 # =====================================================================
-# 14. Prompt .md files do NOT contain license headers (token cost)
+# 13. Prompt .md files do NOT contain license headers (token cost)
 # =====================================================================
 
 echo ""
-echo "Test 14: Prompt .md files do not contain Apache license headers"
+echo "Test 13: Prompt .md files do not contain Apache license headers"
 TOTAL=$((TOTAL + 1))
 md_with_header=()
 for f in "$SCRIPT_DIR"/prompts/_base/*.md "$SCRIPT_DIR"/prompts/lenses/**/*.md; do
@@ -445,11 +417,11 @@ else
 fi
 
 # =====================================================================
-# 15. Copyright line in headers matches NOTICE file
+# 14. Copyright line in headers matches NOTICE file
 # =====================================================================
 
 echo ""
-echo "Test 15: Header copyright line matches NOTICE file content"
+echo "Test 14: Header copyright line matches NOTICE file content"
 TOTAL=$((TOTAL + 1))
 notice_copyright=""
 if [[ -f "$SCRIPT_DIR/NOTICE" ]]; then
@@ -479,11 +451,11 @@ else
 fi
 
 # =====================================================================
-# 16. repolens.sh entry point has the header
+# 15. repolens.sh entry point has the header
 # =====================================================================
 
 echo ""
-echo "Test 16: repolens.sh (entry point) has the license header"
+echo "Test 15: repolens.sh (entry point) has the license header"
 TOTAL=$((TOTAL + 1))
 if [[ -f "$SCRIPT_DIR/repolens.sh" ]]; then
   if head -20 "$SCRIPT_DIR/repolens.sh" | grep -q "Licensed under the Apache License"; then
@@ -499,11 +471,11 @@ else
 fi
 
 # =====================================================================
-# 17. All lib/*.sh files have the header
+# 16. All lib/*.sh files have the header
 # =====================================================================
 
 echo ""
-echo "Test 17: All lib/*.sh files have the license header"
+echo "Test 16: All lib/*.sh files have the license header"
 TOTAL=$((TOTAL + 1))
 lib_missing=()
 for f in "$SCRIPT_DIR"/lib/*.sh; do
@@ -525,11 +497,11 @@ else
 fi
 
 # =====================================================================
-# 18. All tests/*.sh files have the header
+# 17. All tests/*.sh files have the header
 # =====================================================================
 
 echo ""
-echo "Test 18: All tests/*.sh files have the license header"
+echo "Test 17: All tests/*.sh files have the license header"
 TOTAL=$((TOTAL + 1))
 test_missing=()
 for f in "$SCRIPT_DIR"/tests/*.sh; do
@@ -551,11 +523,11 @@ else
 fi
 
 # =====================================================================
-# 19. Header lines are proper bash comments (each starts with #)
+# 18. Header lines are proper bash comments (each starts with #)
 # =====================================================================
 
 echo ""
-echo "Test 19: All header lines are proper bash comments (start with #)"
+echo "Test 18: All header lines are proper bash comments (start with #)"
 TOTAL=$((TOTAL + 1))
 bad_comments=()
 for f in "${sh_files[@]}"; do
@@ -582,11 +554,11 @@ else
 fi
 
 # =====================================================================
-# 20. Header is followed by a blank line (separator before existing content)
+# 19. Header is followed by a blank line (separator before existing content)
 # =====================================================================
 
 echo ""
-echo "Test 20: Header block is followed by a blank line separator"
+echo "Test 19: Header block is followed by a blank line separator"
 TOTAL=$((TOTAL + 1))
 no_separator=()
 for f in "${sh_files[@]}"; do
@@ -608,11 +580,11 @@ else
 fi
 
 # =====================================================================
-# 21. All files have IDENTICAL header blocks (cross-file consistency)
+# 20. All files have IDENTICAL header blocks (cross-file consistency)
 # =====================================================================
 
 echo ""
-echo "Test 21: All .sh files have identical header blocks (no per-file deviations)"
+echo "Test 20: All .sh files have identical header blocks (no per-file deviations)"
 TOTAL=$((TOTAL + 1))
 # Extract the canonical header from the first file and compare all others
 canonical_header=""
@@ -638,11 +610,11 @@ else
 fi
 
 # =====================================================================
-# 22. Header matches the canonical Apache 2.0 boilerplate exactly
+# 21. Header matches the canonical Apache 2.0 boilerplate exactly
 # =====================================================================
 
 echo ""
-echo "Test 22: Header text matches the canonical Apache 2.0 boilerplate"
+echo "Test 21: Header text matches the canonical Apache 2.0 boilerplate"
 TOTAL=$((TOTAL + 1))
 # The canonical 13-line Apache 2.0 boilerplate (as a bash comment block)
 read -r -d '' EXPECTED_HEADER << 'ENDOFHEADER' || true

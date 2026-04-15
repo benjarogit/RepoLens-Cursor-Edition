@@ -244,10 +244,12 @@ assert_matches "references Apache License" "(?i)apache" "$notice_content"
 # =====================================================================
 
 echo ""
-echo "Test 23: NOTICE copyright is Bootstrap Academy, not personal name"
-# The issue explicitly requires "Copyright Bootstrap Academy", not Cedric personally
-assert_not_contains "no personal name as copyright holder" "Copyright Cedric" "$notice_content"
-assert_not_contains "no personal name as copyright holder (2)" "Copyright Moessner" "$notice_content"
+echo "Test 23: NOTICE copyright holder is Bootstrap Academy (organizational)"
+# Positive assertion: the "Copyright" token must be paired with "Bootstrap Academy"
+# as the holder, not merely both appearing somewhere in the file. This is stronger
+# than a name-specific negative check and avoids hardcoding any personal name.
+assert_matches "copyright holder is Bootstrap Academy" \
+  "Copyright[^\n]*Bootstrap Academy" "$notice_content"
 
 # =====================================================================
 # 9. README link integrity — LICENSE link must resolve

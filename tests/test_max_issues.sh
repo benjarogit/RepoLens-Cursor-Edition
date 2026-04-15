@@ -14,6 +14,11 @@
 # limitations under the License.
 
 # Tests for the --max-issues flag implementation
+
+# Validation tests intentionally evaluate regexes against string literals
+# (e.g. "0", "-1", "42") to verify the regex itself, not a variable. Silence
+# SC2050's "expression is constant" warning file-wide rather than per-test.
+# shellcheck disable=SC2050
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

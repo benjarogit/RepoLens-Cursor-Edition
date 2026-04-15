@@ -32,7 +32,7 @@ set -uo pipefail
 
 # Resolve the repo root relative to this script, regardless of cwd.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR" || exit 1
 
 # Recursion guard: mirrors the Makefile behavior. When run-all.sh (or `make
 # check`) is invoked from within a test that itself calls either runner, skip

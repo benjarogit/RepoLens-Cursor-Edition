@@ -401,7 +401,7 @@ md_with_header=()
 for f in "$SCRIPT_DIR"/prompts/_base/*.md "$SCRIPT_DIR"/prompts/lenses/**/*.md; do
   if [[ -f "$f" ]]; then
     if head -20 "$f" | grep -q "Licensed under the Apache License"; then
-      md_with_header+=("$(echo "$f" | sed "s|$SCRIPT_DIR/||")")
+      md_with_header+=("${f#"$SCRIPT_DIR"/}")
     fi
   fi
 done
@@ -533,6 +533,7 @@ bad_comments=()
 for f in "${sh_files[@]}"; do
   # Read lines 2 through 14 (the 13-line header block)
   line_num=0
+  # shellcheck disable=SC2094  # basename only reads $f as a string; the while reads $f's content — no write.
   while IFS= read -r line; do
     line_num=$((line_num + 1))
     if [[ "$line_num" -lt 2 || "$line_num" -gt 14 ]]; then continue; fi

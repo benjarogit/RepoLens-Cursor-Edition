@@ -18,6 +18,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/template.sh
+# shellcheck disable=SC1091  # path is dynamic via $SCRIPT_DIR; source directive above names the target.
 source "$SCRIPT_DIR/lib/template.sh"
 
 PASS=0

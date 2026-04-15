@@ -34,21 +34,24 @@ init_logging() {
 
 # Log info message to stdout and log file.
 log_info() {
-  local msg="[INFO] [$(_log_ts)] $*"
+  local msg
+  msg="[INFO] [$(_log_ts)] $*"
   printf "%s\n" "$msg"
   [[ -n "$_REPOLENS_LOG_FILE" ]] && printf "%s\n" "$msg" >> "$_REPOLENS_LOG_FILE"
 }
 
 # Log warning message to stderr and log file.
 log_warn() {
-  local msg="[WARN] [$(_log_ts)] $*"
+  local msg
+  msg="[WARN] [$(_log_ts)] $*"
   printf "%s\n" "$msg" >&2
   [[ -n "$_REPOLENS_LOG_FILE" ]] && printf "%s\n" "$msg" >> "$_REPOLENS_LOG_FILE"
 }
 
 # Log error message to stderr and log file.
 log_error() {
-  local msg="[ERROR] [$(_log_ts)] $*"
+  local msg
+  msg="[ERROR] [$(_log_ts)] $*"
   printf "%s\n" "$msg" >&2
   [[ -n "$_REPOLENS_LOG_FILE" ]] && printf "%s\n" "$msg" >> "$_REPOLENS_LOG_FILE"
 }

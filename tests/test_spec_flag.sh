@@ -188,7 +188,9 @@ Backslash: C:\Users\test
 Braces: {{ and }}
 SPECEOF
 result="$(compose_prompt "$TMPDIR/base.md" "$TMPDIR/lens.md" "LENS_NAME=SpecialBot" "$TMPDIR/special-spec.md" "audit")"
+# shellcheck disable=SC2016
 assert_contains "dollar sign" 'Price is $100' "$result"
+# shellcheck disable=SC2016
 assert_contains "backticks" '`backticks`' "$result"
 assert_contains "pipe" 'a | b' "$result"
 
@@ -283,6 +285,7 @@ fi
 echo ""
 echo "Test 15: Binary file detection"
 printf 'Hello\x00World' > "$TMPDIR/binary-spec.bin"
+# shellcheck disable=SC2094  # cmp reads stdin and compares to the file — it never writes.
 if ! tr -d '\0' < "$TMPDIR/binary-spec.bin" | cmp -s - "$TMPDIR/binary-spec.bin"; then
   TOTAL=$((TOTAL + 1))
   PASS=$((PASS + 1))

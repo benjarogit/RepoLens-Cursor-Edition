@@ -1,0 +1,11 @@
+# AutoDev configuration for RepoLens.
+#
+# Pure-bash quality gate: avoids depending on `make` (which is not always on
+# PATH in the environments where AutoDev runs, e.g. NixOS default shells).
+# The runner mirrors the Makefile's output format so the same parser
+# (AutoDev's extract_failing_tests) works for both `make check` and this.
+
+project_type: bash
+
+quality_gate:
+  - bash tests/run-all.sh

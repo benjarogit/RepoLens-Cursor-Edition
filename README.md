@@ -365,7 +365,9 @@ Completed lenses are skipped. The run ID is printed at startup and found in `log
 - **Logs** — `logs/<run-id>/<domain>/<lens>/iteration-N-TIMESTAMP.txt`
 - **Summary** — `logs/<run-id>/summary.json`
 
-## Testing
+## Development
+
+### Running Tests
 
 Run the full test suite:
 
@@ -373,7 +375,13 @@ Run the full test suite:
 make check
 ```
 
-This discovers and runs all `tests/test_*.sh` scripts, reports per-suite results, and exits non-zero if any suite fails.
+Or invoke the pure-bash runner directly (useful in environments without `make`):
+
+```bash
+bash tests/run-all.sh
+```
+
+Either entry point discovers and runs all `tests/test_*.sh` scripts, reports per-suite results, and exits non-zero if any suite fails. Individual suites can also be run standalone, e.g. `bash tests/test_streak_ansi.sh`.
 
 ## Changelog
 
@@ -422,7 +430,37 @@ RepoLens passes `--dangerously-skip-permissions` to the Claude agent CLI. This f
 
 When using `--agent claude`, RepoLens displays an explanation of the flag and asks for acknowledgment before running any agents. Use `--yes` to skip this prompt in CI/automation.
 
+## Troubleshooting
+
+Most first-run failures fall into one of these patterns. Errors are quoted verbatim from the script.
+
+| Error / Symptom | Cause | Fix |
+|-----------------|-------|-----|
+| `ERROR: RepoLens requires bash 4.0 or newer.` | bash < 4 (macOS ships 3.2 by default) | `brew install bash`, then re-run with the Homebrew `bash` first on `PATH` |
+| `Missing required command: jq` | jq not installed | `apt install jq` / `brew install jq` / `nix-env -i jq` |
+| `Missing required command: gh` | GitHub CLI not installed | Install from [cli.github.com](https://cli.github.com), or pass `--local` to skip GitHub entirely |
+| `gh is not authenticated. Run 'gh auth login'.` | `gh` not authenticated, or token expired | `gh auth login` (or `gh auth refresh` if your token is stale) |
+| `Missing required command: claude` (or `codex` / `opencode`) | Agent CLI not installed | See [Supported Agent CLIs](#supported-agent-clis) for install + auth |
+| Agent prompts for login on every iteration | Agent CLI not authenticated | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis) |
+| `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `opencode`, `opencode/<model>` |
+| `Not a git repository: …` | `--project` path is not a git repo | Use `git init`, pass a real repo path, or use `--mode deploy` (which doesn't require git) |
+| `--hosted requires Docker to be installed` | Docker missing or daemon stopped | Install Docker, then `sudo systemctl start docker` (or open Docker Desktop) |
+| `--hosted requires a docker-compose.yml or compose.yml in the project` | No compose file at project root | Add a compose file, or drop `--hosted` and audit statically |
+| `Lens '…' not found in domains.json` | Typo in `--focus` lens id, or wrong mode | List available lenses: `jq -r '.domains[].lenses[]' config/domains.json` |
+| `Domain '…' not found in domains.json` | Typo in `--domain` id, or mode mismatch | `discover` / `deploy` / `opensource` / `content` modes only see their own domain — see the [Modes](#modes) table |
+| `Mode 'custom' requires --change "your change statement"` | `--mode custom` without a change statement | Pass `--change "your statement"` |
+| `Hit safety cap (N iterations). Stopping lens.` | Agent never emitted `DONE` 3× in a row | Inspect `logs/<run-id>/<domain>/<lens>.log` — usually a model output-format issue, rate limit, or context overflow. Retry with a smaller `--max-parallel` or a different `--agent`. |
+| `Running non-interactively without --yes flag.` | CI / non-TTY without confirmation | Pass `--yes` (read [Security & Safe Use](#security--safe-use) first) |
+
+**Still stuck?** Check `logs/<run-id>/` — every lens writes its full agent transcript there, including the prompt sent and the raw output received. The run id is printed at startup. To list past runs: `ls -1 logs/`.
+
 ## Support
+
+RepoLens is free, open source, and maintained on a best-effort basis. **We do not offer free user support.** Please do not open GitHub issues asking for help with installation, environment setup, or general usage — the [Troubleshooting](#troubleshooting) section above covers the predictable failures, and `logs/<run-id>/` covers the rest.
+
+**Bug reports** (with reproduction steps) and **well-scoped feature requests** are welcome via [GitHub Issues](https://github.com/TheMorpheus407/RepoLens/issues).
+
+**Commercial / paid support** for companies — installation help, custom lens development, integration consulting, prioritized fixes — is available. Email [hallo@bootstrap.academy](mailto:hallo@bootstrap.academy).
 
 Supported by [Patreon patrons](https://patreon.com/themorpheus407) — thank you.
 

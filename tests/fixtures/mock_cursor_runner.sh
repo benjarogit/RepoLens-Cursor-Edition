@@ -1,33 +1,44 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-project=""
-prompt_file=""
+model=""
+workspace=""
+print_mode=false
+prompt=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project)
-      project="${2:-}"
+    --model)
+      model="${2:-}"
       shift 2
       ;;
-    --prompt-file)
-      prompt_file="${2:-}"
+    --model=*)
+      model="${1#--model=}"
+      shift
+      ;;
+    --workspace)
+      workspace="${2:-}"
       shift 2
+      ;;
+    --print)
+      print_mode=true
+      shift
       ;;
     *)
+      prompt="$1"
       shift
       ;;
   esac
 done
 
-if [[ -z "$project" || -z "$prompt_file" ]]; then
+if [[ "$print_mode" != true || -z "$workspace" || -z "$prompt" ]]; then
   echo "missing required args"
   exit 2
 fi
 
-if [[ ! -f "$prompt_file" ]]; then
-  echo "prompt file not found"
-  exit 3
+if [[ "$model" != "auto" ]]; then
+  echo "Named models unavailable Free plans can only use Auto. Switch to Auto or upgrade plans to continue."
+  exit 1
 fi
 
 echo "DONE"

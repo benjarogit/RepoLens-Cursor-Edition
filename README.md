@@ -116,6 +116,7 @@ export CURSOR_AGENT_TIMEOUT_SEC=45
 
 If you're on a Cursor Free plan, keep `CURSOR_AGENT_MODEL=auto` (named models are unavailable).
 If you want manual model control on paid plans, set for example `export CURSOR_AGENT_MODEL="gpt-5"`.
+If a named model is rejected by Cursor, RepoLens automatically retries once with `--model auto` so runs can continue without manual intervention.
 If Cursor returns usage-capacity errors (for example `You've hit your usage limit`), RepoLens now stops the affected lens early with status `agent-capacity` instead of burning through all 20 safety-cap iterations.
 
 ### Cursor-specific run examples (local mode)

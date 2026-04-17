@@ -77,6 +77,15 @@ assert_eq "cursor runner default binary is cursor-agent" "cursor-agent" "$(curso
 assert_eq "cursor runner command parser extracts first token" "mock-runner" "$(CURSOR_AGENT_RUNNER_CMD='mock-runner --flag value' cursor_runner_required_cmd)"
 assert_ok "cursor runner detects --model flag when split" bash -c 'source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"; cursor_runner_has_model_flag cursor-agent --model auto'
 assert_ok "cursor runner detects --model=... form" bash -c 'source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"; cursor_runner_has_model_flag cursor-agent --model=auto'
+assert_eq "strip --model value form" $'cursor-agent\n--force' "$(cursor_runner_strip_model_flag cursor-agent --model gpt-5 --force)"
+assert_eq "strip --model= value form" $'cursor-agent\n--force' "$(cursor_runner_strip_model_flag cursor-agent --model=gpt-5 --force)"
+
+assert_ok "runner falls back to auto when named model rejected" bash -c '
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  out="$(CURSOR_AGENT_RUNNER_CMD="'"$SCRIPT_DIR"'/tests/fixtures/mock_cursor_runner.sh" CURSOR_AGENT_MODEL="gpt-5" run_cursor_agent "Antworte mit DONE" "'"$SCRIPT_DIR"'" 2>/dev/null)"
+  grep -q "DONE" <<< "$out"
+'
 
 assert_fail_with "cursor backend enforces local-only guardrail" "--agent cursor currently supports only --local mode in Phase 1." \
   bash "$SCRIPT_DIR/repolens.sh" --project "$SCRIPT_DIR" --agent cursor --dry-run

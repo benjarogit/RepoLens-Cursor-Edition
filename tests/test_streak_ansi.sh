@@ -93,6 +93,11 @@ f="$TMPDIR/middle-done.txt"
 printf 'Analysis DONE here but more text follows\n' > "$f"
 assert_done "DONE only in middle (should not match)" "$f" "no"
 
+# DONE as standalone line in middle (should match)
+f="$TMPDIR/standalone-middle-done.txt"
+printf 'Summary follows\nDONE\nMore wrapped details after status line\n' > "$f"
+assert_done "DONE as standalone status line in middle" "$f" "yes"
+
 # Multiple ANSI sequences wrapping DONE
 f="$TMPDIR/multi-ansi.txt"
 printf '\e[0m\e[1m\e[36mDONE\e[0m\e[0m\n' > "$f"

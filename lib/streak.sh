@@ -51,7 +51,16 @@ check_done() {
   local first_norm last_norm
   first_norm="$(normalize_word "$(first_word "$file")")"
   last_norm="$(normalize_word "$(last_word "$file")")"
-  [[ "$first_norm" == "DONE" || "$last_norm" == "DONE" ]]
+  if [[ "$first_norm" == "DONE" || "$last_norm" == "DONE" ]]; then
+    return 0
+  fi
+
+  # Cursor and other agents sometimes emit DONE as a dedicated status line
+  # inside a longer wrapped response. Accept a standalone DONE line as complete.
+  strip_ansi < "$file" | awk '
+    /^[[:space:]]*DONE[[:space:][:punct:]]*$/ { found=1 }
+    END { exit(found ? 0 : 1) }
+  '
 }
 
 # count_issues_in_output <file>

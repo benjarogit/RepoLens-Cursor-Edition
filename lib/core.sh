@@ -45,11 +45,11 @@ require_cmd() {
 validate_agent() {
   local agent="$1"
   case "$agent" in
-    claude|codex|spark|sparc|opencode) ;;
+    claude|codex|spark|sparc|opencode|cursor) ;;
     opencode/*)
       [[ -n "${agent#opencode/}" ]] || die "Invalid agent: $agent (missing model after 'opencode/')."
       ;;
-    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, opencode, or opencode/<model>)" ;;
+    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, cursor, opencode, or opencode/<model>)" ;;
   esac
 }
 
@@ -77,6 +77,9 @@ run_agent() {
     exec </dev/null
 
     case "$agent" in
+      cursor)
+        run_cursor_agent "$prompt" "$project_path"
+        ;;
       claude)
         timeout "${timeout_secs}s" claude --dangerously-skip-permissions -p "$prompt"
         ;;

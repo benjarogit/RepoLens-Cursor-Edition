@@ -30,6 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Source libraries ---
 source "$SCRIPT_DIR/lib/core.sh"
+source "$SCRIPT_DIR/lib/cursor_runner.sh"
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/streak.sh"
 source "$SCRIPT_DIR/lib/template.sh"
@@ -73,7 +74,7 @@ any git repository and creates GitHub issues for real findings.
 
 Required:
   --project <path|url>    Local path or remote Git URL (cloned read-only if URL)
-  --agent <agent>         claude | codex | spark | sparc | opencode | opencode/<model>
+  --agent <agent>         claude | codex | spark | sparc | cursor | opencode | opencode/<model>
 
 Options:
   --mode <mode>           audit (default) | feature | bugfix | discover | deploy | custom | opensource | content
@@ -122,6 +123,7 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --hosted --domain toolgate
   repolens.sh --project ~/myapp --agent claude --hosted --focus dast-web
   repolens.sh --project ~/myapp --agent claude --local
+  repolens.sh --project ~/myapp --agent cursor --local --domain security
   repolens.sh --project ~/myapp --agent claude --local --output ~/reports/myapp-audit
   repolens.sh --project ~/myapp --agent claude --local --domain security --parallel
 
@@ -357,6 +359,11 @@ if [[ -n "$OUTPUT_DIR" ]] && ! $LOCAL_MODE; then
   die "--output requires --local (use --local to write findings as local markdown files)"
 fi
 
+# --- Phase-1 guardrail: cursor agent is local-only ---
+if [[ "$AGENT" == "cursor" ]] && ! $LOCAL_MODE; then
+  die "--agent cursor currently supports only --local mode in Phase 1."
+fi
+
 # --- Handle --change flag ---
 if [[ -n "$CHANGE_STATEMENT" ]]; then
   if [[ "$MODE" != "audit" && "$MODE" != "custom" ]]; then
@@ -481,6 +488,7 @@ require_cmd timeout
 case "$AGENT" in
   claude) require_cmd claude ;;
   codex|spark|sparc) require_cmd codex ;;
+  cursor) require_cmd "$(cursor_runner_required_cmd)" ;;
   opencode|opencode/*) require_cmd opencode ;;
 esac
 
@@ -1034,6 +1042,16 @@ run_lens() {
       log_error "[$domain/$lens_id] agent timed out after ${REPOLENS_AGENT_TIMEOUT:-600}s on iteration $iteration"
     elif [[ "$agent_rc" -ne 0 ]]; then
       log_warn "[$domain/$lens_id] Agent returned non-zero on iteration $iteration. Continuing."
+      if grep -q "REPOLENS_CURSOR_TIMEOUT" "$output_file" 2>/dev/null; then
+        log_warn "[$domain/$lens_id] Cursor agent timed out. Stopping lens early."
+        exit_status="agent-timeout"
+        break
+      fi
+      if grep -Eq "You've hit your usage limit|Named models unavailable|Switch to Auto or upgrade plans" "$output_file" 2>/dev/null; then
+        log_warn "[$domain/$lens_id] Cursor account/model constraint detected. Stopping lens early."
+        exit_status="agent-capacity"
+        break
+      fi
     fi
 
     # Detect rate-limit / quota / auth-failure signatures in agent output.

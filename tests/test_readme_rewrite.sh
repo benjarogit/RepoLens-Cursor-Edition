@@ -368,8 +368,8 @@ assert_contains "aggregate code/toolgate domain count ($code_toolgate_domains) i
 # =====================================================================
 
 echo ""
-echo "Test 35: All supported agent CLIs documented"
-for agent in "claude" "codex" "spark" "sparc" "opencode"; do
+echo "Test 35: All supported agent backends documented"
+for agent in "claude" "codex" "spark" "sparc" "cursor" "opencode"; do
   assert_contains "agent '$agent' documented" "$agent" "$readme_content"
 done
 

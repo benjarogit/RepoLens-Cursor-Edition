@@ -21,7 +21,7 @@
 | `jq` | Yes | JSON config parsing | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`) |
 | `timeout` (coreutils) | Yes | Per-invocation agent timeout watchdog (see `REPOLENS_AGENT_TIMEOUT` below) | Ships in GNU coreutils. Pre-installed on Linux/NixOS. On macOS: `brew install coreutils`. |
 | `gh` | Yes (unless `--local`) | Create issues, labels, query repos | [cli.github.com](https://cli.github.com) — run `gh auth login` after install |
-| Agent CLI | Yes (at least one) | Run analysis agents | See [Supported Agent CLIs](#supported-agent-clis) below for install + auth per CLI |
+| Agent backend | Yes (at least one) | Run analysis agents | Use `cursor` mode or one supported agent CLI |
 | `docker` + `docker compose` | Only for `--hosted` | DAST scanning environment | OS package manager |
 
 ### Supported Agent CLIs
@@ -31,10 +31,31 @@
 | `claude` | `claude` | Anthropic Claude Code |
 | `codex` | `codex` | OpenAI Codex CLI |
 | `spark` / `sparc` | `codex` | Codex CLI with spark model |
+| `cursor` | `CURSOR_AGENT_RUNNER_CMD` | Native Cursor integration (Phase 1 supports `--local` mode only) |
 | `opencode` | `opencode` | Open-source agent CLI (75+ providers) |
 | `opencode/<model>` | `opencode` | opencode with a specific provider/model |
 
-You need **at least one** agent CLI installed and authenticated before running RepoLens. Install commands and auth flows differ per CLI — see below.
+You need **at least one** backend configured before running RepoLens.
+
+For `--agent cursor`, set a runner command via `CURSOR_AGENT_RUNNER_CMD` that points to the Cursor Agent CLI binary.
+RepoLens invokes it as:
+
+- `--print`
+- `--workspace <path>`
+- `<composed-lens-prompt>`
+
+Example:
+
+```bash
+export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"
+export CURSOR_AGENT_TIMEOUT_SEC=45
+./repolens.sh --project ~/my-app --agent cursor --local --domain security
+```
+
+If you're on a Cursor Free plan, keep `--model auto` (named models are unavailable).
+If Cursor returns usage-capacity errors (for example `You've hit your usage limit`), RepoLens now stops the affected lens early with status `agent-capacity` instead of burning through all 20 safety-cap iterations.
+
+For CLI-based agents (`claude`, `codex`, `opencode`), install commands and auth flows differ per CLI — see below.
 
 > [!TIP]
 > **Recommendation:** Use `claude` for complex audits — it produces the highest-quality findings, but is also the most expensive option. For a cheaper alternative, run `opencode` with a MiniMax model — costs are a fraction of Claude, with the trade-off of more false positives. Calibrate on a single lens or domain (`--focus` / `--domain`) before committing to a full parallel run.
@@ -244,7 +265,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--project <path\|url>` | Local path or remote Git URL (cloned read-only if URL) |
-| `--agent <agent>` | `claude \| codex \| spark \| sparc \| opencode \| opencode/<model>` |
+| `--agent <agent>` | `claude \| codex \| spark \| sparc \| cursor \| opencode \| opencode/<model>` |
 
 ### Optional Flags
 
@@ -261,6 +282,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--spec <file>` | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB) |
 | `--max-issues <n>` | Stop after creating *n* total issues |
 | `--local` | Write findings as local markdown files instead of creating GitHub issues. No `gh` required |
+| `--agent cursor` note | Phase 1 supports `--local` mode only |
 | `--output <path>` | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/issues/`) |
 | `--hosted` | Spin up Docker Compose for DAST scanning (used with `toolgate` domain) |
 | `--max-cost <amount>` | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly. |
@@ -450,8 +472,12 @@ Most first-run failures fall into one of these patterns. Errors are quoted verba
 | `Missing required command: gh` | GitHub CLI not installed | Install from [cli.github.com](https://cli.github.com), or pass `--local` to skip GitHub entirely |
 | `gh is not authenticated. Run 'gh auth login'.` | `gh` not authenticated, or token expired | `gh auth login` (or `gh auth refresh` if your token is stale) |
 | `Missing required command: claude` (or `codex` / `opencode`) | Agent CLI not installed | See [Supported Agent CLIs](#supported-agent-clis) for install + auth |
+| `Missing required command: cursor-agent` | Cursor runner binary not found | Set `CURSOR_AGENT_RUNNER_CMD`, e.g. `export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"` |
+| Lens hangs on cursor backend | Cursor agent does not return promptly for a lens prompt | Reduce timeout via `CURSOR_AGENT_TIMEOUT_SEC` (e.g. `30`) and rerun; timed-out lenses are marked `agent-timeout` |
+| Cursor exits with `You've hit your usage limit` | Cursor account has no remaining Agent capacity | Wait for quota reset or upgrade plan, then rerun. RepoLens marks affected lenses as `agent-capacity` and exits those lenses early |
 | Agent prompts for login on every iteration | Agent CLI not authenticated | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis) |
-| `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `opencode`, `opencode/<model>` |
+| `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `cursor`, `opencode`, `opencode/<model>` |
+| `--agent cursor currently supports only --local mode in Phase 1.` | Cursor agent used without local mode | Add `--local`, or use another agent backend |
 | `Not a git repository: …` | `--project` path is not a git repo | Use `git init`, pass a real repo path, or use `--mode deploy` (which doesn't require git) |
 | `--hosted requires Docker to be installed` | Docker missing or daemon stopped | Install Docker, then `sudo systemctl start docker` (or open Docker Desktop) |
 | `--hosted requires a docker-compose.yml or compose.yml in the project` | No compose file at project root | Add a compose file, or drop `--hosted` and audit statically |

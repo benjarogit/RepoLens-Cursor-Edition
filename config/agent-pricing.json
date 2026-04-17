@@ -37,6 +37,7 @@
     "codex": "gpt-5",
     "spark": "spark",
     "sparc": "spark",
+    "cursor": "gpt-5",
     "opencode": "opencode-default"
   },
   "session_model": {

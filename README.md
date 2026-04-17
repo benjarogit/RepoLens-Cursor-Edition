@@ -12,6 +12,43 @@
 
 ## Getting Started
 
+### Cursor Local Edition (this fork)
+
+This fork is tailored for running RepoLens with the Cursor Agent locally (`--agent cursor --local`).
+It is the recommended default workflow in this repository.
+
+> [!IMPORTANT]
+> In this fork, `--agent cursor` is intentionally limited to local output mode in Phase 1.
+> Always run Cursor with `--local` so findings are written to markdown files instead of opening GitHub issues.
+
+#### Fast Start (Cursor local, 60 seconds)
+
+```bash
+# 1) Enter this fork
+cd /path/to/RepoLens-Cursor-Edition
+chmod +x repolens.sh
+
+# 2) Use Cursor Agent CLI in Auto model mode
+export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"
+export CURSOR_AGENT_TIMEOUT_SEC=45
+
+# 3) Run a focused local audit first
+./repolens.sh --project /path/to/your/repo --agent cursor --local --domain security --yes
+```
+
+Result files are written to:
+
+- `logs/<run-id>/issues/<domain>/<lens-id>/NNN-*.md`
+- `logs/<run-id>/summary.json`
+
+#### Recommended workflow for this fork
+
+1. Start with one domain (`--domain security`) in `--local` mode.
+1. Review markdown findings under `logs/<run-id>/issues/`.
+1. Apply fixes in your target repo.
+1. Re-run the same domain to verify.
+1. Scale to parallel/domain-wide runs only after a stable baseline.
+
 ### Prerequisites
 
 | Tool | Required | Purpose | Install |
@@ -54,6 +91,22 @@ export CURSOR_AGENT_TIMEOUT_SEC=45
 
 If you're on a Cursor Free plan, keep `--model auto` (named models are unavailable).
 If Cursor returns usage-capacity errors (for example `You've hit your usage limit`), RepoLens now stops the affected lens early with status `agent-capacity` instead of burning through all 20 safety-cap iterations.
+
+### Cursor-specific run examples (local mode)
+
+```bash
+# Single lens (quick validation)
+./repolens.sh --project ~/my-app --agent cursor --local --focus injection --yes
+
+# Security domain (recommended baseline)
+./repolens.sh --project ~/my-app --agent cursor --local --domain security --yes
+
+# Full local audit (all non-mode-specific domains)
+./repolens.sh --project ~/my-app --agent cursor --local --yes
+
+# Custom output directory
+./repolens.sh --project ~/my-app --agent cursor --local --output ~/reports/repolens --yes
+```
 
 For CLI-based agents (`claude`, `codex`, `opencode`), install commands and auth flows differ per CLI — see below.
 

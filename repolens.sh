@@ -132,6 +132,18 @@ Environment:
                            Applied to every agent call via timeout(1). On timeout
                            the iteration is logged with [ERROR] and the lens
                            loop continues to the next iteration.
+  REPOLENS_CURSOR_SERIAL   For --agent cursor, force sequential mode by default
+                           (default: true). Set to false to keep --parallel.
+  REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT
+                           For --agent cursor, wait and retry the same lens when
+                           rate-limited instead of aborting the whole run
+                           (default: true).
+  REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC
+                           Sleep duration between cursor rate-limit retries
+                           (default: 120).
+  REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES
+                           Max rate-limit retries per lens in cursor wait mode
+                           (default: 120).
   REPOLENS_CHILD_MAX_WAIT  Per-child parallel-worker deadline in seconds
                            (default: 14400). Outer safety net for parallel mode:
                            wait_all polls each background lens and SIGTERM/KILLs
@@ -468,6 +480,17 @@ fi
 
 # --- Safety cap: maximum iterations per lens ---
 MAX_ITERATIONS_PER_LENS=20
+
+# --- Cursor run behavior knobs ---
+CURSOR_SERIAL="${REPOLENS_CURSOR_SERIAL:-true}"
+CURSOR_WAIT_ON_RATE_LIMIT="${REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT:-true}"
+CURSOR_RATE_LIMIT_SLEEP_SEC="${REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC:-120}"
+CURSOR_RATE_LIMIT_MAX_RETRIES="${REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES:-120}"
+
+case "${CURSOR_SERIAL,,}" in true|false|1|0|yes|no) ;; *) die "REPOLENS_CURSOR_SERIAL must be true/false, got: $CURSOR_SERIAL" ;; esac
+case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in true|false|1|0|yes|no) ;; *) die "REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT must be true/false, got: $CURSOR_WAIT_ON_RATE_LIMIT" ;; esac
+[[ "$CURSOR_RATE_LIMIT_SLEEP_SEC" =~ ^[1-9][0-9]*$ ]] || die "REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC must be a positive integer, got: $CURSOR_RATE_LIMIT_SLEEP_SEC"
+[[ "$CURSOR_RATE_LIMIT_MAX_RETRIES" =~ ^[0-9]+$ ]] || die "REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES must be a non-negative integer, got: $CURSOR_RATE_LIMIT_MAX_RETRIES"
 
 # --- Derive repo metadata ---
 REPO_NAME="$(basename "$PROJECT_PATH")"
@@ -934,6 +957,14 @@ if $HOSTED && $PARALLEL; then
   log_warn "Forcing sequential mode: --hosted requires sequential execution to avoid concurrent DAST conflicts."
   PARALLEL=false
 fi
+if [[ "$AGENT" == "cursor" ]] && $PARALLEL; then
+  case "${CURSOR_SERIAL,,}" in
+    true|1|yes)
+      log_warn "Forcing sequential mode: cursor backend defaults to serial execution for quota stability (set REPOLENS_CURSOR_SERIAL=false to override)."
+      PARALLEL=false
+      ;;
+  esac
+fi
 
 # --- Run a single lens ---
 run_lens() {
@@ -1027,6 +1058,8 @@ run_lens() {
   local lens_issues=0
   local prev_lens_issues=0
   local exit_status="completed"
+  local cursor_rl_retries=0
+  local cursor_capacity_retries=0
 
   while true; do
     iteration=$((iteration + 1))
@@ -1047,7 +1080,17 @@ run_lens() {
         exit_status="agent-timeout"
         break
       fi
-      if grep -Eq "You've hit your usage limit|Named models unavailable|Switch to Auto or upgrade plans" "$output_file" 2>/dev/null; then
+      if [[ "$AGENT" == "cursor" ]] && grep -Eq "You've hit your usage limit|Named models unavailable|Switch to Auto or upgrade plans" "$output_file" 2>/dev/null; then
+        case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in
+          true|1|yes)
+            if [[ "$cursor_capacity_retries" -lt "$CURSOR_RATE_LIMIT_MAX_RETRIES" ]]; then
+              cursor_capacity_retries=$((cursor_capacity_retries + 1))
+              log_warn "[$domain/$lens_id] Cursor capacity/model gate hit (retry $cursor_capacity_retries/$CURSOR_RATE_LIMIT_MAX_RETRIES). Sleeping ${CURSOR_RATE_LIMIT_SLEEP_SEC}s before retry."
+              sleep "$CURSOR_RATE_LIMIT_SLEEP_SEC"
+              continue
+            fi
+            ;;
+        esac
         log_warn "[$domain/$lens_id] Cursor account/model constraint detected. Stopping lens early."
         exit_status="agent-capacity"
         break
@@ -1064,6 +1107,21 @@ run_lens() {
     if [[ -n "$rl_hit" ]]; then
       rl_sig="${rl_hit%%|*}"
       rl_snip="${rl_hit#*|}"
+      if [[ "$AGENT" == "cursor" ]]; then
+        case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in
+          true|1|yes)
+            if [[ "$cursor_rl_retries" -lt "$CURSOR_RATE_LIMIT_MAX_RETRIES" ]]; then
+              cursor_rl_retries=$((cursor_rl_retries + 1))
+              log_warn "[$domain/$lens_id] Cursor rate-limited (retry $cursor_rl_retries/$CURSOR_RATE_LIMIT_MAX_RETRIES). Sleeping ${CURSOR_RATE_LIMIT_SLEEP_SEC}s before retry."
+              sleep "$CURSOR_RATE_LIMIT_SLEEP_SEC"
+              continue
+            fi
+            log_error "[$domain/$lens_id] Cursor remained rate-limited after $CURSOR_RATE_LIMIT_MAX_RETRIES retries. Marking lens as rate-limited."
+            exit_status="rate-limited"
+            break
+            ;;
+        esac
+      fi
       log_error "[$domain/$lens_id] Agent rate-limited / quota exceeded. Aborting run. Matched: $rl_sig. Snippet: $rl_snip"
       : > "$LOG_BASE/.rate-limit-abort"
       exit_status="rate-limited"

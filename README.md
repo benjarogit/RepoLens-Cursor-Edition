@@ -50,6 +50,28 @@ Result files are written to:
 1. Re-run the same domain to verify.
 1. Scale to parallel/domain-wide runs only after a stable baseline.
 
+#### Cursor quota-safe mode (default in this fork)
+
+For `--agent cursor`, RepoLens now defaults to a quota-safe strategy:
+
+- Force sequential execution when `--parallel` is requested.
+- On Cursor rate-limit responses, wait and retry the same lens automatically.
+
+Environment knobs:
+
+```bash
+export REPOLENS_CURSOR_SERIAL=true                    # default
+export REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT=true        # default
+export REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC=120       # default
+export REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES=120     # default
+```
+
+If you explicitly want parallel cursor execution anyway:
+
+```bash
+export REPOLENS_CURSOR_SERIAL=false
+```
+
 ### Prerequisites
 
 | Tool | Required | Purpose | Install |

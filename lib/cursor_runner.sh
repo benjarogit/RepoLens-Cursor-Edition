@@ -17,18 +17,20 @@
 #
 # Phase 1 contract:
 # - Supports local mode integration only (enforced by repolens.sh guardrail)
-# - Uses Cursor Agent CLI in print mode with an explicit model:
-#     cursor-agent --force --approve-mcps --print --model auto --workspace <path> "<prompt>"
+# - Uses Cursor Agent CLI in print mode with model control:
+#     cursor-agent --force --approve-mcps --print --model <auto|named> --workspace <path> "<prompt>"
 # - The runner command can be overridden via CURSOR_AGENT_RUNNER_CMD
+# - The model can be overridden via CURSOR_AGENT_MODEL (default: auto)
 #
 # Example:
-#   export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"
+#   export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
+#   export CURSOR_AGENT_MODEL="auto"
 #   export CURSOR_AGENT_TIMEOUT_SEC=45
 
 set -uo pipefail
 
 cursor_runner_required_cmd() {
-  local runner_cmd="${CURSOR_AGENT_RUNNER_CMD:-cursor-agent --force --approve-mcps --model auto}"
+  local runner_cmd="${CURSOR_AGENT_RUNNER_CMD:-cursor-agent --force --approve-mcps}"
   local -a parts=()
   read -r -a parts <<< "$runner_cmd"
   if [[ "${#parts[@]}" -eq 0 || -z "${parts[0]}" ]]; then
@@ -38,10 +40,22 @@ cursor_runner_required_cmd() {
   fi
 }
 
+cursor_runner_has_model_flag() {
+  local -a parts=("$@")
+  local i
+  for ((i = 0; i < ${#parts[@]}; i++)); do
+    if [[ "${parts[i]}" == "--model" || "${parts[i]}" == --model=* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 run_cursor_agent() {
   local prompt="$1"
   local project_path="$2"
-  local runner_cmd="${CURSOR_AGENT_RUNNER_CMD:-cursor-agent --force --approve-mcps --model auto}"
+  local runner_cmd="${CURSOR_AGENT_RUNNER_CMD:-cursor-agent --force --approve-mcps}"
+  local cursor_model="${CURSOR_AGENT_MODEL:-auto}"
   local timeout_sec="${CURSOR_AGENT_TIMEOUT_SEC:-45}"
   local -a cmd_parts=()
 
@@ -50,6 +64,14 @@ run_cursor_agent() {
 
   if ! [[ "$timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
     die "CURSOR_AGENT_TIMEOUT_SEC must be a positive integer, got: $timeout_sec"
+  fi
+
+  if [[ -z "$cursor_model" ]]; then
+    die "CURSOR_AGENT_MODEL must not be empty"
+  fi
+
+  if ! cursor_runner_has_model_flag "${cmd_parts[@]}"; then
+    cmd_parts+=(--model "$cursor_model")
   fi
 
   if command -v timeout >/dev/null 2>&1; then

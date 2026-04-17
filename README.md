@@ -28,8 +28,9 @@ It is the recommended default workflow in this repository.
 cd /path/to/RepoLens-Cursor-Edition
 chmod +x repolens.sh
 
-# 2) Use Cursor Agent CLI in Auto model mode
-export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"
+# 2) Use Cursor Agent CLI (Auto by default)
+export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
+export CURSOR_AGENT_MODEL="auto"
 export CURSOR_AGENT_TIMEOUT_SEC=45
 
 # 3) Run a focused local audit first
@@ -75,6 +76,7 @@ Result files are written to:
 You need **at least one** backend configured before running RepoLens.
 
 For `--agent cursor`, set a runner command via `CURSOR_AGENT_RUNNER_CMD` that points to the Cursor Agent CLI binary.
+Model selection is controlled via `CURSOR_AGENT_MODEL` (default: `auto`), unless you already set `--model ...` directly in `CURSOR_AGENT_RUNNER_CMD`.
 RepoLens invokes it as:
 
 - `--print`
@@ -84,12 +86,14 @@ RepoLens invokes it as:
 Example:
 
 ```bash
-export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"
+export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
+export CURSOR_AGENT_MODEL="auto"   # default, safe for free plans
 export CURSOR_AGENT_TIMEOUT_SEC=45
 ./repolens.sh --project ~/my-app --agent cursor --local --domain security
 ```
 
-If you're on a Cursor Free plan, keep `--model auto` (named models are unavailable).
+If you're on a Cursor Free plan, keep `CURSOR_AGENT_MODEL=auto` (named models are unavailable).
+If you want manual model control on paid plans, set for example `export CURSOR_AGENT_MODEL="gpt-5"`.
 If Cursor returns usage-capacity errors (for example `You've hit your usage limit`), RepoLens now stops the affected lens early with status `agent-capacity` instead of burning through all 20 safety-cap iterations.
 
 ### Cursor-specific run examples (local mode)
@@ -525,7 +529,7 @@ Most first-run failures fall into one of these patterns. Errors are quoted verba
 | `Missing required command: gh` | GitHub CLI not installed | Install from [cli.github.com](https://cli.github.com), or pass `--local` to skip GitHub entirely |
 | `gh is not authenticated. Run 'gh auth login'.` | `gh` not authenticated, or token expired | `gh auth login` (or `gh auth refresh` if your token is stale) |
 | `Missing required command: claude` (or `codex` / `opencode`) | Agent CLI not installed | See [Supported Agent CLIs](#supported-agent-clis) for install + auth |
-| `Missing required command: cursor-agent` | Cursor runner binary not found | Set `CURSOR_AGENT_RUNNER_CMD`, e.g. `export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps --model auto"` |
+| `Missing required command: cursor-agent` | Cursor runner binary not found | Set `CURSOR_AGENT_RUNNER_CMD`, e.g. `export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"` |
 | Lens hangs on cursor backend | Cursor agent does not return promptly for a lens prompt | Reduce timeout via `CURSOR_AGENT_TIMEOUT_SEC` (e.g. `30`) and rerun; timed-out lenses are marked `agent-timeout` |
 | Cursor exits with `You've hit your usage limit` | Cursor account has no remaining Agent capacity | Wait for quota reset or upgrade plan, then rerun. RepoLens marks affected lenses as `agent-capacity` and exits those lenses early |
 | Agent prompts for login on every iteration | Agent CLI not authenticated | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis) |

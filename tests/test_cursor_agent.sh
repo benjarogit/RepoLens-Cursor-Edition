@@ -75,6 +75,8 @@ assert_fail_with "validate_agent rejects invalid backend" "Invalid agent" valida
 
 assert_eq "cursor runner default binary is cursor-agent" "cursor-agent" "$(cursor_runner_required_cmd)"
 assert_eq "cursor runner command parser extracts first token" "mock-runner" "$(CURSOR_AGENT_RUNNER_CMD='mock-runner --flag value' cursor_runner_required_cmd)"
+assert_ok "cursor runner detects --model flag when split" bash -c 'source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"; cursor_runner_has_model_flag cursor-agent --model auto'
+assert_ok "cursor runner detects --model=... form" bash -c 'source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"; cursor_runner_has_model_flag cursor-agent --model=auto'
 
 assert_fail_with "cursor backend enforces local-only guardrail" "--agent cursor currently supports only --local mode in Phase 1." \
   bash "$SCRIPT_DIR/repolens.sh" --project "$SCRIPT_DIR" --agent cursor --dry-run

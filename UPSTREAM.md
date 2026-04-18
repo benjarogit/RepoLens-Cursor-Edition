@@ -2,6 +2,24 @@
 
 The tree `maintainers/RepoLens/` is a **vendored fork** of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) with CSRetro-specific integrations (Cursor `cursor-ide`, `repolens_until_done.sh`, `tools.sh` entry points, log hygiene). It is **not** a git submodule.
 
+**Standalone GitHub fork (visibility / issues / PRs):** [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition) — default branch `master`. **Source of truth for day-to-day work** is still this path inside **csretro**; publish to the GitHub fork after upstream merges or when you want a public mirror.
+
+### Publish csretro → RepoLens-Cursor-Edition (repeatable)
+
+From a temp clone (SSH example):
+
+```bash
+git clone git@github.com:benjarogit/RepoLens-Cursor-Edition.git /tmp/repolens-fork
+cd /tmp/repolens-fork
+git remote add upstream https://github.com/TheMorpheus407/RepoLens.git   # once
+git fetch upstream master
+git merge upstream/master -m "Merge upstream RepoLens master"
+rsync -a --delete --exclude '.git/' /path/to/csretro/maintainers/RepoLens/ /tmp/repolens-fork/
+git add -A && git commit -m "sync(csretro): vendor snapshot after upstream merge" && git push origin master
+```
+
+Resolve merge conflicts if upstream touched the same files as the Cursor edition; then run `rsync` so the tree matches `maintainers/RepoLens/`.
+
 ## Baseline revision
 
 After each successful merge from upstream, update [`UPSTREAM_REVISION`](UPSTREAM_REVISION) with the upstream commit you consolidated against.

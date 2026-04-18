@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -369,7 +369,7 @@ assert_contains "aggregate code/toolgate domain count ($code_toolgate_domains) i
 
 echo ""
 echo "Test 35: All supported agent backends documented"
-for agent in "claude" "codex" "spark" "sparc" "cursor" "opencode"; do
+for agent in "claude" "codex" "spark" "sparc" "cursor" "cursor-ide" "opencode"; do
   assert_contains "agent '$agent' documented" "$agent" "$readme_content"
 done
 

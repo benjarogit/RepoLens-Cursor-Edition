@@ -1,4 +1,7 @@
 RepoLens
-Copyright 2025-2026 Bootstrap Academy
+Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+
+Cursor IDE local integration, REPOLENS_CTL protocol, and csretro-specific changes:
+Copyright 2025-2026 benjarogit / Sunny C.
 
 This product is licensed under the Apache License, Version 2.0.

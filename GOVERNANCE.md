@@ -1,5 +1,7 @@
 # Governance
 
+> **csretro bundle:** Fork-specific tooling and Cursor IDE integration in this checkout are maintained by **benjarogit / Sunny C.** (see [NOTICE](NOTICE)). The sections below describe **upstream** RepoLens governance.
+
 ## Project Leadership
 
 RepoLens is created and maintained by [Cedric Moessner](https://github.com/TheMorpheus407) ([@TheMorpheus407](https://github.com/TheMorpheus407)) under [Bootstrap Academy](https://bootstrap.academy).

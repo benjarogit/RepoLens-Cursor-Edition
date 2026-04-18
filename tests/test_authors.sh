@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -227,6 +227,10 @@ assert_contains "mentions Bootstrap Academy" "Bootstrap Academy" "$authors_conte
 echo ""
 echo "Test 11: AUTHORS.md contains Bootstrap Academy project statement"
 assert_matches "Bootstrap Academy project statement" "(?i)Bootstrap Academy.*project" "$authors_content"
+
+echo ""
+echo "Test 11b: AUTHORS.md credits csretro / Cursor IDE maintainer"
+assert_contains "mentions benjarogit / Sunny C." "benjarogit / Sunny C." "$authors_content"
 
 # =====================================================================
 # 5. Required links

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,11 +45,11 @@ require_cmd() {
 validate_agent() {
   local agent="$1"
   case "$agent" in
-    claude|codex|spark|sparc|opencode|cursor) ;;
+    claude|codex|spark|sparc|opencode|cursor|cursor-ide) ;;
     opencode/*)
       [[ -n "${agent#opencode/}" ]] || die "Invalid agent: $agent (missing model after 'opencode/')."
       ;;
-    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, cursor, opencode, or opencode/<model>)" ;;
+    *) die "Invalid agent: $agent (expected claude, codex, spark/sparc, cursor, cursor-ide, opencode, or opencode/<model>)" ;;
   esac
 }
 
@@ -65,7 +65,7 @@ run_agent() {
   local agent="$1"
   local prompt="$2"
   local project_path="$3"
-  local timeout_secs="${REPOLENS_AGENT_TIMEOUT:-6000}"
+  local timeout_secs="${REPOLENS_AGENT_TIMEOUT:-600}"
 
   [[ -d "$project_path" ]] || die "Project path does not exist: $project_path"
 
@@ -79,6 +79,9 @@ run_agent() {
     case "$agent" in
       cursor)
         run_cursor_agent "$prompt" "$project_path"
+        ;;
+      cursor-ide)
+        run_cursor_ide_agent "$prompt" "$project_path"
         ;;
       claude)
         timeout "${timeout_secs}s" claude --dangerously-skip-permissions -p "$prompt"

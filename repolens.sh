@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# csretro: cursor-ide, REPOLENS_CTL, resume/orchestration changes — Copyright 2025-2026 benjarogit / Sunny C.
 
 set -uo pipefail
 
@@ -74,7 +76,7 @@ any git repository and creates GitHub issues for real findings.
 
 Required:
   --project <path|url>    Local path or remote Git URL (cloned read-only if URL)
-  --agent <agent>         claude | codex | spark | sparc | cursor | opencode | opencode/<model>
+  --agent <agent>         claude | codex | spark | sparc | cursor | cursor-ide | opencode | opencode/<model>
 
 Options:
   --mode <mode>           audit (default) | feature | bugfix | discover | deploy | custom | opensource | content
@@ -123,16 +125,17 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --hosted --domain toolgate
   repolens.sh --project ~/myapp --agent claude --hosted --focus dast-web
   repolens.sh --project ~/myapp --agent claude --local
+  repolens.sh --project ~/myapp --agent cursor-ide --local --domain security
   repolens.sh --project ~/myapp --agent cursor --local --domain security
   repolens.sh --project ~/myapp --agent claude --local --output ~/reports/myapp-audit
   repolens.sh --project ~/myapp --agent claude --local --domain security --parallel
 
 Environment:
-  REPOLENS_AGENT_TIMEOUT   Per-invocation agent timeout in seconds (default: 6000).
+  REPOLENS_AGENT_TIMEOUT   Per-invocation agent timeout in seconds (default: 600).
                            Applied to every agent call via timeout(1). On timeout
                            the iteration is logged with [ERROR] and the lens
                            loop continues to the next iteration.
-  REPOLENS_CURSOR_SERIAL   For --agent cursor, force sequential mode by default
+  REPOLENS_CURSOR_SERIAL   For --agent cursor or cursor-ide, force sequential mode by default
                            (default: true). Set to false to keep --parallel.
   REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT
                            For --agent cursor, wait and retry the same lens when
@@ -144,8 +147,30 @@ Environment:
   REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES
                            Max rate-limit retries per lens in cursor wait mode
                            (default: 120).
+  REPOLENS_RUN_ID_FILE     If set, write the resolved RUN_ID (one line) to this
+                           path right after the log directory is created (for
+                           orchestration wrappers).
+  REPOLENS_CURSOR_IDE_POLL_SEC
+                           For --agent cursor-ide, poll interval while waiting
+                           for ide-done-iter-N (default: 2).
+  REPOLENS_CURSOR_IDE_MAX_WAIT_SEC
+                           For --agent cursor-ide, max seconds to wait per
+                           iteration (0 = unlimited, default: 0).
+  REPOLENS_IDE_AUTONOMOUS  If 1/true, mark REPOLENS_CTL.ide_handoff payloads with
+                           autonomous_env_hint (also TERM_PROGRAM=vscode /
+                           CURSOR_TRACE_ID set the hint). For IDE „Run Everything“.
+  REPOLENS_IDE_ALLOW_STUB  If 1/true, cursor-ide accepts missing/empty responses and
+                           skips substantive checks (CI/pipeline demos only).
+  REPOLENS_IDE_MIN_RESPONSE_BYTES
+                           Minimum size (bytes) for ide-response-iter-N.txt when
+                           stubs are not allowed (default: 400).
+  REPOLENS_IDE_FAIL_FAST   If 1/true (default), cursor-ide stops the lens on the
+                           first failed handoff and logs repolens-errors.ndjson.
+                           Set to 0 to retry further iterations (legacy).
+  REPOLENS_CTL_LOG        Set by repolens for cursor-ide to append JSON lines
+                           (default: logs/<run-id>/repolens-ctl.ndjson).
   REPOLENS_CHILD_MAX_WAIT  Per-child parallel-worker deadline in seconds
-                           (default: 144000). Outer safety net for parallel mode:
+                           (default: 14400). Outer safety net for parallel mode:
                            wait_all polls each background lens and SIGTERM/KILLs
                            any child that exceeds this deadline, then continues
                            with the remaining children. Should be >=
@@ -371,9 +396,9 @@ if [[ -n "$OUTPUT_DIR" ]] && ! $LOCAL_MODE; then
   die "--output requires --local (use --local to write findings as local markdown files)"
 fi
 
-# --- Phase-1 guardrail: cursor agent is local-only ---
-if [[ "$AGENT" == "cursor" ]] && ! $LOCAL_MODE; then
-  die "--agent cursor currently supports only --local mode in Phase 1."
+# --- Phase-1 guardrail: cursor backends are local-only ---
+if [[ "$AGENT" == "cursor" || "$AGENT" == "cursor-ide" ]] && ! $LOCAL_MODE; then
+  die "--agent cursor and cursor-ide currently support only --local mode in Phase 1."
 fi
 
 # --- Handle --change flag ---
@@ -512,6 +537,7 @@ case "$AGENT" in
   claude) require_cmd claude ;;
   codex|spark|sparc) require_cmd codex ;;
   cursor) require_cmd "$(cursor_runner_required_cmd)" ;;
+  cursor-ide) ;; # Composer handoff — kein cursor-agent
   opencode|opencode/*) require_cmd opencode ;;
 esac
 
@@ -531,6 +557,17 @@ fi
 LOG_BASE="$SCRIPT_DIR/logs/$RUN_ID"
 mkdir -p "$LOG_BASE"
 SUMMARY_FILE="$LOG_BASE/summary.json"
+
+if [[ -n "$RESUME_RUN_ID" ]]; then
+  [[ -f "$SUMMARY_FILE" ]] || die "Cannot resume: $SUMMARY_FILE not found"
+  # Sticky marker from a previous process: would make this invocation skip every
+  # remaining lens at the outer loop without re-entering run_lens.
+  rm -f "$LOG_BASE/.rate-limit-abort"
+fi
+if [[ -n "${REPOLENS_RUN_ID_FILE:-}" ]]; then
+  printf '%s\n' "$RUN_ID" >"$REPOLENS_RUN_ID_FILE"
+fi
+
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 COLORS_FILE="$SCRIPT_DIR/config/label-colors.json"
 BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
@@ -957,7 +994,7 @@ if $HOSTED && $PARALLEL; then
   log_warn "Forcing sequential mode: --hosted requires sequential execution to avoid concurrent DAST conflicts."
   PARALLEL=false
 fi
-if [[ "$AGENT" == "cursor" ]] && $PARALLEL; then
+if [[ "$AGENT" == "cursor" || "$AGENT" == "cursor-ide" ]] && $PARALLEL; then
   case "${CURSOR_SERIAL,,}" in
     true|1|yes)
       log_warn "Forcing sequential mode: cursor backend defaults to serial execution for quota stability (set REPOLENS_CURSOR_SERIAL=false to override)."
@@ -1032,6 +1069,16 @@ run_lens() {
 
   log_info "[$domain/$lens_id] Starting lens: $lens_name"
 
+  if [[ "$AGENT" == "cursor-ide" ]]; then
+    export REPOLENS_RUN_ID="$RUN_ID"
+    export REPOLENS_CTL_DOMAIN="$domain"
+    export REPOLENS_CTL_LENS_ID="$lens_id"
+    export REPOLENS_CTL_LENS_NAME="$lens_name"
+    export REPOLENS_CTL_LOG="$LOG_BASE/repolens-ctl.ndjson"
+    : >>"$REPOLENS_CTL_LOG"
+    repolens_ctl_emit_lens_start
+  fi
+
   # Snapshot issue count before loop.
   # count_repo_issues now returns non-zero + empty stdout when gh fails;
   # we must NOT collapse that back into 0 (it would reintroduce the silent
@@ -1069,14 +1116,52 @@ run_lens() {
 
     log_info "[$domain/$lens_id] Iteration $iteration"
 
+    export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$lens_log_dir"
+    export REPOLENS_CURSOR_IDE_ITERATION="$iteration"
+
     local agent_rc=0
-    run_agent "$AGENT" "$prompt" "$PROJECT_PATH" >"$output_file" 2>&1 || agent_rc=$?
+    if [[ "$AGENT" == "cursor-ide" ]]; then
+      # Without tee, stdout+stderr only go to iteration-*.txt — the terminal stays
+      # silent after "Iteration N", so it looks like RepoLens hung. Mirror to tty.
+      run_agent "$AGENT" "$prompt" "$PROJECT_PATH" 2>&1 | tee "$output_file"
+      agent_rc=${PIPESTATUS[0]}
+    else
+      run_agent "$AGENT" "$prompt" "$PROJECT_PATH" >"$output_file" 2>&1 || agent_rc=$?
+    fi
     if [[ "$agent_rc" -eq 124 ]]; then
-      log_error "[$domain/$lens_id] agent timed out after ${REPOLENS_AGENT_TIMEOUT:-6000}s on iteration $iteration"
+      if grep -q "REPOLENS_CURSOR_IDE_TIMEOUT" "$output_file" 2>/dev/null; then
+        log_error "[$domain/$lens_id] cursor-ide wait exceeded REPOLENS_CURSOR_IDE_MAX_WAIT_SEC on iteration $iteration"
+      else
+        log_error "[$domain/$lens_id] agent timed out after ${REPOLENS_AGENT_TIMEOUT:-600}s on iteration $iteration"
+      fi
     elif [[ "$agent_rc" -ne 0 ]]; then
+      if [[ "$AGENT" == "cursor-ide" ]]; then
+        local ide_code="cursor_ide_failed"
+        local ide_msg="cursor-ide iteration failed (see iteration log)"
+        if grep -q "IDE_RESPONSE_REJECTED" "$output_file" 2>/dev/null; then
+          ide_code="IDE_RESPONSE_REJECTED"
+          ide_msg="ide-response rejected (too short, empty, or stub text)"
+        elif grep -q "IDE_MISSING_RESPONSE" "$output_file" 2>/dev/null; then
+          ide_code="IDE_MISSING_RESPONSE"
+          ide_msg="missing or empty ide-response file (strict mode)"
+        fi
+        case "${REPOLENS_IDE_FAIL_FAST:-1}" in
+          1|true|yes)
+            append_repolens_error_event "$LOG_BASE" "$RUN_ID" "$domain" "$lens_id" "$iteration" "$ide_code" "$ide_msg" "$output_file"
+            log_error "[$domain/$lens_id] $ide_msg — stopping lens (set REPOLENS_IDE_FAIL_FAST=0 to retry iterations)."
+            exit_status="ide-handoff-failed"
+            break
+            ;;
+        esac
+      fi
       log_warn "[$domain/$lens_id] Agent returned non-zero on iteration $iteration. Continuing."
       if grep -q "REPOLENS_CURSOR_TIMEOUT" "$output_file" 2>/dev/null; then
         log_warn "[$domain/$lens_id] Cursor agent timed out. Stopping lens early."
+        exit_status="agent-timeout"
+        break
+      fi
+      if grep -q "REPOLENS_CURSOR_IDE_TIMEOUT" "$output_file" 2>/dev/null; then
+        log_warn "[$domain/$lens_id] cursor-ide wait timed out. Stopping lens early."
         exit_status="agent-timeout"
         break
       fi
@@ -1107,7 +1192,7 @@ run_lens() {
     if [[ -n "$rl_hit" ]]; then
       rl_sig="${rl_hit%%|*}"
       rl_snip="${rl_hit#*|}"
-      if [[ "$AGENT" == "cursor" ]]; then
+      if [[ "$AGENT" == "cursor" || "$AGENT" == "cursor-ide" ]]; then
         case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in
           true|1|yes)
             if [[ "$cursor_rl_retries" -lt "$CURSOR_RATE_LIMIT_MAX_RETRIES" ]]; then
@@ -1192,7 +1277,7 @@ run_lens() {
   # Record result. Rate-limited lenses are recorded but NOT marked completed,
   # so --resume will re-run them on the next invocation.
   record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues"
-  if [[ "$exit_status" != "rate-limited" ]]; then
+  if [[ "$exit_status" != "rate-limited" && "$exit_status" != "ide-handoff-failed" ]]; then
     mark_lens_completed "$lens_entry"
   fi
 
@@ -1273,10 +1358,14 @@ fi
 
 # --- Finalize ---
 finalize_summary "$SUMMARY_FILE"
+enhance_summary_with_run_outcome "$SUMMARY_FILE" "$LOG_BASE"
 
 log_info "=============================="
 log_info "RepoLens run $RUN_ID complete"
 log_info "Summary: $SUMMARY_FILE"
+if [[ -f "$LOG_BASE/repolens-errors.ndjson" ]]; then
+  log_info "Error events: $LOG_BASE/repolens-errors.ndjson"
+fi
 log_info "=============================="
 
 # Print summary to stdout
@@ -1284,9 +1373,13 @@ echo ""
 echo "=== RepoLens Run Summary ==="
 jq '.' "$SUMMARY_FILE"
 
-# If the rate-limit detector fired, exit non-zero so CI / operators see the
-# run as failed. The summary is already finalized with stopped_reason and
-# per-lens statuses, so --resume picks up seamlessly.
-if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+_ro_outcome="$(jq -r .run_outcome "$SUMMARY_FILE")"
+printf '\nREPOLENS_RUN_OUTCOME %s run_id=%s summary=%s errors=%s/repolens-errors.ndjson\n' \
+  "$_ro_outcome" "$RUN_ID" "$SUMMARY_FILE" "$LOG_BASE"
+
+# Exit non-zero when the run is failed (rate limit, IDE handoff, timeouts, etc.)
+# so CI / Cursor agents see a clear signal. --resume picks up incomplete lenses.
+if repolens_run_failed "$SUMMARY_FILE" "$LOG_BASE"; then
   exit 1
 fi
+exit 0

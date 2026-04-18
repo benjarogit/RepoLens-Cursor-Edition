@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -87,4 +87,55 @@ finalize_summary() {
   local file="$1"
   local tmp="${file}.tmp"
   jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.completed_at = $t' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# append_repolens_error_event <log_base> <run_id> <domain> <lens_id> <iteration> <code> <message> <detail_file>
+#   Appends one NDJSON line for IDE/agent failures (review + automation).
+append_repolens_error_event() {
+  local log_base="$1" run_id="$2" domain="$3" lens_id="$4" iteration="$5" code="$6" message="$7" detail_path="$8"
+  local errfile="$log_base/repolens-errors.ndjson"
+  local line
+  line="$(jq -nc \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg rid "$run_id" \
+    --arg d "$domain" --arg l "$lens_id" \
+    --argjson iter "$iteration" \
+    --arg c "$code" \
+    --arg m "$message" \
+    --arg p "$detail_path" \
+    '{ts:$ts,run_id:$rid,domain:$d,lens:$l,iteration:$iter,code:$c,message:$m,detail_file:$p}')"
+  printf '%s\n' "$line" >>"$errfile"
+}
+
+# enhance_summary_with_run_outcome <summary_file> <log_base>
+#   Adds run_outcome, errors_log; optional rate-limit abort file is on disk.
+enhance_summary_with_run_outcome() {
+  local file="$1" log_base="$2"
+  local tmp="${file}.tmp"
+  local abort_json="false"
+  [[ -f "$log_base/.rate-limit-abort" ]] && abort_json="true"
+  jq \
+    --argjson rl_abort "$abort_json" \
+    --arg el "$log_base/repolens-errors.ndjson" \
+    '.errors_log = $el |
+     .run_outcome = (
+       if $rl_abort == true then "failed"
+       elif .stopped_reason == "rate-limited" then "failed"
+       elif (.lenses | any(.status == "ide-handoff-failed" or .status == "agent-timeout" or .status == "rate-limited" or .status == "agent-capacity" or .status == "max-iterations")) then "failed"
+       elif (.lenses | length) == 0 then "success"
+       elif (.lenses | all(.status == "completed" or .status == "skipped")) then
+         (if (.lenses | any(.status == "skipped")) then "partial" else "success" end)
+       else "failed" end
+     )' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+# repolens_run_failed <summary_file> <log_base>
+#   Exit status 0 = run should be treated as failure (non-zero exit code).
+repolens_run_failed() {
+  local summary="$1" log_base="$2"
+  [[ -f "$log_base/.rate-limit-abort" ]] && return 0
+  if jq -e '.run_outcome == "failed"' "$summary" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }

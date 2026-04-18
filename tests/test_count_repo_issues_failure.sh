@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,6 +45,17 @@ make_fake_gh() {
   } > "$dir/gh"
   chmod +x "$dir/gh"
   printf '%s' "$dir"
+}
+
+with_fake_gh() {
+  # Runs a function name with PATH shadowed by the given fake-gh dir.
+  local dir="$1"; shift
+  PATH="$dir:$_ORIG_PATH"
+  "$@"
+  local rc=$?
+  PATH="$_ORIG_PATH"
+  rm -rf "$dir"
+  return $rc
 }
 
 record_pass() {

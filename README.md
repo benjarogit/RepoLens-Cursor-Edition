@@ -14,14 +14,60 @@
 
 ### Cursor Local Edition (this fork)
 
-This fork is tailored for running RepoLens with the Cursor Agent locally (`--agent cursor --local`).
-It is the recommended default workflow in this repository.
+This fork is tailored for running RepoLens **in the Cursor IDE** without the separate `cursor-agent` CLI: use **`--agent cursor-ide --local`** (recommended). RepoLens writes each lens prompt under `logs/<run-id>/…`; you run Composer in Cursor, save the reply to the indicated file, then `touch` the done marker so the shell script continues.
+
+Optional: **`--agent cursor`** still uses the Cursor Agent **CLI** (`cursor-agent`) if you want headless automation and accept its separate quota.
 
 > [!IMPORTANT]
-> In this fork, `--agent cursor` is intentionally limited to local output mode in Phase 1.
-> Always run Cursor with `--local` so findings are written to markdown files instead of opening GitHub issues.
+> In this fork, **`cursor` and `cursor-ide`** are intentionally limited to local output mode in Phase 1.
+> Always pass `--local` so findings are written to markdown files instead of opening GitHub issues.
 
-#### Fast Start (Cursor local, 60 seconds)
+#### Fork vs upstream (csretro)
+
+This tree is **vendored inside the CSRetro monorepo**, not a separate clone. **Upstream project:** [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens). Maintainer sync (fetch, diff, fork-specific files, pin): **[`UPSTREAM.md`](UPSTREAM.md)** and **[`UPSTREAM_REVISION`](UPSTREAM_REVISION)**.
+
+#### Fast Start (Cursor IDE — `cursor-ide`, no CLI agent)
+
+```bash
+cd /path/to/RepoLens-Cursor-Edition
+chmod +x repolens.sh
+./repolens.sh --project /path/to/your/repo --agent cursor-ide --local --domain security --yes
+```
+
+Per iteration, under **`maintainers/RepoLens/logs/<run-id>/<domain>/<lens-id>/`**: open `ide-prompt-iter-N.md` in Composer, save the **full** assistant reply to `ide-response-iter-N.txt` (default **≥ 400 bytes**, no stub boilerplate — otherwise the run emits `IDE_RESPONSE_REJECTED` and you retry), then `touch ide-done-iter-N` in that same directory. For quick pipeline demos only, set **`REPOLENS_IDE_ALLOW_STUB=1`**.
+
+**Machine protocol (IDE „Run Everything“ / Agent):** RepoLens prints **`REPOLENS_PHASE …`**, **`REPOLENS_AWAIT …`**, **`REPOLENS_ERROR …`**, and **`REPOLENS_CTL {…json…}`** on stderr and appends JSON lines to **`logs/<run-id>/repolens-ctl.ndjson`**. The JSON event **`kind: "ide_handoff"`** lists `files.prompt`, `files.response`, and `files.done` — an autonomous agent should perform those three steps without asking you each time. Set **`REPOLENS_IDE_AUTONOMOUS=1`** if you want `autonomous_env_hint: true` regardless of terminal detection. In **csretro**, the Cursor rule **`.cursor/rules/repolens-ide-handoff.mdc`** is **`alwaysApply: true`** so the Agent gets these instructions in every chat.
+
+#### Happy path — fully automatic in Cursor (csretro)
+
+1. Open the **csretro** workspace in Cursor and switch **Composer/Agent** to autonomous mode (auto-run terminal + file edits as your policy allows).
+2. From the repo root, start a local IDE run (defaults to `cursor-ide`):
+
+   ```bash
+   ./tools.sh repolens --domain security
+   ```
+
+   For a full audit (long-running): `./tools.sh repolens --mode audit` or `./tools.sh repolens:complete --mode audit` if you want the resume wrapper between quota windows.
+3. Leave the **integrated terminal** visible: the Agent should react to **`REPOLENS_CTL`** lines, write each **`files.response`**, and **`touch`** each **`files.done`** until the run finishes.
+
+If the Agent does not pick up terminal output, paste the latest **`REPOLENS_CTL`** JSON from **`maintainers/RepoLens/logs/<run-id>/repolens-ctl.ndjson`** into the chat once to prime it.
+
+#### CSRetro operator runbook (`cursor-ide`)
+
+- **`REPOLENS_IDE_AUTONOMOUS=1`:** RepoLens can mark handoffs for a fully autonomous agent (no per-step questions). The VS Code/Cursor tasks in **[`.vscode/tasks.json`](../../.vscode/tasks.json)** set this for **RepoLens: security** and **RepoLens: complete — security (auto-resume)**.
+- **Typical starts:** `./tools.sh repolens --domain security` from the CSRetro root; for long runs that may hit Cursor quota, prefer **`./tools.sh repolens:complete --domain security`** (wrapper sleeps and **`--resume`** the same `run-id`). If a run stops mid-way, continue with `./tools.sh repolens --resume <run-id> …`.
+- **When lenses stall:** Check `maintainers/RepoLens/logs/<run-id>/summary.json` for `rate-limited`, `agent-capacity`, or `agent-timeout`. Fix quota/wait, then **`--resume`** or **`repolens:complete`** — do not start a fresh run-id unless you intend to abandon the old one.
+- **Logs / disk:** By default **`REPOLENS_LOGS_AUTO_PRUNE`** runs before each `repolens` / `repolens:cli` / `repolens:complete` and deletes whole old run directories, keeping **`REPOLENS_LOGS_KEEP`** (default **3**). Opt out: `REPOLENS_LOGS_AUTO_PRUNE=0`. Roots with **`AUDIT.md`** and the active **`--resume`** target are never removed. To **keep evidence** but free space, run **`./tools.sh repolens:logs-archive [N] [--dry-run]`** — packs removed runs into **`maintainers/RepoLens/logs/archive/*.tar.gz`**. **Do not** delete `ide-response-*` / `iteration-*` inside an active run manually if you still need to debug or resume.
+
+#### Resolved findings & log retention (csretro)
+
+- **Closed audit items:** Local findings stay in `maintainers/RepoLens/logs/<run-id>/issues/…` (or manual audit trees like `…/full-security-audit/issues/`). Update the **Status** section in each markdown file when fixed; do not delete the file — it preserves evidence and rationale.
+- **Pruning agent run folders:** Each RepoLens run creates a large directory under `maintainers/RepoLens/logs/<run-id>/`. From the CSRetro repo root:
+  - `./tools.sh repolens:logs-prune` — delete old runs, keep the **3** newest (override count: `repolens:logs-prune 5`; preview: `repolens:logs-prune --dry-run`).
+  - `./tools.sh repolens:logs-archive` — same keep rules, but write removed runs to **`logs/archive/<run-id>.tar.gz`** before deleting the directory (preview: `--dry-run`).
+  - Environment: `REPOLENS_LOGS_KEEP` (default `3`). **Auto-prune is on by default** before `./tools.sh repolens`, `repolens:cli`, or `repolens:complete`; set `REPOLENS_LOGS_AUTO_PRUNE=0` to skip. A `--resume <run-id>` target is always kept even if it is not among the newest runs. Any run directory that contains **`AUDIT.md`** at its top level (manual or curated audits) is **never** deleted by pruning.
+
+#### Fast Start (Cursor Agent CLI — `cursor`)
 
 ```bash
 # 1) Enter this fork
@@ -81,7 +127,7 @@ export REPOLENS_CURSOR_SERIAL=false
 | `jq` | Yes | JSON config parsing | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`) |
 | `timeout` (coreutils) | Yes | Per-invocation agent timeout watchdog (see `REPOLENS_AGENT_TIMEOUT` below) | Ships in GNU coreutils. Pre-installed on Linux/NixOS. On macOS: `brew install coreutils`. |
 | `gh` | Yes (unless `--local`) | Create issues, labels, query repos | [cli.github.com](https://cli.github.com) — run `gh auth login` after install |
-| Agent backend | Yes (at least one) | Run analysis agents | Use `cursor` mode or one supported agent CLI |
+| Agent backend | Yes (at least one) | Run analysis agents | Use **`cursor-ide`** (IDE Composer handoff), `cursor` (CLI), or another supported agent CLI |
 | `docker` + `docker compose` | Only for `--hosted` | DAST scanning environment | OS package manager |
 
 ### Supported Agent CLIs
@@ -91,7 +137,8 @@ export REPOLENS_CURSOR_SERIAL=false
 | `claude` | `claude` | Anthropic Claude Code |
 | `codex` | `codex` | OpenAI Codex CLI |
 | `spark` / `sparc` | `codex` | Codex CLI with spark model |
-| `cursor` | `CURSOR_AGENT_RUNNER_CMD` | Native Cursor integration (Phase 1 supports `--local` mode only) |
+| `cursor-ide` | *(none)* | **IDE-only:** prompts under `logs/…`; you run Composer and drop replies into files (Phase 1: `--local` only) |
+| `cursor` | `CURSOR_AGENT_RUNNER_CMD` | Cursor Agent CLI (`cursor-agent`); Phase 1 supports `--local` only |
 | `opencode` | `opencode` | Open-source agent CLI (75+ providers) |
 | `opencode/<model>` | `opencode` | opencode with a specific provider/model |
 
@@ -122,16 +169,16 @@ If Cursor returns usage-capacity errors (for example `You've hit your usage limi
 ### Cursor-specific run examples (local mode)
 
 ```bash
-# Single lens (quick validation)
+# Single lens — IDE handoff (no cursor-agent)
+./repolens.sh --project ~/my-app --agent cursor-ide --local --focus injection --yes
+
+# Security domain — IDE handoff
+./repolens.sh --project ~/my-app --agent cursor-ide --local --domain security --yes
+
+# Same flows with Cursor Agent CLI instead
 ./repolens.sh --project ~/my-app --agent cursor --local --focus injection --yes
-
-# Security domain (recommended baseline)
 ./repolens.sh --project ~/my-app --agent cursor --local --domain security --yes
-
-# Full local audit (all non-mode-specific domains)
 ./repolens.sh --project ~/my-app --agent cursor --local --yes
-
-# Custom output directory
 ./repolens.sh --project ~/my-app --agent cursor --local --output ~/reports/repolens --yes
 ```
 
@@ -345,7 +392,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--project <path\|url>` | Local path or remote Git URL (cloned read-only if URL) |
-| `--agent <agent>` | `claude \| codex \| spark \| sparc \| cursor \| opencode \| opencode/<model>` |
+| `--agent <agent>` | `claude \| codex \| spark \| sparc \| cursor \| cursor-ide \| opencode \| opencode/<model>` |
 
 ### Optional Flags
 
@@ -362,7 +409,7 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 | `--spec <file>` | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB) |
 | `--max-issues <n>` | Stop after creating *n* total issues |
 | `--local` | Write findings as local markdown files instead of creating GitHub issues. No `gh` required |
-| `--agent cursor` note | Phase 1 supports `--local` mode only |
+| `--agent cursor` / `cursor-ide` note | Phase 1 supports `--local` mode only |
 | `--output <path>` | Output directory for local markdown files (requires `--local`, default: `logs/<run-id>/issues/`) |
 | `--hosted` | Spin up Docker Compose for DAST scanning (used with `toolgate` domain) |
 | `--max-cost <amount>` | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly. |
@@ -376,8 +423,8 @@ Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REPOLENS_AGENT_TIMEOUT` | `6000` | Per-invocation agent timeout in seconds. Every agent call is wrapped with `timeout(1)` at this cap — if an agent hangs (stuck network, auth prompt, quota check in flight), the invocation is killed, the iteration is logged with `[ERROR] agent timed out after Ns`, and the lens loop continues. Lower (e.g. `600`) for quick smoke runs; raise further for deep research agents on large repos. |
-| `REPOLENS_CHILD_MAX_WAIT` | `144000` | Per-child deadline in seconds for parallel-mode workers. `wait_all` polls each background lens with `kill -0` + `sleep 1` and, if a child exceeds this deadline, sends SIGTERM (10s grace) then SIGKILL, logs `[lens_id] exceeded REPOLENS_CHILD_MAX_WAIT=Ns`, and continues reaping the remaining children. Outer safety net — the agent-level `REPOLENS_AGENT_TIMEOUT` handles the inner loop. Should be ≥ `MAX_ITERATIONS_PER_LENS × REPOLENS_AGENT_TIMEOUT` plus a buffer for non-agent I/O (`gh` queries, file locks). |
+| `REPOLENS_AGENT_TIMEOUT` | `600` | Per-invocation agent timeout in seconds. Every agent call is wrapped with `timeout(1)` at this cap — if an agent hangs (stuck network, auth prompt, quota check in flight), the invocation is killed, the iteration is logged with `[ERROR] agent timed out after Ns`, and the lens loop continues. Deploy / content modes with long read cycles may benefit from a higher value (e.g. `REPOLENS_AGENT_TIMEOUT=1800`). |
+| `REPOLENS_CHILD_MAX_WAIT` | `14400` | Per-child deadline in seconds for parallel-mode workers. `wait_all` polls each background lens with `kill -0` + `sleep 1` and, if a child exceeds this deadline, sends SIGTERM (10s grace) then SIGKILL, logs `[lens_id] exceeded REPOLENS_CHILD_MAX_WAIT=Ns`, and continues reaping the remaining children. Outer safety net — the agent-level `REPOLENS_AGENT_TIMEOUT` handles the inner loop. Should be ≥ `MAX_ITERATIONS_PER_LENS × REPOLENS_AGENT_TIMEOUT` plus a buffer for non-agent I/O (`gh` queries, file locks). |
 
 ## Domains & Lenses (280 total across 27 domains)
 
@@ -556,8 +603,8 @@ Most first-run failures fall into one of these patterns. Errors are quoted verba
 | Lens hangs on cursor backend | Cursor agent does not return promptly for a lens prompt | Reduce timeout via `CURSOR_AGENT_TIMEOUT_SEC` (e.g. `30`) and rerun; timed-out lenses are marked `agent-timeout` |
 | Cursor exits with `You've hit your usage limit` | Cursor account has no remaining Agent capacity | Wait for quota reset or upgrade plan, then rerun. RepoLens marks affected lenses as `agent-capacity` and exits those lenses early |
 | Agent prompts for login on every iteration | Agent CLI not authenticated | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis) |
-| `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `cursor`, `opencode`, `opencode/<model>` |
-| `--agent cursor currently supports only --local mode in Phase 1.` | Cursor agent used without local mode | Add `--local`, or use another agent backend |
+| `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `cursor`, `cursor-ide`, `opencode`, `opencode/<model>` |
+| `--agent cursor and cursor-ide currently support only --local mode in Phase 1.` | Cursor backends used without local mode | Add `--local`, or use another agent backend |
 | `Not a git repository: …` | `--project` path is not a git repo | Use `git init`, pass a real repo path, or use `--mode deploy` (which doesn't require git) |
 | `--hosted requires Docker to be installed` | Docker missing or daemon stopped | Install Docker, then `sudo systemctl start docker` (or open Docker Desktop) |
 | `--hosted requires a docker-compose.yml or compose.yml in the project` | No compose file at project root | Add a compose file, or drop `--hosted` and audit statically |

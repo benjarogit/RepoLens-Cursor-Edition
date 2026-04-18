@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 # Behavioral contract:
 # 1. Every .sh file (lib, entry point, tests) must contain the Apache 2.0 boilerplate header
 # 2. The header must appear after the shebang line, not before it
-# 3. Copyright holder must be "Bootstrap Academy" (matching NOTICE file)
+# 3. Copyright holder in headers is "Bootstrap Academy" (upstream RepoLens; see NOTICE for csretro additions)
 # 4. Copyright year must be 2025 (matching NOTICE file)
 # 5. Header must be complete (not truncated) — both opening and closing lines present
 # 6. Header must appear exactly once per file (no duplicates)
@@ -155,7 +155,7 @@ else
 fi
 
 # =====================================================================
-# 4. Copyright holder is Bootstrap Academy in every header
+# 4. Copyright holder is Bootstrap Academy in every header (upstream RepoLens)
 # =====================================================================
 
 echo ""
@@ -347,7 +347,7 @@ TOTAL=$((TOTAL + 1))
 wrong_position=()
 for f in "${sh_files[@]}"; do
   line2="$(sed -n '2p' "$f")"
-  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy" ]]; then
+  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens)." ]]; then
     wrong_position+=("$(basename "$f")")
   fi
 done
@@ -627,7 +627,7 @@ echo "Test 21: Header text matches the canonical Apache 2.0 boilerplate"
 TOTAL=$((TOTAL + 1))
 # The canonical 13-line Apache 2.0 boilerplate (as a bash comment block)
 read -r -d '' EXPECTED_HEADER << 'ENDOFHEADER' || true
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

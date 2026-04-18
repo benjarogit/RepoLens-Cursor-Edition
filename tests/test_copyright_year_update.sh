@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@
 # Tests for issue #33: Verify and correct copyright year in NOTICE file
 #
 # Behavioral contract:
-# 1. NOTICE file must contain "Copyright 2025-2026 Bootstrap Academy"
-# 2. All .sh file headers (line 2) must contain "Copyright 2025-2026 Bootstrap Academy"
+# 1. NOTICE: Bootstrap Academy (upstream) first; benjarogit / Sunny C. for csretro Cursor IDE integration
+# 2. All tracked .sh file headers (line 2): "Copyright 2025-2026 Bootstrap Academy"
 # 3. No stale "Copyright 2025 Bootstrap Academy" (without -2026) may remain
 # 4. Existing test assertions in test_license_files.sh and test_license_headers.sh
 #    must be updated to match the new year format
@@ -98,9 +98,14 @@ if [[ -f "$SCRIPT_DIR/NOTICE" ]]; then
   notice_content="$(cat "$SCRIPT_DIR/NOTICE")"
 fi
 
-echo "Test 1: NOTICE contains 'Copyright 2025-2026 Bootstrap Academy'"
-assert_contains "NOTICE has updated copyright year range" \
+echo "Test 1a: NOTICE line 2 cites upstream 'Copyright 2025-2026 Bootstrap Academy'"
+assert_contains "NOTICE cites upstream RepoLens (Bootstrap Academy)" \
   "Copyright 2025-2026 Bootstrap Academy" "$notice_content"
+
+echo ""
+echo "Test 1b: NOTICE cites csretro Cursor IDE work 'Copyright 2025-2026 benjarogit / Sunny C.'"
+assert_contains "NOTICE cites benjarogit / Sunny C. integration line" \
+  "Copyright 2025-2026 benjarogit / Sunny C." "$notice_content"
 
 # =====================================================================
 # 2. NOTICE does NOT contain stale single-year copyright
@@ -133,13 +138,13 @@ TOTAL=$((TOTAL + 1))
 wrong_year=()
 for f in "${sh_files[@]}"; do
   line2="$(sed -n '2p' "$f")"
-  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy" ]]; then
+  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens)." ]]; then
     wrong_year+=("$(basename "$f")")
   fi
 done
 if [[ "${#wrong_year[@]}" -eq 0 ]]; then
   PASS=$((PASS + 1))
-  echo "  PASS: All ${#sh_files[@]} .sh files have the updated copyright year on line 2"
+  echo "  PASS: All ${#sh_files[@]} .sh files have Bootstrap Academy on line 2"
 else
   FAIL=$((FAIL + 1))
   echo "  FAIL: ${#wrong_year[@]} file(s) do not have 'Copyright 2025-2026 Bootstrap Academy' on line 2:"
@@ -205,29 +210,30 @@ fi
 # =====================================================================
 
 echo ""
-echo "Test 6: All .sh file copyright lines match NOTICE copyright line"
+echo "Test 6: All .sh file line-2 copyright matches NOTICE upstream prefix"
 TOTAL=$((TOTAL + 1))
-notice_copyright=""
+notice_upstream=""
 if [[ -f "$SCRIPT_DIR/NOTICE" ]]; then
-  notice_copyright="$(grep -oE 'Copyright [^[:space:]]+ .+' "$SCRIPT_DIR/NOTICE" | head -1)"
+  notice_upstream="$(grep -m1 '^Copyright 2025-2026 Bootstrap Academy' "$SCRIPT_DIR/NOTICE")"
 fi
-if [[ -z "$notice_copyright" ]]; then
+expected_line2="# ${notice_upstream}"
+if [[ -z "$notice_upstream" ]]; then
   FAIL=$((FAIL + 1))
-  echo "  FAIL: Could not extract copyright line from NOTICE"
+  echo "  FAIL: Could not read upstream copyright line from NOTICE"
 else
   mismatch=()
   for f in "${sh_files[@]}"; do
-    header_copyright="$(head -5 "$f" | grep -oE 'Copyright [^[:space:]]+ .+' | head -1)"
-    if [[ "$header_copyright" != "$notice_copyright" ]]; then
+    line2="$(sed -n '2p' "$f")"
+    if [[ "$line2" != "$expected_line2" ]]; then
       mismatch+=("$(basename "$f")")
     fi
   done
   if [[ "${#mismatch[@]}" -eq 0 ]]; then
     PASS=$((PASS + 1))
-    echo "  PASS: All headers match NOTICE copyright: '$notice_copyright'"
+    echo "  PASS: All headers match NOTICE line 2 as '# <NOTICE line 2>'"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: ${#mismatch[@]} file(s) have copyright mismatch with NOTICE:"
+    echo "  FAIL: ${#mismatch[@]} file(s) have copyright mismatch (expected line 2: '$expected_line2'):"
     for m in "${mismatch[@]}"; do
       echo "    - $m"
     done
@@ -239,7 +245,7 @@ fi
 # =====================================================================
 
 echo ""
-echo "Test 7: test_license_files.sh asserts 'Copyright 2025-2026 Bootstrap Academy'"
+echo "Test 7: test_license_files.sh asserts upstream 'Copyright 2025-2026 Bootstrap Academy' in NOTICE checks"
 TOTAL=$((TOTAL + 1))
 tlf="$SCRIPT_DIR/tests/test_license_files.sh"
 if [[ -f "$tlf" ]]; then
@@ -348,16 +354,16 @@ fi
 # =====================================================================
 
 echo ""
-echo "Test 12: NOTICE copyright line is on line 2"
+echo "Test 12: NOTICE upstream copyright is on line 2 (Bootstrap Academy)"
 TOTAL=$((TOTAL + 1))
 if [[ -f "$SCRIPT_DIR/NOTICE" ]]; then
   line2="$(sed -n '2p' "$SCRIPT_DIR/NOTICE")"
-  if [[ "$line2" == "Copyright 2025-2026 Bootstrap Academy" ]]; then
+  if [[ "$line2" == "Copyright 2025-2026 Bootstrap Academy (upstream RepoLens)." ]]; then
     PASS=$((PASS + 1))
-    echo "  PASS: NOTICE line 2 is 'Copyright 2025-2026 Bootstrap Academy'"
+    echo "  PASS: NOTICE line 2 is upstream RepoLens copyright (Bootstrap Academy)"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: NOTICE line 2 is '$line2', expected 'Copyright 2025-2026 Bootstrap Academy'"
+    echo "  FAIL: NOTICE line 2 is '$line2', expected 'Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).'"
   fi
 else
   FAIL=$((FAIL + 1))

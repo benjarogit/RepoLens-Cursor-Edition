@@ -128,7 +128,7 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --local --domain security --parallel
 
 Environment:
-  REPOLENS_AGENT_TIMEOUT   Per-invocation agent timeout in seconds (default: 600).
+  REPOLENS_AGENT_TIMEOUT   Per-invocation agent timeout in seconds (default: 6000).
                            Applied to every agent call via timeout(1). On timeout
                            the iteration is logged with [ERROR] and the lens
                            loop continues to the next iteration.
@@ -145,7 +145,7 @@ Environment:
                            Max rate-limit retries per lens in cursor wait mode
                            (default: 120).
   REPOLENS_CHILD_MAX_WAIT  Per-child parallel-worker deadline in seconds
-                           (default: 14400). Outer safety net for parallel mode:
+                           (default: 144000). Outer safety net for parallel mode:
                            wait_all polls each background lens and SIGTERM/KILLs
                            any child that exceeds this deadline, then continues
                            with the remaining children. Should be >=
@@ -1072,7 +1072,7 @@ run_lens() {
     local agent_rc=0
     run_agent "$AGENT" "$prompt" "$PROJECT_PATH" >"$output_file" 2>&1 || agent_rc=$?
     if [[ "$agent_rc" -eq 124 ]]; then
-      log_error "[$domain/$lens_id] agent timed out after ${REPOLENS_AGENT_TIMEOUT:-600}s on iteration $iteration"
+      log_error "[$domain/$lens_id] agent timed out after ${REPOLENS_AGENT_TIMEOUT:-6000}s on iteration $iteration"
     elif [[ "$agent_rc" -ne 0 ]]; then
       log_warn "[$domain/$lens_id] Agent returned non-zero on iteration $iteration. Continuing."
       if grep -q "REPOLENS_CURSOR_TIMEOUT" "$output_file" 2>/dev/null; then

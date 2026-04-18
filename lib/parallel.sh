@@ -109,10 +109,10 @@ spawn_lens() {
 #   all succeeded, 1 if any child failed or was killed by the deadline.
 #
 #   REPOLENS_CHILD_MAX_WAIT (env, seconds): hard ceiling per child.
-#     Default: 14400 (4h). Should be >= MAX_ITERATIONS_PER_LENS *
+#     Default: 144000 (40h). Should be >= MAX_ITERATIONS_PER_LENS *
 #     REPOLENS_AGENT_TIMEOUT plus a safety buffer for non-agent I/O
 #     (gh queries, file locks, etc.). With defaults of 20 iterations *
-#     600s agent timeout = 12000s, 14400s (4h) gives a 2400s buffer.
+#     6000s agent timeout = 120000s, 144000s gives a 24000s buffer.
 #
 #   Bash 4.0-compatible: polls with `kill -0` + `sleep 1`, NOT `wait -t`
 #   (bash 5.1+ only). If a child exceeds the deadline, it is sent SIGTERM,
@@ -120,7 +120,7 @@ spawn_lens() {
 #   stuck lens id is logged and rc=1 is returned, but the remaining
 #   children are still processed — one stall must not block the rest.
 wait_all() {
-  local max_wait="${REPOLENS_CHILD_MAX_WAIT:-14400}"
+  local max_wait="${REPOLENS_CHILD_MAX_WAIT:-144000}"
   local rc=0
   local i pid lens_id waited grace
 

@@ -186,19 +186,19 @@ assert_contains "SIGKILL escalation: log mentions SIGKILL fallback" "SIGKILL" "$
 unset REPOLENS_CHILD_MAX_WAIT
 
 # ---------------------------------------------------------------------------
-# 5. Default value — no REPOLENS_CHILD_MAX_WAIT set, default is 14400.
+# 5. Default value — no REPOLENS_CHILD_MAX_WAIT set, default is 144000.
 #    Introspect wait_all's declared body so a future "I'll just bump this
 #    to 7200" tweak shows up as a deliberate test change.
 # ---------------------------------------------------------------------------
 unset REPOLENS_CHILD_MAX_WAIT
 wait_all_src="$(declare -f wait_all)"
 TOTAL=$((TOTAL + 1))
-if [[ "$wait_all_src" =~ REPOLENS_CHILD_MAX_WAIT:-14400 ]]; then
+if [[ "$wait_all_src" =~ REPOLENS_CHILD_MAX_WAIT:-144000 ]]; then
   PASS=$((PASS + 1))
-  echo "  PASS: wait_all default REPOLENS_CHILD_MAX_WAIT is 14400"
+  echo "  PASS: wait_all default REPOLENS_CHILD_MAX_WAIT is 144000"
 else
   FAIL=$((FAIL + 1))
-  echo "  FAIL: wait_all does not use default 14400 for REPOLENS_CHILD_MAX_WAIT"
+  echo "  FAIL: wait_all does not use default 144000 for REPOLENS_CHILD_MAX_WAIT"
 fi
 
 # ---------------------------------------------------------------------------

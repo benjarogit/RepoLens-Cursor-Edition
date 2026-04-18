@@ -65,7 +65,7 @@ run_agent() {
   local agent="$1"
   local prompt="$2"
   local project_path="$3"
-  local timeout_secs="${REPOLENS_AGENT_TIMEOUT:-600}"
+  local timeout_secs="${REPOLENS_AGENT_TIMEOUT:-6000}"
 
   [[ -d "$project_path" ]] || die "Project path does not exist: $project_path"
 

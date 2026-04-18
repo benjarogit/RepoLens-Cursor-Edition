@@ -47,17 +47,6 @@ make_fake_gh() {
   printf '%s' "$dir"
 }
 
-with_fake_gh() {
-  # Runs a function name with PATH shadowed by the given fake-gh dir.
-  local dir="$1"; shift
-  PATH="$dir:$_ORIG_PATH"
-  "$@"
-  local rc=$?
-  PATH="$_ORIG_PATH"
-  rm -rf "$dir"
-  return $rc
-}
-
 record_pass() {
   TOTAL=$((TOTAL + 1))
   PASS=$((PASS + 1))

@@ -15,9 +15,9 @@
 
 # Static & structural test: REPOLENS_AGENT_TIMEOUT wiring is correct.
 #
-# Verifies (without waiting the full 600s default):
-#   1. lib/core.sh defaults REPOLENS_AGENT_TIMEOUT to 600 via
-#      ${VAR:-600} expansion.
+# Verifies (without waiting the full 6000s default):
+#   1. lib/core.sh defaults REPOLENS_AGENT_TIMEOUT to 6000 via
+#      ${VAR:-6000} expansion.
 #   2. Every agent branch in run_agent is wrapped with timeout(1).
 #   3. Agent subshell closes stdin (exec </dev/null).
 #   4. repolens.sh requires the `timeout` command in preflight.
@@ -77,11 +77,11 @@ CORE="$SCRIPT_DIR/lib/core.sh"
 REPO="$SCRIPT_DIR/repolens.sh"
 README="$SCRIPT_DIR/README.md"
 
-# 1. lib/core.sh defaults to 600 via ${VAR:-600}.
+# 1. lib/core.sh defaults to 6000 via ${VAR:-6000}.
 assert_match \
-  "lib/core.sh defaults REPOLENS_AGENT_TIMEOUT to 600" \
+  "lib/core.sh defaults REPOLENS_AGENT_TIMEOUT to 6000" \
   "$CORE" \
-  'REPOLENS_AGENT_TIMEOUT:-600'
+  'REPOLENS_AGENT_TIMEOUT:-6000'
 
 # 2. All five agent branches are wrapped with timeout(1).
 # Counting bare `timeout "...s"` occurrences inside run_agent should
@@ -144,14 +144,14 @@ assert_match \
 default_val="$(env -i PATH="$PATH" bash -c "
   set -uo pipefail
   unset REPOLENS_AGENT_TIMEOUT
-  echo \"\${REPOLENS_AGENT_TIMEOUT:-600}\"
+  echo \"\${REPOLENS_AGENT_TIMEOUT:-6000}\"
 ")"
-assert_eq "Default REPOLENS_AGENT_TIMEOUT expands to 600" "600" "$default_val"
+assert_eq "Default REPOLENS_AGENT_TIMEOUT expands to 6000" "6000" "$default_val"
 
 # 8. Explicit override is honored.
 override_val="$(env -i PATH="$PATH" REPOLENS_AGENT_TIMEOUT=42 bash -c "
   set -uo pipefail
-  echo \"\${REPOLENS_AGENT_TIMEOUT:-600}\"
+  echo \"\${REPOLENS_AGENT_TIMEOUT:-6000}\"
 ")"
 assert_eq "Explicit REPOLENS_AGENT_TIMEOUT override honored" "42" "$override_val"
 

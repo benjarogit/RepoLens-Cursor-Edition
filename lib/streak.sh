@@ -183,3 +183,105 @@ detect_agent_rate_limit() {
   done
   return 1
 }
+
+# cursor_rate_limit_hint_sleep_sec <output_file>
+# Best-effort parse of "try again in …" / "try again at …" from agent stderr
+# (cursor-agent, codex, etc.). Prints one integer: suggested sleep seconds, or
+# nothing (exit 1) if no parseable hint. Caller should clamp to sane bounds.
+cursor_rate_limit_hint_sleep_sec() {
+  local file="$1"
+  [[ -s "$file" ]] || return 1
+
+  local stripped low line
+  stripped="$(strip_ansi <"$file" 2>/dev/null)" || return 1
+  low="${stripped,,}"
+
+  line="$(printf '%s\n' "$low" | grep -E 'try again in[[:space:]]+[0-9]+' | head -1 || true)"
+  if [[ -n "$line" ]]; then
+    if [[ "$line" =~ try[[:space:]]+again[[:space:]]+in[[:space:]]+([0-9]+)[[:space:]]*hours? ]]; then
+      echo $((${BASH_REMATCH[1]} * 3600))
+      return 0
+    fi
+    if [[ "$line" =~ try[[:space:]]+again[[:space:]]+in[[:space:]]+([0-9]+)[[:space:]]*minutes? ]]; then
+      echo $((${BASH_REMATCH[1]} * 60))
+      return 0
+    fi
+    if [[ "$line" =~ try[[:space:]]+again[[:space:]]+in[[:space:]]+([0-9]+)[[:space:]]*seconds? ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  fi
+
+  line="$(printf '%s\n' "$low" | grep -E 'try again at[[:space:]]+' | head -1 || true)"
+  if [[ -n "$line" ]] && [[ "$line" =~ try[[:space:]]+again[[:space:]]+at[[:space:]]+([^[:space:]]+) ]]; then
+    local ts="${BASH_REMATCH[1]}"
+    local now_epoch want_epoch
+    now_epoch="$(date -u +%s 2>/dev/null)" || return 1
+    want_epoch="$(date -u -d "$ts" +%s 2>/dev/null)" || return 1
+    if [[ "$want_epoch" -gt "$now_epoch" ]]; then
+      echo $((want_epoch - now_epoch))
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# repolens_write_cursor_rate_limit_handoff <log_base> <run_id> <project_path> <domain> <lens_id> <iteration> <agent_output_file> <retry_no>
+# Writes MANUAL_HANDOFF.md and appends one JSON line to repolens-ctl.ndjson (Cursor Edition).
+repolens_write_cursor_rate_limit_handoff() {
+  local log_base="$1" run_id="$2" project_path="$3" domain="$4" lens_id="$5" iteration="$6" agent_out="$7" retry_no="$8"
+  [[ -n "$log_base" && -n "$run_id" ]] || return 1
+  mkdir -p "$log_base" || return 1
+
+  local md="$log_base/MANUAL_HANDOFF.md"
+  local ctl="$log_base/repolens-ctl.ndjson"
+  local script_dir lens_rel
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd 2>/dev/null)" || script_dir=""
+  [[ -z "$script_dir" ]] && script_dir="(path to RepoLens checkout)"
+  lens_rel="${agent_out#"$log_base"/}"
+
+  {
+    printf '%s\n' "# RepoLens — manual continuation after Cursor CLI rate limit"
+    printf '%s\n' ""
+    printf '%s\n' "**Run ID:** \`$run_id\`  "
+    printf '%s\n' "**Lens:** \`$domain/$lens_id\` (iteration $iteration, CLI retry #$retry_no)  "
+    printf '%s\n' "**Project:** \`$project_path\`  "
+    printf '%s\n' "**Last captured agent output:** \`$log_base/$lens_rel\`  "
+    printf '%s\n' ""
+    printf '%s\n' "## Deutsch — was jetzt?"
+    printf '%s\n' "1. **Warten**, bis dein Cursor-Kontingent wieder frei ist (oder die Wartezeit aus der letzten Agent-Ausgabe abwarten)."
+    printf '%s\n' "2. **Weiter mit derselben Run-ID:** im RepoLens-Checkout:"
+    printf '%s\n' '```bash'
+    printf '%s\n' "export PATH=\"\$HOME/.local/bin:\$PATH\""
+    printf '%s\n' "cd \"$script_dir\""
+    printf '%s\n' "./repolens.sh --project \"$project_path\" --agent cursor --local \\"
+    printf '%s\n' "  --resume $run_id --yes"
+    printf '%s\n' '```'
+    printf '%s\n' "3. **Oder automatisch in Wellen:** \`./repolens_until_done.sh --resume $run_id --project \"$project_path\" --agent cursor --local --yes\` (schläft zwischen Resumes)."
+    printf '%s\n' "4. **Oder manuell im Cursor-Chat (Composer):** \`--agent cursor-ide\` statt \`cursor\` — gleiche \`--resume\`-Run-ID; RepoLens schreibt dann \`ide-prompt-*\` und wartet auf deine Antwort-Dateien."
+    printf '%s\n' ""
+    printf '%s\n' "## English — next steps"
+    printf '%s\n' "Same as above: **\`--resume $run_id\`** with \`cursor\`, or use \`repolens_until_done.sh\`, or switch to **\`--agent cursor-ide\`** for full IDE handoff."
+  } >"$md"
+
+  if [[ "${retry_no:-0}" -eq 1 ]] && command -v jq >/dev/null 2>&1; then
+    local json
+    json="$(jq -nc \
+      --arg kind "cursor_cli_rate_limited" \
+      --arg run_id "$run_id" \
+      --arg domain "$domain" \
+      --arg lens "$lens_id" \
+      --argjson iteration "$iteration" \
+      --argjson retry "$retry_no" \
+      --arg project "$project_path" \
+      --arg agent_log "$agent_out" \
+      --arg handoff_md "$md" \
+      '{v: 1, kind: $kind, run_id: $run_id, domain: $domain, lens: $lens, iteration: $iteration, retry: $retry, project: $project, agent_log: $agent_log, handoff_markdown: $handoff_md}')" || json=""
+    if [[ -n "$json" ]]; then
+      printf '%s\n' "$json" >>"$ctl"
+      printf 'REPOLENS_MANUAL_HANDOFF %s\n' "$json" >&2
+    fi
+  fi
+  return 0
+}

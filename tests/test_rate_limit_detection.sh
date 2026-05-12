@@ -205,5 +205,31 @@ printf "gh: 401 Unauthorized — the provided token is invalid.\n" > "$f"
 assert_detect "401 Unauthorized anywhere in output (detector-level)" "$f" "yes"
 
 echo ""
+echo "=== cursor_rate_limit_hint_sleep_sec ==="
+
+assert_hint() {
+  local desc="$1" content="$2" want="$3"
+  TOTAL=$((TOTAL + 1))
+  local f="$TMPDIR/hint_$RANDOM.txt"
+  printf '%s' "$content" >"$f"
+  local got
+  got="$(cursor_rate_limit_hint_sleep_sec "$f" 2>/dev/null || true)"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc (want='$want' got='$got')" >&2
+  fi
+}
+
+assert_hint "try again in 5 minutes" $'Error: slow down\ntry again in 5 minutes\n' "300"
+assert_hint "try again in 90 seconds" "please try again in 90 seconds" "90"
+assert_hint "try again in 2 hours" "quota: try again in 2 hours" "7200"
+f="$TMPDIR/hint_no_match.txt"
+printf 'no timing here\n' >"$f"
+assert_hint "no parseable hint" "$(cat "$f")" ""
+
+echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
 exit "$FAIL"

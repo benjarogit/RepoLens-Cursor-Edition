@@ -131,9 +131,16 @@ Environment knobs:
 ```bash
 export REPOLENS_CURSOR_SERIAL=true                    # default
 export REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT=true        # default
-export REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC=120       # default
+export REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC=120       # default (fallback if no parseable hint)
 export REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES=120     # default
+export REPOLENS_CURSOR_RATE_LIMIT_HINT_MIN_SEC=30    # clamp parsed "try again in …" (default)
+export REPOLENS_CURSOR_RATE_LIMIT_HINT_MAX_SEC=7200  # upper clamp (default)
+export REPOLENS_CURSOR_RATE_LIMIT_HANDOFF=true       # optional: write MANUAL_HANDOFF.md + stderr JSON
 ```
+
+When the CLI is **rate-limited**, RepoLens **parses “try again in/at …”** from the captured agent output when possible and sleeps that long (within the hint min/max). Set **`REPOLENS_CURSOR_RATE_LIMIT_HANDOFF=true`** to emit **`logs/<run-id>/MANUAL_HANDOFF.md`**, append one **`cursor_cli_rate_limited`** line to **`repolens-ctl.ndjson`**, and print **`REPOLENS_MANUAL_HANDOFF …`** on stderr so you (or an IDE agent) know exactly **which run / lens / log file** to continue with **`--resume`** or by switching to **`--agent cursor-ide`**.
+
+For unattended completion across quota windows, use **`./repolens_until_done.sh`** (same flags as `repolens.sh`; optional leading `--resume <run-id>`).
 
 If you explicitly want parallel cursor execution anyway:
 

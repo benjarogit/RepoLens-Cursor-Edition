@@ -147,6 +147,13 @@ Environment:
   REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES
                            Max rate-limit retries per lens in cursor wait mode
                            (default: 120).
+  REPOLENS_CURSOR_RATE_LIMIT_HINT_MIN_SEC / REPOLENS_CURSOR_RATE_LIMIT_HINT_MAX_SEC
+                           Clamp for server-parsed \"try again in/at\" sleeps
+                           (defaults: 30 / 7200).
+  REPOLENS_CURSOR_RATE_LIMIT_HANDOFF
+                           If true, write logs/<run-id>/MANUAL_HANDOFF.md and one
+                           repolens-ctl.ndjson line on the first CLI rate-limit retry,
+                           plus REPOLENS_MANUAL_HANDOFF JSON on stderr (for agents).
   REPOLENS_RUN_ID_FILE     If set, write the resolved RUN_ID (one line) to this
                            path right after the log directory is created (for
                            orchestration wrappers).
@@ -511,11 +518,15 @@ CURSOR_SERIAL="${REPOLENS_CURSOR_SERIAL:-true}"
 CURSOR_WAIT_ON_RATE_LIMIT="${REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT:-true}"
 CURSOR_RATE_LIMIT_SLEEP_SEC="${REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC:-120}"
 CURSOR_RATE_LIMIT_MAX_RETRIES="${REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES:-120}"
+CURSOR_RL_HINT_MIN_SEC="${REPOLENS_CURSOR_RATE_LIMIT_HINT_MIN_SEC:-30}"
+CURSOR_RL_HINT_MAX_SEC="${REPOLENS_CURSOR_RATE_LIMIT_HINT_MAX_SEC:-7200}"
 
 case "${CURSOR_SERIAL,,}" in true|false|1|0|yes|no) ;; *) die "REPOLENS_CURSOR_SERIAL must be true/false, got: $CURSOR_SERIAL" ;; esac
 case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in true|false|1|0|yes|no) ;; *) die "REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT must be true/false, got: $CURSOR_WAIT_ON_RATE_LIMIT" ;; esac
 [[ "$CURSOR_RATE_LIMIT_SLEEP_SEC" =~ ^[1-9][0-9]*$ ]] || die "REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC must be a positive integer, got: $CURSOR_RATE_LIMIT_SLEEP_SEC"
 [[ "$CURSOR_RATE_LIMIT_MAX_RETRIES" =~ ^[0-9]+$ ]] || die "REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES must be a non-negative integer, got: $CURSOR_RATE_LIMIT_MAX_RETRIES"
+[[ "$CURSOR_RL_HINT_MIN_SEC" =~ ^[1-9][0-9]*$ ]] || die "REPOLENS_CURSOR_RATE_LIMIT_HINT_MIN_SEC must be a positive integer, got: $CURSOR_RL_HINT_MIN_SEC"
+[[ "$CURSOR_RL_HINT_MAX_SEC" =~ ^[1-9][0-9]*$ ]] || die "REPOLENS_CURSOR_RATE_LIMIT_HINT_MAX_SEC must be a positive integer, got: $CURSOR_RL_HINT_MAX_SEC"
 
 # --- Derive repo metadata ---
 REPO_NAME="$(basename "$PROJECT_PATH")"
@@ -1197,8 +1208,29 @@ run_lens() {
           true|1|yes)
             if [[ "$cursor_rl_retries" -lt "$CURSOR_RATE_LIMIT_MAX_RETRIES" ]]; then
               cursor_rl_retries=$((cursor_rl_retries + 1))
-              log_warn "[$domain/$lens_id] Cursor rate-limited (retry $cursor_rl_retries/$CURSOR_RATE_LIMIT_MAX_RETRIES). Sleeping ${CURSOR_RATE_LIMIT_SLEEP_SEC}s before retry."
-              sleep "$CURSOR_RATE_LIMIT_SLEEP_SEC"
+              local sleep_sec="$CURSOR_RATE_LIMIT_SLEEP_SEC"
+              if [[ "$AGENT" == "cursor" ]] && declare -F cursor_rate_limit_hint_sleep_sec >/dev/null 2>&1; then
+                local hint=""
+                hint="$(cursor_rate_limit_hint_sleep_sec "$output_file" 2>/dev/null || true)"
+                if [[ "$hint" =~ ^[1-9][0-9]*$ ]]; then
+                  if [[ "$hint" -lt "$CURSOR_RL_HINT_MIN_SEC" ]]; then
+                    hint="$CURSOR_RL_HINT_MIN_SEC"
+                  elif [[ "$hint" -gt "$CURSOR_RL_HINT_MAX_SEC" ]]; then
+                    hint="$CURSOR_RL_HINT_MAX_SEC"
+                  fi
+                  sleep_sec="$hint"
+                  log_info "[$domain/$lens_id] Parsed rate-limit hint: sleeping ${sleep_sec}s (default was ${CURSOR_RATE_LIMIT_SLEEP_SEC}s)."
+                fi
+              fi
+              log_warn "[$domain/$lens_id] Cursor rate-limited (retry $cursor_rl_retries/$CURSOR_RATE_LIMIT_MAX_RETRIES). Sleeping ${sleep_sec}s before retry."
+              if [[ "$AGENT" == "cursor" ]] && [[ "${REPOLENS_CURSOR_RATE_LIMIT_HANDOFF,,}" =~ ^(1|true|yes)$ ]] && declare -F repolens_write_cursor_rate_limit_handoff >/dev/null 2>&1; then
+                if repolens_write_cursor_rate_limit_handoff "$LOG_BASE" "$RUN_ID" "$PROJECT_PATH" "$domain" "$lens_id" "$iteration" "$output_file" "$cursor_rl_retries"; then
+                  if [[ "$cursor_rl_retries" -eq 1 ]]; then
+                    log_info "[$domain/$lens_id] Manual handoff written: $LOG_BASE/MANUAL_HANDOFF.md (stderr: REPOLENS_MANUAL_HANDOFF when jq available)."
+                  fi
+                fi
+              fi
+              sleep "$sleep_sec"
               continue
             fi
             log_error "[$domain/$lens_id] Cursor remained rate-limited after $CURSOR_RATE_LIMIT_MAX_RETRIES retries. Marking lens as rate-limited."

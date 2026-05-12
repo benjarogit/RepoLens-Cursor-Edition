@@ -512,6 +512,10 @@ fi
 
 # --- Safety cap: maximum iterations per lens ---
 MAX_ITERATIONS_PER_LENS=20
+if [[ -n "${REPOLENS_MAX_ITERATIONS_PER_LENS:-}" ]]; then
+  MAX_ITERATIONS_PER_LENS="$REPOLENS_MAX_ITERATIONS_PER_LENS"
+fi
+[[ "$MAX_ITERATIONS_PER_LENS" =~ ^[1-9][0-9]*$ ]] || die "REPOLENS_MAX_ITERATIONS_PER_LENS must be a positive integer, got: $MAX_ITERATIONS_PER_LENS"
 
 # --- Cursor run behavior knobs ---
 CURSOR_SERIAL="${REPOLENS_CURSOR_SERIAL:-true}"
@@ -1315,10 +1319,12 @@ run_lens() {
   # Update global counter
   GLOBAL_ISSUES_CREATED=$((GLOBAL_ISSUES_CREATED + lens_issues))
 
-  # Record result. Rate-limited lenses are recorded but NOT marked completed,
-  # so --resume will re-run them on the next invocation.
+  # Record result. Incomplete exit statuses are NOT marked completed so --resume
+  # and repolens_agent_or_ide.sh will re-run them (aligns with "fully through").
   record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues"
-  if [[ "$exit_status" != "rate-limited" && "$exit_status" != "ide-handoff-failed" ]]; then
+  if [[ "$exit_status" != "rate-limited" && "$exit_status" != "ide-handoff-failed" && \
+        "$exit_status" != "max-iterations" && "$exit_status" != "agent-timeout" && \
+        "$exit_status" != "agent-capacity" ]]; then
     mark_lens_completed "$lens_entry"
   fi
 

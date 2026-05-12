@@ -101,7 +101,7 @@ chmod +x repolens.sh
 # RepoLens → Cursor CLI wiring (defaults shown; tune timeouts if needed)
 export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
 export CURSOR_AGENT_MODEL="auto"
-export CURSOR_AGENT_TIMEOUT_SEC=45
+export CURSOR_AGENT_TIMEOUT_SEC=600
 
 ./repolens.sh --project /path/to/your/repo --agent cursor --local --domain security --yes
 ```
@@ -180,7 +180,7 @@ Example:
 ```bash
 export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
 export CURSOR_AGENT_MODEL="auto"   # default, safe for free plans
-export CURSOR_AGENT_TIMEOUT_SEC=45
+export CURSOR_AGENT_TIMEOUT_SEC=600
 ./repolens.sh --project ~/my-app --agent cursor --local --domain security
 ```
 
@@ -623,7 +623,7 @@ Most first-run failures fall into one of these patterns. Errors are quoted verba
 | `gh is not authenticated. Run 'gh auth login'.` | `gh` not authenticated, or token expired | `gh auth login` (or `gh auth refresh` if your token is stale) |
 | `Missing required command: claude` (or `codex` / `opencode`) | Agent CLI not installed | See [Supported Agent CLIs](#supported-agent-clis) for install + auth |
 | `Missing required command: cursor-agent` | Cursor runner binary not found | Set `CURSOR_AGENT_RUNNER_CMD`, e.g. `export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"` |
-| Lens hangs on cursor backend | Cursor agent does not return promptly for a lens prompt | Reduce timeout via `CURSOR_AGENT_TIMEOUT_SEC` (e.g. `30`) and rerun; timed-out lenses are marked `agent-timeout` |
+| Lens hangs on cursor backend | Cursor agent does not return promptly for a lens prompt | Default timeout is **600s**. For faster fail in CI, set `CURSOR_AGENT_TIMEOUT_SEC` lower (e.g. `60`); timed-out lenses are marked `agent-timeout` |
 | Cursor exits with `You've hit your usage limit` | Cursor account has no remaining Agent capacity | Wait for quota reset or upgrade plan, then rerun. RepoLens marks affected lenses as `agent-capacity` and exits those lenses early |
 | Agent prompts for login on every iteration | Agent CLI not authenticated | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis) |
 | `Invalid agent: …` | Typo in `--agent` value | Must be one of `claude`, `codex`, `spark`, `sparc`, `cursor`, `cursor-ide`, `opencode`, `opencode/<model>` |

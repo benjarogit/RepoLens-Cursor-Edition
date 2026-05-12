@@ -28,7 +28,7 @@
 # Example:
 #   export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
 #   export CURSOR_AGENT_MODEL="auto"
-#   export CURSOR_AGENT_TIMEOUT_SEC=45
+#   export CURSOR_AGENT_TIMEOUT_SEC=600
 #
 # Cursor IDE local integration, REPOLENS_CTL protocol (csretro): Copyright 2025-2026 benjarogit / Sunny C.
 
@@ -167,7 +167,9 @@ run_cursor_agent() {
   local project_path="$2"
   local runner_cmd="${CURSOR_AGENT_RUNNER_CMD:-cursor-agent --force --approve-mcps}"
   local cursor_model="${CURSOR_AGENT_MODEL:-auto}"
-  local timeout_sec="${CURSOR_AGENT_TIMEOUT_SEC:-45}"
+  # Default 600s: audit lenses need full agent runs; 45s caused spurious
+  # max-iterations (agent output truncated before DONE). Override for CI.
+  local timeout_sec="${CURSOR_AGENT_TIMEOUT_SEC:-600}"
   local -a cmd_parts=()
 
   read -r -a cmd_parts <<< "$runner_cmd"

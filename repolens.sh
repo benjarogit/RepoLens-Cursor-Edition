@@ -1230,7 +1230,9 @@ run_lens() {
                 fi
               fi
               log_warn "[$domain/$lens_id] Cursor rate-limited (retry $cursor_rl_retries/$CURSOR_RATE_LIMIT_MAX_RETRIES). Sleeping ${sleep_sec}s before retry."
-              if [[ "$AGENT" == "cursor" ]] && [[ "${REPOLENS_CURSOR_RATE_LIMIT_HANDOFF,,}" =~ ^(1|true|yes)$ ]] && declare -F repolens_write_cursor_rate_limit_handoff >/dev/null 2>&1; then
+              local _cr_handoff="${REPOLENS_CURSOR_RATE_LIMIT_HANDOFF:-}"
+              # :- required: unset var + set -u would otherwise abort before sleep/retry.
+              if [[ "$AGENT" == "cursor" ]] && [[ "${_cr_handoff,,}" =~ ^(1|true|yes)$ ]] && declare -F repolens_write_cursor_rate_limit_handoff >/dev/null 2>&1; then
                 if repolens_write_cursor_rate_limit_handoff "$LOG_BASE" "$RUN_ID" "$PROJECT_PATH" "$domain" "$lens_id" "$iteration" "$output_file" "$cursor_rl_retries"; then
                   if [[ "$cursor_rl_retries" -eq 1 ]]; then
                     log_info "[$domain/$lens_id] Manual handoff written: $LOG_BASE/MANUAL_HANDOFF.md (stderr: REPOLENS_MANUAL_HANDOFF when jq available)."

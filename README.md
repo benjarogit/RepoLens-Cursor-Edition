@@ -4,6 +4,7 @@
 [![Version: v0.1.0](https://img.shields.io/badge/version-v0.1.0-brightgreen.svg)](CHANGELOG.md)
 [![CI](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml/badge.svg)](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml)
 [![GitHub Stars](https://img.shields.io/github/stars/TheMorpheus407/RepoLens?style=social)](https://github.com/TheMorpheus407/RepoLens)
+[![Fork: RepoLens Cursor Edition](https://img.shields.io/badge/Fork-RepoLens--Cursor--Edition-blue)](https://github.com/benjarogit/RepoLens-Cursor-Edition)
 
 **Multi-lens code audit tool.** Runs 280 specialist lenses across 27 domains against any git repository or live server and creates GitHub issues for real findings. Think automated code review, agent-driven pentesting, tool-driven static/dynamic analysis, and infrastructure auditing — all with deep specialization.
 
@@ -69,17 +70,39 @@ If the Agent does not pick up terminal output, paste the latest **`REPOLENS_CTL`
 
 #### Fast Start (Cursor Agent CLI — `cursor`)
 
+**1) Install the official Cursor Agent CLI** ([installer](https://cursor.com/install)):
+
 ```bash
-# 1) Enter this fork
-cd /path/to/RepoLens-Cursor-Edition
+curl https://cursor.com/install -fsSL | bash
+```
+
+The binary is placed under **`~/.local/bin`**. Put that on your `PATH` for every terminal session (add to `~/.bashrc`, `~/.zshrc`, etc.):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**2) Sign in** (browser opens unless you set `NO_OPEN_BROWSER=1`):
+
+```bash
+cursor-agent login
+cursor-agent status
+```
+
+Alternatively set **`CURSOR_API_KEY`** if you use key-based auth. The installer may note that the command **`agent`** is an alias for **`cursor-agent`** — either name works in `CURSOR_AGENT_RUNNER_CMD` below.
+
+**3) Clone this fork and run RepoLens** (always pass **`--local`** with `--agent cursor` in Phase 1):
+
+```bash
+git clone https://github.com/benjarogit/RepoLens-Cursor-Edition.git
+cd RepoLens-Cursor-Edition
 chmod +x repolens.sh
 
-# 2) Use Cursor Agent CLI (Auto by default)
+# RepoLens → Cursor CLI wiring (defaults shown; tune timeouts if needed)
 export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
 export CURSOR_AGENT_MODEL="auto"
 export CURSOR_AGENT_TIMEOUT_SEC=45
 
-# 3) Run a focused local audit first
 ./repolens.sh --project /path/to/your/repo --agent cursor --local --domain security --yes
 ```
 
@@ -91,10 +114,10 @@ Result files are written to:
 #### Recommended workflow for this fork
 
 1. Start with one domain (`--domain security`) in `--local` mode.
-1. Review markdown findings under `logs/<run-id>/issues/`.
-1. Apply fixes in your target repo.
-1. Re-run the same domain to verify.
-1. Scale to parallel/domain-wide runs only after a stable baseline.
+2. Review markdown findings under `logs/<run-id>/issues/` (or the path printed as «Local mode» in the run header).
+3. Apply fixes in your target repo.
+4. Re-run the same domain to verify.
+5. Scale to parallel/domain-wide runs only after a stable baseline.
 
 #### Cursor quota-safe mode (default in this fork)
 

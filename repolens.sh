@@ -628,9 +628,16 @@ resolve_lenses() {
   if [[ -n "$FOCUS" ]]; then
     # Single lens mode — find which domain it belongs to
     local found_domain=""
-    found_domain="$(jq -r --arg lens "$FOCUS" --arg mode "$MODE" \
-      '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
-    [[ -n "$found_domain" ]] || die "Lens '$FOCUS' not found in domains.json (mode: $MODE)"
+    if [[ -n "$DOMAIN_FILTER" ]]; then
+      # Pin ambiguous lens ids (same id in multiple domains) to DOMAIN_FILTER.
+      found_domain="$(jq -r --arg lens "$FOCUS" --arg d "$DOMAIN_FILTER" --arg mode "$MODE" \
+        '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.id == $d) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
+      [[ -n "$found_domain" ]] || die "Lens '$FOCUS' not found in domain '$DOMAIN_FILTER' (mode: $MODE)"
+    else
+      found_domain="$(jq -r --arg lens "$FOCUS" --arg mode "$MODE" \
+        '.domains[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy") elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | select(.lenses[] == $lens) | .id' "$DOMAINS_FILE" | head -1)"
+      [[ -n "$found_domain" ]] || die "Lens '$FOCUS' not found in domains.json (mode: $MODE)"
+    fi
 
     local lens_file="$LENSES_DIR/$found_domain/$FOCUS.md"
     [[ -f "$lens_file" ]] || die "Lens prompt file missing: $lens_file"

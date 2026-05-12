@@ -142,6 +142,8 @@ When the CLI is **rate-limited**, RepoLens **parses “try again in/at …”** 
 
 For unattended completion across quota windows, use **`./repolens_until_done.sh`** (same flags as `repolens.sh`; optional leading `--resume <run-id>`).
 
+For **one lens at a time** on the same run — **try `cursor` (CLI) first, then `cursor-ide` only if that lens is still missing from `logs/<run-id>/.completed`**, use **`./repolens_agent_or_ide.sh --resume <run-id>`** with the same flags as `repolens.sh` except **`--agent`**, **`--focus`**, and **`repolens --dry-run`**. Optional **`--dry-run`** on the orchestrator only prints the pending queue. Omit **`--domain`** to walk **all** audit lenses in order (after security comes code quality, architecture, …); pass **`--domain security`** (for example) to stay within one domain. Duplicate lens ids across domains (e.g. `dependency-management`) are pinned with **`--domain <id> --focus <lens>`** together.
+
 If you explicitly want parallel cursor execution anyway:
 
 ```bash

@@ -12,18 +12,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Agent rate-limit messages with parseable resume times now sleep within `REPOLENS_RATE_LIMIT_MAX_SLEEP`, retry the same lens once, and record `rate_limit_sleep_seconds`; unparseable, stale, too-far, or repeated rate limits still abort cleanly ([#115](https://github.com/TheMorpheus407/RepoLens/issues/115))
+- Ctrl-C/TERM cleanup during parallel runs now returns after a bounded grace period, force-stopping unresponsive workers instead of waiting indefinitely. Configure the grace period with `REPOLENS_CLEANUP_GRACE` ([#114](https://github.com/TheMorpheus407/RepoLens/issues/114))
+- `--hosted` service discovery now uses Docker Compose internal/container TCP ports for DAST URLs, falls back to exposed container ports when needed, and keeps published host ports as secondary context instead of pointing scanner containers at host-only NAT ports ([#83](https://github.com/TheMorpheus407/RepoLens/issues/83))
 - `trademark-branding` lens (`--mode opensource`) no longer searches for hardcoded author-specific brand names when auditing third-party repositories — it now dynamically derives search terms from the audited repo's owner and name, plus any additional brand terms the agent discovers from the README or package manifest
+
+### Changed
+
+- Agent invocation timeouts now resolve per mode instead of using one 6000-second default: audit, feature, bugfix, discover, custom, opensource, and content default to 600 seconds; deploy defaults to 1800 seconds; `REPOLENS_AGENT_TIMEOUT` still overrides all mode-specific `REPOLENS_AGENT_TIMEOUT_<MODE>` values ([#110](https://github.com/TheMorpheus407/RepoLens/issues/110))
 
 ### Added
 
-- `--local` flag: write findings as local markdown files instead of creating GitHub issues — no `gh` CLI required
-- `--output <path>` flag: custom output directory for local markdown files (requires `--local`, defaults to `logs/<run-id>/issues/`)
+- `--depth <n>` flag: within-lens iteration depth control — the DONE-streak length the agent must reach before a lens is considered complete. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for every other mode (including `bugreport`). Must be between `1` and `19`. Supersedes the legacy `DONE_STREAK_REQUIRED` env var (honored as a fallback when `--depth` is unset).
+- `bugreport` mode: symptom-driven multi-round bug-investigation pipeline. Requires `--bug-report <file|text>`; defaults to `--rounds 3` with the triage prefix phase enabled and the synthesizer's `--cross-link comment` strategy.
+- `--cross-link <mode>` flag: synthesizer cross-link strategy (`off` | `comment` | `suggest-reopen`) for linking related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.
+- `--rounds <n>` now accepts a validated cross-lens round count, honors `REPOLENS_ROUNDS` as a fallback with CLI precedence, applies per-mode caps (`audit`, `feature`, `bugfix`, `custom`, and `bugreport` up to `10`; `deploy`, `opensource`, `content`, and `discover` locked to `1`), refuses to launch at `--rounds >= 4` unless `--i-know-this-is-expensive` (or `--max-cost <dollars>` + `--yes`) is set, and shows the resolved value in `--dry-run` ([#140](https://github.com/TheMorpheus407/RepoLens/issues/140))
+- Runs now create an inspectable round artifact layout under `logs/<run-id>/rounds/round-N/` with round metadata, per-round lens outputs, completion barriers, and a top-level `final/` directory reserved for synthesis output ([#147](https://github.com/TheMorpheus407/RepoLens/issues/147))
+- `logs/lifecycle-violations` lens for detecting out-of-order lifecycle pairs, duplicate starts, duplicate terminals, swapped timestamps, and cross-worker lifecycle reordering in runtime logs supplied through `--logs` ([#141](https://github.com/TheMorpheus407/RepoLens/issues/141))
+- `logs/state-machine-violations` lens for detecting illegal, skipped, regressed, incompatible, or cross-component lifecycle states in runtime logs supplied through `--logs` ([#139](https://github.com/TheMorpheus407/RepoLens/issues/139))
+- `repolens.sh status [run-id]` now renders the newest or named `logs/<run-id>/status.json` snapshot with human-readable progress, raw `--json`, `--watch`, `--stale-after`, `--no-color`, stale worker exit code `2`, and no normal `--project` / `--agent` requirement ([#122](https://github.com/TheMorpheus407/RepoLens/issues/122))
+- Aggregated run status snapshots under `logs/<run-id>/status.json` now expose whole-run state, queued/active/completed lenses, issue totals, completion percentage, and final `finished`/`interrupted` state for operators and monitoring tools; configure refreshes with `REPOLENS_STATUS_INTERVAL` (default `10`) ([#121](https://github.com/TheMorpheus407/RepoLens/issues/121))
+- Per-lens heartbeat files under `logs/<run-id>/.heartbeat/<domain>__<lens-id>.json` now expose active lens liveness, current iteration, timestamps, and worker PID for operators and status tooling; configure file heartbeats with `REPOLENS_LENS_HEARTBEAT_INTERVAL` or the shared `REPOLENS_HEARTBEAT_INTERVAL` fallback ([#120](https://github.com/TheMorpheus407/RepoLens/issues/120))
+- Android APK deploy targets now show the resolved APK path, package name, device status, `android` domain, queued lens count, and selected agent in the confirmation preview before `Proceed? [y/N]` ([#90](https://github.com/TheMorpheus407/RepoLens/issues/90))
+- `--hosted` now surfaces detected OpenAPI/Swagger JSON/YAML schemas, or useful docs UI hints, in a `Detected API specs` prompt block for DAST agents ([#85](https://github.com/TheMorpheus407/RepoLens/issues/85))
+- `--hosted` service details now include Docker/HTTP health labels for discovered DAST targets and warn before scanning when every discovered HTTP service is unhealthy or unreachable ([#84](https://github.com/TheMorpheus407/RepoLens/issues/84))
+- `iac/iac-compliance` lens for auditing IaC backups, monitoring alarms, tagging policy, automatic upgrades, CloudTrail, S3 versioning, server-side encryption, lifecycle, access logging, replication, WAF, cost alerts, SNS alerting, service logging, maintenance windows, and disaster recovery controls ([#82](https://github.com/TheMorpheus407/RepoLens/issues/82))
+- `iac/iac-networking` lens for auditing VPC design, subnet topology, NAT gateways, VPC Flow Logs, route tables, security groups, NACLs, peering, transit gateways, DNS, VPN, load balancer placement, and database subnet exposure across Terraform, CloudFormation, Pulumi, and CDK ([#81](https://github.com/TheMorpheus407/RepoLens/issues/81))
+- `llm-security/agent-isolation` lens for auditing agent sandbox boundaries, container privilege, writable host mounts, network reach, subprocess fallbacks, resource limits, and process cleanup ([#75](https://github.com/TheMorpheus407/RepoLens/issues/75))
+- `llm-security/prompt-injection` lens for auditing prompt composition, instruction hierarchy, RAG/tool/chat-history injection, multi-step agent propagation, output validation, and prompt template management ([#74](https://github.com/TheMorpheus407/RepoLens/issues/74))
+- `llm-security/output-sanitization` lens for treating LLM-generated content as untrusted data across HTML rendering, Markdown/external system forwarding, dangerous URL handling, filesystem/command sinks, and structured output validation ([#73](https://github.com/TheMorpheus407/RepoLens/issues/73))
+- `kubernetes/secrets-management` lens for Kubernetes-native secret manifests, SealedSecrets, SOPS, External Secrets Operator references, secret RBAC, ServiceAccount token mounting, ConfigMap secret leakage, and rotation evidence ([#72](https://github.com/TheMorpheus407/RepoLens/issues/72))
+- `kubernetes/ingress-tls` lens for Ingress TLS coverage, cert-manager evidence, HSTS, SSL redirect, NGINX Ingress hardening annotations, host/path conflicts, backend protocol checks, and TLS Secret cross-checking ([#70](https://github.com/TheMorpheus407/RepoLens/issues/70))
+- `kubernetes/image-security` lens for deterministic image tags, explicit pull policies, registry trust, image pull secret coverage, and admission signature verification evidence ([#69](https://github.com/TheMorpheus407/RepoLens/issues/69))
+- `kubernetes/resource-management` lens for HPA coverage, PodDisruptionBudget effectiveness, resource requests/limits, request-to-limit ratios, namespace LimitRange/ResourceQuota guardrails, and single-replica StatefulSet risk ([#68](https://github.com/TheMorpheus407/RepoLens/issues/68))
+- Gitea `tea` backend for remote forge operations: RepoLens can authenticate with `tea login list`, create labels with `tea labels create --name ...`, and count matching open issues with `tea issues list --limit 1000 --output json` when `--forge tea` is selected or a Gitea origin is detected
+- Forgejo/Codeberg `fj` backend for remote forge operations: RepoLens can authenticate with `fj -H <host> whoami`, create labels with `fj -H <host> repo labels ...`, and count matching open issues with `fj -H <host> issue search` when Codeberg is detected or `--forge fj` is selected for a Forgejo origin
+- `--local` flag: write findings as local markdown files instead of creating remote issues — no forge CLI required
+- `--output <path>` flag: custom output directory for local markdown files (requires `--local`; omitted output now defaults to `logs/<run-id>/rounds/round-1/lens-outputs/`)
+
+### Deprecated
+
+- `DONE_STREAK_REQUIRED` env var: superseded by `--depth`. The env var continues to work for the current release cycle (honored as a fallback when `--depth` is unset) and emits a deprecation warning at startup. Scheduled for removal in a future minor release (target version TBD, see the deprecation-policy ticket).
+
+### Backward compatibility
+
+- Defaults preserve all prior behavior: `--depth` defaults to the prior `3` for `audit` / `feature` / `bugfix` and `1` for every other mode (including the new `bugreport`); `--rounds` defaults to `1` for every pre-existing mode (single round, identical to pre-rounds runs), with `bugreport` defaulting to `3`; `bugreport` mode is opt-in; `--cross-link` defaults to `off` outside `bugreport`. Existing invocations work identically without any flag changes.
 
 ### Documentation
 
 - "Adding a Lens" section in README now links to CONTRIBUTING.md for the full contribution workflow (fork, branch, PR process)
 - `GOVERNANCE.md` documenting project leadership (BDFL model), decision-making, contribution acceptance criteria, conflict resolution, and governance evolution
 - Governance section in README linking to `GOVERNANCE.md`
+- New "Advanced controls" section in README covering `--depth`, `--rounds`, three realistic example invocations (deep audit, focused single-lens deep-dive, full bugreport pipeline), a cost-discipline note pointing at `--max-cost` / `--i-know-this-is-expensive` / `--dry-run`, and a pointer to METHODOLOGY.md
+- "Warnings & Limits → Cost" section now documents multiplicative `depth × rounds` scaling and the `--rounds >= 4` cost-acknowledgement gate (with the separate `REPOLENS_MAX_ROUNDS` hard ceiling)
 
 ### Compliance
 

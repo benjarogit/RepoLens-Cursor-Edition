@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 # limitations under the License.
 
 # RepoLens — DONE streak detection
+# Cursor CLI sleep hints + MANUAL_HANDOFF: RepoLens Cursor Edition (benjarogit / Sunny C.)
 
 # Strip ANSI escape sequences from stdin.
 # Uses a bash variable for the ESC byte instead of \x1b hex escapes in sed,
@@ -64,66 +65,14 @@ check_done() {
 }
 
 # count_issues_in_output <file>
-#   Counts GitHub issue URLs in agent output (printed by `gh issue create` on success).
-#   Best-effort fallback — agents may not echo the full URL. Prefer count_repo_issues.
+#   Counts GitHub issue URLs in agent output (printed by issue creation on success).
+#   Best-effort fallback — agents may not echo the full URL. Prefer
+#   forge_issue_list_count from lib/forge.sh when querying a forge directly.
 #   Returns count on stdout.
 count_issues_in_output() {
   local file="$1"
   [[ -s "$file" ]] || { echo 0; return 0; }
   grep -oE 'https://github\.com/[^/]+/[^/]+/issues/[0-9]+' "$file" 2>/dev/null | wc -l
-}
-
-# count_repo_issues <repo> <label>
-#   Deterministically counts open issues in a repo with a given label via gh API.
-#   Prints count on stdout and returns 0 on success.
-#   On failure (gh unreachable, auth/rate-limit, malformed JSON, gh missing),
-#   prints nothing to stdout, emits a log_warn diagnostic, and returns 1.
-#   Callers MUST check the exit status — do not merge "unknown" with "zero".
-count_repo_issues() {
-  local repo="$1" label="$2"
-  local gh_err gh_out gh_rc
-  gh_err="$(mktemp 2>/dev/null)" || gh_err=""
-  if [[ -n "$gh_err" ]]; then
-    gh_out="$(gh issue list -R "$repo" --label "$label" --state open \
-      --limit 1000 --json number 2>"$gh_err")"
-    gh_rc=$?
-  else
-    gh_out="$(gh issue list -R "$repo" --label "$label" --state open \
-      --limit 1000 --json number 2>/dev/null)"
-    gh_rc=$?
-  fi
-  if [[ "$gh_rc" -ne 0 ]]; then
-    local first_err=""
-    if [[ -n "$gh_err" && -s "$gh_err" ]]; then
-      first_err="$(head -n1 "$gh_err" 2>/dev/null || true)"
-    fi
-    [[ -n "$gh_err" ]] && rm -f "$gh_err"
-    _streak_warn "count_repo_issues: gh failed for repo=$repo label=$label rc=$gh_rc err=${first_err:-<empty>}"
-    return 1
-  fi
-  [[ -n "$gh_err" ]] && rm -f "$gh_err"
-  local n
-  if ! n="$(printf '%s' "$gh_out" | jq 'length' 2>/dev/null)"; then
-    _streak_warn "count_repo_issues: jq failed to parse gh output for repo=$repo label=$label"
-    return 1
-  fi
-  if ! [[ "$n" =~ ^[0-9]+$ ]]; then
-    _streak_warn "count_repo_issues: unexpected non-integer from jq for repo=$repo label=$label: '$n'"
-    return 1
-  fi
-  printf '%s\n' "$n"
-  return 0
-}
-
-# Internal: delegates to log_warn when logging.sh is sourced, otherwise
-# falls back to writing a plain diagnostic to stderr so streak.sh remains
-# usable in isolation (e.g. from unit tests that don't source logging.sh).
-_streak_warn() {
-  if declare -F log_warn >/dev/null 2>&1; then
-    log_warn "$*"
-  else
-    printf '[WARN] %s\n' "$*" >&2
-  fi
 }
 
 # count_dry_run_issues <dir>
@@ -182,6 +131,97 @@ detect_agent_rate_limit() {
     fi
   done
   return 1
+}
+
+# parse_rate_limit_resume_epoch <output_file>
+#   Prints a Unix epoch when a known rate-limit resume time can be parsed from
+#   ANSI-stripped agent output. Prints nothing when no usable resume time is
+#   present. This helper intentionally does not decide whether the output is a
+#   rate-limit failure; callers must keep that check separate.
+parse_rate_limit_resume_epoch() {
+  local file="$1"
+  [[ -s "$file" ]] || { echo ""; return 0; }
+
+  local stripped now_epoch seconds line fragment lower candidate epoch
+  stripped="$(strip_ansi < "$file" 2>/dev/null)"
+  [[ -n "$stripped" ]] || { echo ""; return 0; }
+
+  now_epoch="$(date +%s)"
+
+  seconds="$(printf '%s\n' "$stripped" | sed -nE 's/.*[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:[[:space:]]*([0-9]+).*/\1/p' | head -n 1)"
+  if [[ "$seconds" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' $((now_epoch + seconds))
+    return 0
+  fi
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'retry[[:space:]]+after[[:space:]]+[0-9]+[[:space:]]+seconds?' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    lower="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$lower" =~ retry[[:space:]]+after[[:space:]]+([0-9]+)[[:space:]]+seconds?([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]}))
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+  fi
+
+  line="$(printf '%s\n' "$stripped" | grep -iE -m1 'try again in[[:space:]]+[0-9]' 2>/dev/null || true)"
+  if [[ -n "$line" ]]; then
+    fragment="$(printf '%s\n' "$line" | sed -E 's/.*[Tt][Rr][Yy][[:space:]]+[Aa][Gg][Aa][Ii][Nn][[:space:]]+[Ii][Nn][[:space:]]+//')"
+    lower="$(printf '%s' "$fragment" | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*h([[:space:]]*([0-9]+)[[:space:]]*m)?([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]} * 3600))
+      if [[ -n "${BASH_REMATCH[3]:-}" ]]; then
+        seconds=$((seconds + 10#${BASH_REMATCH[3]} * 60))
+      fi
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*(hours?|hrs?|hr)([[:space:]]+([0-9]+)[[:space:]]*(minutes?|mins?|min))?([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]} * 3600))
+      if [[ -n "${BASH_REMATCH[4]:-}" ]]; then
+        seconds=$((seconds + 10#${BASH_REMATCH[4]} * 60))
+      fi
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*(minutes?|mins?|min|m)([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]} * 60))
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+
+    if [[ "$lower" =~ ^([0-9]+)[[:space:]]*(seconds?|secs?|sec|s)([^[:alpha:]]|$) ]]; then
+      seconds=$((10#${BASH_REMATCH[1]}))
+      printf '%s\n' $((now_epoch + seconds))
+      return 0
+    fi
+  fi
+
+  candidate="$(printf '%s\n' "$stripped" | sed -nE 's/.*[Tt][Rr][Yy][[:space:]]+[Aa][Gg][Aa][Ii][Nn][[:space:]]+[Aa][Tt][[:space:]]+(.+)/\1/p' | head -n 1)"
+  [[ -n "$candidate" ]] || { echo ""; return 0; }
+
+  candidate="${candidate#"${candidate%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  while [[ "$candidate" == *. || "$candidate" == *";" ]]; do
+    candidate="${candidate%?}"
+  done
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  candidate="$(printf '%s' "$candidate" | sed -E 's/([0-9]+)([sS][tT]|[nN][dD]|[rR][dD]|[tT][hH])([^[:alpha:]]|$)/\1\3/g')"
+
+  epoch="$(date -d "$candidate" +%s 2>/dev/null || true)"
+  if [[ "$epoch" =~ ^[0-9]+$ ]]; then
+    if [[ "$candidate" =~ ^[0-9]{1,2}:[0-9]{2}([[:space:]]*[AaPp][Mm])?([[:space:]]+[[:alpha:]]{2,5})?$ && "$epoch" -le "$now_epoch" ]]; then
+      epoch=$((epoch + 86400))
+    fi
+    printf '%s\n' "$epoch"
+    return 0
+  fi
+
+  echo ""
+  return 0
 }
 
 # cursor_rate_limit_hint_sleep_sec <output_file>

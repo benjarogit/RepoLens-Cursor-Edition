@@ -19,7 +19,30 @@
 HOSTED_NETWORK=""
 HOSTED_SERVICES=""
 HOSTED_SERVICES_DETAIL=""
+HOSTED_API_SPECS_DETAIL=""
+HOSTED_HTTP_SERVICE_COUNT=0
+HOSTED_HTTP_RESPONDING_COUNT=0
+HOSTED_HTTP_UNHEALTHY_COUNT=0
+HOSTED_HTTP_UNKNOWN_COUNT=0
 HOSTED_OWNER="false"  # true if we started the compose project (vs reusing existing)
+HOSTED_API_SPEC_MAX_BODY_BYTES="${HOSTED_API_SPEC_MAX_BODY_BYTES:-262144}"
+
+HOSTED_API_SPEC_PATHS=(
+  /openapi.json
+  /openapi.yaml
+  /openapi.yml
+  /swagger.json
+  /swagger.yaml
+  /swagger.yml
+  /docs/openapi.json
+  /api/v1/openapi.json
+  /api/v1/openapi.yaml
+  /api-docs
+  /v3/api-docs
+  /v2/api-docs
+  /api/docs
+  /docs
+)
 
 # detect_compose_file <project_path>
 #   Prints the path to the first compose file found. Returns 1 if none.
@@ -110,6 +133,7 @@ setup_hosted_env() {
   log_info "Using Docker network: ${HOSTED_NETWORK}"
 
   discover_services "$compose_file" "$project_name"
+  probe_api_specs
   if [[ -n "$HOSTED_SERVICES" ]]; then
     log_info "Discovered services: ${HOSTED_SERVICES}"
   else
@@ -119,25 +143,266 @@ setup_hosted_env() {
 }
 
 # _parse_service_json <json_line>
-#   Extracts service_name, image, and port from a single JSON service object.
-#   Prints "service_name|image|port" on stdout.
+#   Extracts service_name, image, container ID, published port, and internal target port.
+#   Prints "service_name|image|container_id|published_port|target_port" on stdout.
 _parse_service_json() {
   local json="$1"
-  local svc img port
+  local svc img container_id published_port target_port
 
   svc="$(printf '%s' "$json" | jq -r '.Service // .Name // empty' 2>/dev/null)"
   img="$(printf '%s' "$json" | jq -r '.Image // "unknown"' 2>/dev/null)"
+  container_id="$(printf '%s' "$json" | jq -r '.ID // .ContainerID // .ContainerId // empty' 2>/dev/null)"
   # Support both .Publishers (Compose v2.0-2.9) and .Ports (newer versions)
-  port="$(printf '%s' "$json" | jq -r '
-    (if .Publishers then
-       (.Publishers[] | select(.PublishedPort > 0) | .PublishedPort)
-     elif .Ports then
-       (.Ports[] | select(.PublishedPort > 0) | .PublishedPort)
-     else empty end) // empty
+  published_port="$(printf '%s' "$json" | jq -r '
+    def tcp: ((.Protocol // "tcp" | tostring | ascii_downcase) == "tcp");
+    (.Publishers[]?, .Ports[]?)
+    | select(tcp)
+    | .PublishedPort
+    | select(. != null and . != "" and ((tonumber? // 0) > 0))
+    | tostring
+  ' 2>/dev/null | head -1)"
+  target_port="$(printf '%s' "$json" | jq -r '
+    def tcp: ((.Protocol // "tcp" | tostring | ascii_downcase) == "tcp");
+    (.Publishers[]?, .Ports[]?)
+    | select(tcp)
+    | (.TargetPort // .PrivatePort // empty)
+    | select(. != null and . != "" and ((tonumber? // 0) > 0))
+    | tostring
   ' 2>/dev/null | head -1)"
 
   [[ -z "$svc" ]] && return
-  printf '%s|%s|%s\n' "$svc" "$img" "$port"
+  printf '%s|%s|%s|%s|%s\n' "$svc" "$img" "$container_id" "$published_port" "$target_port"
+}
+
+# _inspect_exposed_tcp_port <container_id>
+#   Prints the first TCP port exposed by container metadata, if any.
+_inspect_exposed_tcp_port() {
+  local container_id="$1"
+  local port
+
+  [[ -z "$container_id" ]] && return 1
+  port="$(docker inspect "$container_id" 2>/dev/null | jq -r '
+    (.[0].Config.ExposedPorts // {})
+    | keys[]
+    | select(endswith("/tcp"))
+    | split("/")[0]
+    | select(test("^[0-9]+$"))
+  ' 2>/dev/null | head -1)"
+  [[ -n "$port" ]] && printf '%s\n' "$port"
+}
+
+# _parse_service_health_json <json_line>
+#   Extracts Compose health/status fields for normalization.
+_parse_service_health_json() {
+  local json="$1"
+
+  printf '%s' "$json" | jq -r '
+    [
+      (if ((.Health? | type) == "object") then (.Health.Status // empty) else empty end),
+      (if ((.Health? | type) == "string") then .Health else empty end),
+      (.Status // empty),
+      (.State // empty)
+    ]
+    | map(select(. != null and . != "") | tostring)
+    | join(" ")
+  ' 2>/dev/null | tr '\n|' '  ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
+}
+
+# _normalize_service_health <raw_status>
+#   Converts Compose/Docker status text into compact prompt-facing labels.
+_normalize_service_health() {
+  local raw_status="$*"
+  local status
+
+  status="$(printf '%s' "$raw_status" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$status" == *"unhealthy"* ]]; then
+    printf 'unhealthy'
+  elif [[ "$status" == *"healthy"* ]]; then
+    printf 'healthy'
+  elif [[ "$status" == *"starting"* || "$status" == *"restarting"* ]]; then
+    printf 'starting'
+  elif [[ "$status" == *"exited"* || "$status" == *"dead"* ]]; then
+    printf 'unhealthy'
+  else
+    printf 'unknown'
+  fi
+}
+
+# _probe_http_service <service_name> <port>
+#   Probes an HTTP endpoint from inside the Compose network and prints a label.
+_probe_http_service() {
+  local service_name="$1" port="$2"
+  local output rc http_code
+
+  if [[ -z "${HOSTED_NETWORK:-}" ]]; then
+    printf 'unknown'
+    return 0
+  fi
+
+  output="$(docker run --rm --network "$HOSTED_NETWORK" curlimages/curl \
+    -s -o /dev/null -w '%{http_code}' \
+    --connect-timeout 2 --max-time 5 \
+    "http://${service_name}:${port}/" 2>/dev/null)"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'unreachable'
+    return 0
+  fi
+
+  http_code="$(printf '%s' "$output" | sed -n 's/.*\([0-9][0-9][0-9]\).*/\1/p' | head -1)"
+  if [[ ! "$http_code" =~ ^[0-9][0-9][0-9]$ ]]; then
+    printf 'unknown'
+  elif [[ "$http_code" =~ ^[23] ]]; then
+    printf 'healthy'
+  elif [[ "$http_code" =~ ^4 ]]; then
+    printf 'responding HTTP %s' "$http_code"
+  elif [[ "$http_code" =~ ^5 ]]; then
+    printf 'unhealthy HTTP %s' "$http_code"
+  else
+    printf 'unknown'
+  fi
+}
+
+# _classify_api_spec_body <path> <body>
+#   Prints a label for a raw schema or docs UI candidate. Empty means invalid.
+_classify_api_spec_body() {
+  local path="$1" body="$2"
+
+  if printf '%s' "$body" | jq -e 'type == "object" and has("openapi")' >/dev/null 2>&1; then
+    printf 'OpenAPI JSON'
+    return 0
+  fi
+  if printf '%s' "$body" | jq -e 'type == "object" and has("swagger")' >/dev/null 2>&1; then
+    printf 'Swagger JSON'
+    return 0
+  fi
+  if printf '%s' "$body" | grep -Eiq '^[[:space:]]*openapi:[[:space:]]*'; then
+    printf 'OpenAPI YAML'
+    return 0
+  fi
+  if printf '%s' "$body" | grep -Eiq '^[[:space:]]*swagger:[[:space:]]*'; then
+    printf 'Swagger YAML'
+    return 0
+  fi
+
+  case "$path" in
+    /docs|/api/docs|/api-docs)
+      printf 'Swagger UI/docs, schema URL not confirmed'
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+# _probe_api_spec_url <service_name> <port> <path>
+#   Probes a candidate schema URL from inside the Compose network.
+#   Prints "raw|url|label" or "docs|url|label" when the HTTP 200 response is useful.
+_probe_api_spec_url() {
+  local service_name="$1" port="$2" path="$3"
+  local url output rc http_code body label kind max_body_bytes read_limit output_bytes
+
+  [[ -z "${HOSTED_NETWORK:-}" || -z "$service_name" || -z "$port" || -z "$path" ]] && return 0
+
+  url="http://${service_name}:${port}${path}"
+  max_body_bytes="${HOSTED_API_SPEC_MAX_BODY_BYTES:-262144}"
+  if [[ ! "$max_body_bytes" =~ ^[1-9][0-9]*$ ]]; then
+    max_body_bytes=262144
+  fi
+  read_limit=$((max_body_bytes + 5))
+  output="$(docker run --rm --network "$HOSTED_NETWORK" curlimages/curl \
+    -sS -w '\n%{http_code}' \
+    --connect-timeout 1 --max-time 2 \
+    "$url" 2>/dev/null | head -c "$read_limit")"
+  rc=$?
+  [[ "$rc" -ne 0 ]] && return 0
+
+  output_bytes="$(LC_ALL=C printf '%s' "$output" | wc -c)"
+  output_bytes="${output_bytes//[[:space:]]/}"
+  [[ "$output_bytes" -ge "$read_limit" ]] && return 0
+
+  http_code="$(printf '%s' "$output" | tail -n 1 | tr -d '\r')"
+  [[ "$http_code" =~ ^[0-9][0-9][0-9]$ ]] || return 0
+  [[ "$http_code" == "200" ]] || return 0
+
+  body="$(printf '%s' "$output" | sed '$d')"
+  label="$(_classify_api_spec_body "$path" "$body")" || return 0
+
+  kind="raw"
+  if [[ "$label" == *"schema URL not confirmed"* ]]; then
+    kind="docs"
+  fi
+  printf '%s|%s|%s\n' "$kind" "$url" "$label"
+}
+
+# probe_api_specs
+#   Populates HOSTED_API_SPECS_DETAIL with one detected schema/docs URL per service.
+probe_api_specs() {
+  local service_entries service_entry service_name port path result kind url label docs_candidate
+
+  HOSTED_API_SPECS_DETAIL=""
+  [[ -z "${HOSTED_NETWORK:-}" || -z "$HOSTED_SERVICES" ]] && return 0
+
+  IFS=',' read -r -a service_entries <<< "$HOSTED_SERVICES"
+  for service_entry in "${service_entries[@]}"; do
+    [[ -z "$service_entry" ]] && continue
+    service_name="${service_entry%%:*}"
+    port="${service_entry#*:}"
+    [[ -z "$service_name" || -z "$port" || "$port" == "none" || "$port" == "$service_entry" ]] && continue
+
+    docs_candidate=""
+    for path in "${HOSTED_API_SPEC_PATHS[@]}"; do
+      result="$(_probe_api_spec_url "$service_name" "$port" "$path")"
+      [[ -z "$result" ]] && continue
+
+      IFS='|' read -r kind url label <<< "$result"
+      if [[ "$kind" == "raw" ]]; then
+        HOSTED_API_SPECS_DETAIL="${HOSTED_API_SPECS_DETAIL}
+    - ${service_name}: ${url} (${label})"
+        docs_candidate=""
+        break
+      elif [[ -z "$docs_candidate" ]]; then
+        docs_candidate="    - ${service_name}: ${url} (${label})"
+      fi
+    done
+
+    if [[ -n "$docs_candidate" ]]; then
+      HOSTED_API_SPECS_DETAIL="${HOSTED_API_SPECS_DETAIL}
+${docs_candidate}"
+    fi
+  done
+
+  HOSTED_API_SPECS_DETAIL="${HOSTED_API_SPECS_DETAIL#$'\n'}"
+  return 0
+}
+
+# _record_hosted_http_health <health_label>
+#   Tracks aggregate HTTP health so hosted mode can warn before scans start.
+_record_hosted_http_health() {
+  local health_label="$1"
+
+  HOSTED_HTTP_SERVICE_COUNT=$((HOSTED_HTTP_SERVICE_COUNT + 1))
+  case "$health_label" in
+    healthy|responding\ HTTP\ *)
+      HOSTED_HTTP_RESPONDING_COUNT=$((HOSTED_HTTP_RESPONDING_COUNT + 1))
+      ;;
+    unknown)
+      HOSTED_HTTP_UNKNOWN_COUNT=$((HOSTED_HTTP_UNKNOWN_COUNT + 1))
+      ;;
+    *)
+      HOSTED_HTTP_UNHEALTHY_COUNT=$((HOSTED_HTTP_UNHEALTHY_COUNT + 1))
+      ;;
+  esac
+}
+
+_warn_if_all_hosted_http_unhealthy() {
+  if [[ "${HOSTED_HTTP_SERVICE_COUNT:-0}" -gt 0 &&
+        "${HOSTED_HTTP_RESPONDING_COUNT:-0}" -eq 0 &&
+        "${HOSTED_HTTP_UNKNOWN_COUNT:-0}" -eq 0 ]]; then
+    if declare -F log_warn >/dev/null 2>&1; then
+      log_warn "All discovered hosted HTTP services are unhealthy or unreachable; agents may not be able to scan live targets."
+    fi
+  fi
 }
 
 # discover_services <compose_file> <project_name>
@@ -149,6 +414,11 @@ discover_services() {
 
   HOSTED_SERVICES=""
   HOSTED_SERVICES_DETAIL=""
+  HOSTED_API_SPECS_DETAIL=""
+  HOSTED_HTTP_SERVICE_COUNT=0
+  HOSTED_HTTP_RESPONDING_COUNT=0
+  HOSTED_HTTP_UNHEALTHY_COUNT=0
+  HOSTED_HTTP_UNKNOWN_COUNT=0
   json_output="$(docker compose -f "$compose_file" -p "$project_name" ps --format json 2>/dev/null)" || return 0
   [[ -z "$json_output" ]] && return 0
 
@@ -161,35 +431,74 @@ discover_services() {
     parsed_lines="$json_output"
   fi
 
-  local line svc_info service_name image port_published
+  local line svc_info service_name image container_id port_published target_port raw_health internal_port port_display
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     svc_info="$(_parse_service_json "$line")"
     [[ -z "$svc_info" ]] && continue
 
-    IFS='|' read -r service_name image port_published <<< "$svc_info"
+    IFS='|' read -r service_name image container_id port_published target_port <<< "$svc_info"
+    raw_health="$(_parse_service_health_json "$line")"
 
-    local port_display="${port_published:-none}"
+    internal_port="$target_port"
+    if [[ -z "$internal_port" ]]; then
+      if [[ -z "$container_id" ]]; then
+        container_id="$(docker compose -f "$compose_file" -p "$project_name" ps -q "$service_name" 2>/dev/null | head -1)"
+      fi
+      internal_port="$(_inspect_exposed_tcp_port "$container_id")"
+    fi
+
+    port_display="${internal_port:-${port_published:-none}}"
     if [[ -n "$HOSTED_SERVICES" ]]; then
       HOSTED_SERVICES="${HOSTED_SERVICES},${service_name}:${port_display}"
     else
       HOSTED_SERVICES="${service_name}:${port_display}"
     fi
-    if [[ -n "$port_published" ]]; then
+
+    local health_label
+    if [[ -n "$internal_port" ]]; then
+      health_label="$(_normalize_service_health "$raw_health")"
+      if [[ "$health_label" == "unknown" ]]; then
+        health_label="$(_probe_http_service "$service_name" "$internal_port")"
+      fi
+      _record_hosted_http_health "$health_label"
+
+      local port_note="internal"
+      if [[ -n "$port_published" && "$port_published" != "$internal_port" ]]; then
+        port_note="${port_note}, published host port ${port_published}"
+      fi
       HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL}
-- ${service_name}: http://${service_name}:${port_published} (${image})"
+    - ${service_name}: http://${service_name}:${internal_port} (${port_note}, ${image}) [${health_label}]"
+    elif [[ -n "$port_published" ]]; then
+      health_label="$(_normalize_service_health "$raw_health")"
+      if [[ "$health_label" == "unknown" ]]; then
+        health_label="$(_probe_http_service "$service_name" "$port_published")"
+      fi
+      _record_hosted_http_health "$health_label"
+
+      HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL}
+    - ${service_name}: http://${service_name}:${port_published} (published, ${image}) [${health_label}]"
     else
       HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL}
-- ${service_name}: no published port (${image})"
+    - ${service_name}: no discovered port (${image}) [not probed]"
     fi
   done <<< "$parsed_lines"
   HOSTED_SERVICES_DETAIL="${HOSTED_SERVICES_DETAIL#$'\n'}"  # trim leading newline
+  _warn_if_all_hosted_http_unhealthy
 }
 
 # build_hosted_section
 #   Prints the prompt section for agent prompt injection. Empty if no services.
 build_hosted_section() {
   [[ -z "$HOSTED_SERVICES_DETAIL" ]] && return 0
+  local api_specs_section=""
+
+  if [[ -n "$HOSTED_API_SPECS_DETAIL" ]]; then
+    api_specs_section="
+**Detected API specs:**
+${HOSTED_API_SPECS_DETAIL}
+"
+  fi
 
   cat <<EOF
 ## Hosted Environment
@@ -203,6 +512,7 @@ You may run DAST tools against these endpoints. Scanning is authorized and safe.
 **Available services:**
 ${HOSTED_SERVICES_DETAIL}
 
+${api_specs_section}\
 **Running DAST tools via Docker:**
 To run a tool against these services, connect it to the same network:
 \`docker run --rm --network ${HOSTED_NETWORK} <image> <command>\`
@@ -227,6 +537,11 @@ cleanup_hosted() {
   HOSTED_NETWORK=""
   HOSTED_SERVICES=""
   HOSTED_SERVICES_DETAIL=""
+  HOSTED_API_SPECS_DETAIL=""
+  HOSTED_HTTP_SERVICE_COUNT=0
+  HOSTED_HTTP_RESPONDING_COUNT=0
+  HOSTED_HTTP_UNHEALTHY_COUNT=0
+  HOSTED_HTTP_UNKNOWN_COUNT=0
   HOSTED_OWNER="false"
   log_info "Hosted environment cleanup complete"
   return 0

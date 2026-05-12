@@ -22,9 +22,19 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+# shellcheck source=../lib/core.sh
+source "$SCRIPT_DIR/lib/core.sh"
+# shellcheck disable=SC1091
+# shellcheck source=../lib/template.sh
 source "$SCRIPT_DIR/lib/template.sh"
 source "$SCRIPT_DIR/lib/streak.sh"
 source "$SCRIPT_DIR/lib/summary.sh"
+# shellcheck disable=SC1091
+# shellcheck source=../lib/forge.sh
+source "$SCRIPT_DIR/lib/forge.sh"
+
+export FORGE_PROVIDER=gh
 
 PASS=0
 FAIL=0
@@ -237,9 +247,11 @@ assert_eq "max_issues null in summary" "null" "$max_val"
 echo ""
 echo "Test 14: record_lens — with issue count"
 init_summary "$TMPDIR/summary-rec.json" "test-run" "/tmp/project" "audit" "claude" "" "5"
-record_lens "$TMPDIR/summary-rec.json" "security" "injection" 3 "completed" 2
+record_lens "$TMPDIR/summary-rec.json" "security" "injection" 3 "completed" 2 0
 issues_val="$(jq '.lenses[0].issues_created' "$TMPDIR/summary-rec.json")"
 assert_eq "per-lens issues_created" "2" "$issues_val"
+sleep_val="$(jq '.lenses[0].rate_limit_sleep_seconds' "$TMPDIR/summary-rec.json")"
+assert_eq "per-lens rate_limit_sleep_seconds defaults to 0" "0" "$sleep_val"
 total_issues="$(jq '.totals.issues_created' "$TMPDIR/summary-rec.json")"
 assert_eq "total issues_created" "2" "$total_issues"
 total_run="$(jq '.totals.lenses_run' "$TMPDIR/summary-rec.json")"
@@ -247,7 +259,7 @@ assert_eq "lenses_run incremented" "1" "$total_run"
 
 echo ""
 echo "Test 15: record_lens — skipped lens does not increment lenses_run"
-record_lens "$TMPDIR/summary-rec.json" "security" "xss" 0 "skipped" 0
+record_lens "$TMPDIR/summary-rec.json" "security" "xss" 0 "skipped" 0 0
 total_run="$(jq '.totals.lenses_run' "$TMPDIR/summary-rec.json")"
 assert_eq "lenses_run unchanged after skip" "1" "$total_run"
 skip_status="$(jq -r '.lenses[1].status' "$TMPDIR/summary-rec.json")"
@@ -255,11 +267,20 @@ assert_eq "skipped lens status" "skipped" "$skip_status"
 
 echo ""
 echo "Test 16: record_lens — max-issues status"
-record_lens "$TMPDIR/summary-rec.json" "security" "csrf" 1 "max-issues" 1
+record_lens "$TMPDIR/summary-rec.json" "security" "csrf" 1 "max-issues" 1 0
 status_val="$(jq -r '.lenses[2].status' "$TMPDIR/summary-rec.json")"
 assert_eq "max-issues lens status" "max-issues" "$status_val"
 total_issues="$(jq '.totals.issues_created' "$TMPDIR/summary-rec.json")"
 assert_eq "accumulated total issues" "3" "$total_issues"
+
+echo ""
+echo "Test 16b: record_lens — rate-limit sleep seconds"
+record_lens "$TMPDIR/summary-rec.json" "security" "rate-limit-retry" 2 "completed" 0 61
+sleep_val="$(jq '.lenses[3].rate_limit_sleep_seconds' "$TMPDIR/summary-rec.json")"
+assert_eq "rate_limit_sleep_seconds stored" "61" "$sleep_val"
+record_lens "$TMPDIR/summary-rec.json" "security" "invalid-sleep" 1 "completed" 0 "not-a-number"
+sleep_val="$(jq '.lenses[4].rate_limit_sleep_seconds' "$TMPDIR/summary-rec.json")"
+assert_eq "invalid rate_limit_sleep_seconds coerces to 0" "0" "$sleep_val"
 
 # =====================================================================
 # set_stop_reason tests
@@ -391,23 +412,23 @@ for mode in audit feature bugfix discover; do
 done
 
 # =====================================================================
-# count_repo_issues function existence and error handling
+# forge_issue_list_count function existence and error handling
 # =====================================================================
 
 echo ""
-echo "Test 27: count_repo_issues — function exists"
-if declare -f count_repo_issues >/dev/null 2>&1; then
+echo "Test 27: forge_issue_list_count — function exists"
+if declare -f forge_issue_list_count >/dev/null 2>&1; then
   TOTAL=$((TOTAL + 1))
   PASS=$((PASS + 1))
-  echo "  PASS: count_repo_issues is defined"
+  echo "  PASS: forge_issue_list_count is defined"
 else
   TOTAL=$((TOTAL + 1))
   FAIL=$((FAIL + 1))
-  echo "  FAIL: count_repo_issues not defined"
+  echo "  FAIL: forge_issue_list_count not defined"
 fi
 
 echo ""
-echo "Test 28: count_repo_issues — returns non-zero + empty stdout when gh fails"
+echo "Test 28: forge_issue_list_count — returns non-zero + empty stdout when gh fails"
 # Previously this test asserted "0" for an unreachable repo, which encoded the
 # bug fixed in issue #116: silently swallowing gh failures as zero. New
 # contract: gh failure → function exits 1 with empty stdout so callers can
@@ -422,7 +443,7 @@ chmod +x "$_t28_fake_bin/gh"
 _t28_orig_path="$PATH"
 PATH="$_t28_fake_bin:$PATH"
 set +u
-t28_result="$(count_repo_issues "some-owner/some-repo" "some-label" 2>/dev/null)"
+t28_result="$(forge_issue_list_count "some-owner/some-repo" "some-label" 2>/dev/null)"
 t28_rc=$?
 set -u
 PATH="$_t28_orig_path"

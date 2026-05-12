@@ -13,25 +13,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Static & structural test: REPOLENS_AGENT_TIMEOUT wiring is correct.
+# Unit and fast integration coverage for per-mode agent timeout resolution.
 #
-# Verifies (without waiting the full 600s default):
-#   1. lib/core.sh defaults REPOLENS_AGENT_TIMEOUT to 600 via
-#      ${VAR:-600} expansion.
-#   2. Every agent branch in run_agent is wrapped with timeout(1).
-#   3. Agent subshell closes stdin (exec </dev/null).
-#   4. repolens.sh requires the `timeout` command in preflight.
-#   5. The caller at repolens.sh branches on exit code 124 with a
-#      distinct [ERROR] log mentioning "agent timed out".
-#   6. README and --help document REPOLENS_AGENT_TIMEOUT.
+# Contract for issue #110:
+#   1. resolve_agent_timeout <mode> exposes the effective per-invocation
+#      timeout without invoking a real agent.
+#   2. Precedence is:
+#        REPOLENS_AGENT_TIMEOUT
+#        > REPOLENS_AGENT_TIMEOUT_<MODE>
+#        > hardcoded per-mode default.
+#   3. Deploy defaults longer than audit.
+#   4. The resolved value is what the orchestrator passes to timeout(1)
+#      and reports in timeout logs.
+#
+# Contract for issue #113:
+#   5. Agent timeout wrappers pass --kill-after=<grace>s to timeout(1).
+#   6. REPOLENS_AGENT_KILL_GRACE defaults to 30s and is configurable.
+#
+# Also verifies (without waiting the full default duration):
+#   7. run_agent still falls back to ${REPOLENS_AGENT_TIMEOUT:-600} when
+#      no per-invocation timeout is passed.
+#   8. Every agent branch in run_agent is wrapped with timeout(1).
+#   9. Agent subshell closes stdin (exec </dev/null).
+#  10. repolens.sh requires the timeout command in preflight.
+#  11. repolens.sh branches on exit code 124 with distinct timeout logs.
+#  12. README and --help document the timeout env vars.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CORE="$SCRIPT_DIR/lib/core.sh"
+REPO="$SCRIPT_DIR/repolens.sh"
+README="$SCRIPT_DIR/README.md"
 
 PASS=0
 FAIL=0
 TOTAL=0
+TMPDIR="$(mktemp -d)"
+RUN_ID=""
+trap 'rm -rf "$TMPDIR"; [[ -n "${RUN_ID:-}" ]] && rm -rf "$SCRIPT_DIR/logs/$RUN_ID" || true' EXIT
+
+assert_eq() {
+  local desc="$1" expected="$2" actual="$3"
+  TOTAL=$((TOTAL + 1))
+  if [[ "$expected" == "$actual" ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc (expected='$expected' actual='$actual')"
+  fi
+}
+
+assert_gt() {
+  local desc="$1" left="$2" right="$3"
+  TOTAL=$((TOTAL + 1))
+  if [[ "$left" =~ ^[0-9]+$ && "$right" =~ ^[0-9]+$ && "$left" -gt "$right" ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc (expected '$left' to be greater than '$right')"
+  fi
+}
 
 assert_match() {
   local desc="$1" file="$2" pattern="$3"
@@ -59,88 +103,321 @@ assert_count_at_least() {
   fi
 }
 
-assert_eq() {
-  local desc="$1" expected="$2" actual="$3"
+assert_function_exists() {
+  local desc="$1" fn="$2"
   TOTAL=$((TOTAL + 1))
-  if [[ "$expected" == "$actual" ]]; then
+  if declare -F "$fn" >/dev/null 2>&1; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+    return 0
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc (missing function: $fn)"
+    return 1
+  fi
+}
+
+assert_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  TOTAL=$((TOTAL + 1))
+  if [[ "$haystack" == *"$needle"* ]]; then
     PASS=$((PASS + 1))
     echo "  PASS: $desc"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: $desc (expected='$expected' actual='$actual')"
+    echo "  FAIL: $desc (needle='$needle' not found)"
   fi
 }
 
-echo "=== REPOLENS_AGENT_TIMEOUT wiring & default ==="
+clear_timeout_env() {
+  unset REPOLENS_AGENT_TIMEOUT
+  unset REPOLENS_AGENT_TIMEOUT_AUDIT
+  unset REPOLENS_AGENT_TIMEOUT_FEATURE
+  unset REPOLENS_AGENT_TIMEOUT_BUGFIX
+  unset REPOLENS_AGENT_TIMEOUT_DISCOVER
+  unset REPOLENS_AGENT_TIMEOUT_DEPLOY
+  unset REPOLENS_AGENT_TIMEOUT_CUSTOM
+  unset REPOLENS_AGENT_TIMEOUT_OPENSOURCE
+  unset REPOLENS_AGENT_TIMEOUT_CONTENT
+  unset REPOLENS_AGENT_KILL_GRACE
+}
 
-CORE="$SCRIPT_DIR/lib/core.sh"
-REPO="$SCRIPT_DIR/repolens.sh"
-README="$SCRIPT_DIR/README.md"
+resolve_timeout() {
+  local mode="$1"
+  if declare -F resolve_agent_timeout >/dev/null 2>&1; then
+    resolve_agent_timeout "$mode"
+  else
+    printf '%s\n' "__missing_resolve_agent_timeout__"
+  fi
+}
 
-# 1. lib/core.sh defaults to 600 via ${VAR:-600}.
-assert_match \
-  "lib/core.sh defaults REPOLENS_AGENT_TIMEOUT to 600" \
-  "$CORE" \
-  'REPOLENS_AGENT_TIMEOUT:-600'
+resolve_kill_grace() {
+  if declare -F resolve_agent_kill_grace >/dev/null 2>&1; then
+    resolve_agent_kill_grace
+  else
+    printf '%s\n' "__missing_resolve_agent_kill_grace__"
+  fi
+}
 
-# 2. All five agent branches are wrapped with timeout(1).
-# Counting bare `timeout "...s"` occurrences inside run_agent should
-# yield one per branch.
+echo "=== REPOLENS_AGENT_TIMEOUT per-mode defaults ==="
+
+if [[ -f "$CORE" ]]; then
+  # shellcheck disable=SC1090,SC1091
+  source "$CORE"
+else
+  echo "  FAIL: Missing $CORE"
+  FAIL=$((FAIL + 1))
+  TOTAL=$((TOTAL + 1))
+fi
+
+if assert_function_exists "lib/core.sh exposes resolve_agent_timeout" "resolve_agent_timeout"; then
+  for mode in audit feature bugfix discover custom opensource content; do
+    clear_timeout_env
+    assert_eq "Default timeout for $mode is 600s" "600" "$(resolve_timeout "$mode")"
+  done
+
+  clear_timeout_env
+  assert_eq "Default timeout for deploy is 1800s" "1800" "$(resolve_timeout deploy)"
+
+  clear_timeout_env
+  audit_default="$(resolve_timeout audit)"
+  deploy_default="$(resolve_timeout deploy)"
+  assert_gt "Deploy default is longer than audit default" "$deploy_default" "$audit_default"
+else
+  echo "  SKIP: resolver default matrix waits for resolve_agent_timeout"
+fi
+
+echo ""
+echo "=== REPOLENS_AGENT_TIMEOUT precedence ==="
+
+if declare -F resolve_agent_timeout >/dev/null 2>&1; then
+  clear_timeout_env
+  export REPOLENS_AGENT_TIMEOUT_DEPLOY=42
+  assert_eq "Deploy mode-specific override is honored" "42" "$(resolve_timeout deploy)"
+  assert_eq "Deploy override does not affect audit" "600" "$(resolve_timeout audit)"
+
+  clear_timeout_env
+  export REPOLENS_AGENT_TIMEOUT_AUDIT=31
+  assert_eq "Audit mode-specific override is honored" "31" "$(resolve_timeout audit)"
+  assert_eq "Audit override does not affect deploy default" "1800" "$(resolve_timeout deploy)"
+
+  for mode_case in \
+    "audit:REPOLENS_AGENT_TIMEOUT_AUDIT:31" \
+    "feature:REPOLENS_AGENT_TIMEOUT_FEATURE:32" \
+    "bugfix:REPOLENS_AGENT_TIMEOUT_BUGFIX:33" \
+    "discover:REPOLENS_AGENT_TIMEOUT_DISCOVER:34" \
+    "deploy:REPOLENS_AGENT_TIMEOUT_DEPLOY:35" \
+    "custom:REPOLENS_AGENT_TIMEOUT_CUSTOM:36" \
+    "opensource:REPOLENS_AGENT_TIMEOUT_OPENSOURCE:37" \
+    "content:REPOLENS_AGENT_TIMEOUT_CONTENT:38"; do
+    IFS=: read -r mode env_var timeout_value <<<"$mode_case"
+    clear_timeout_env
+    export "$env_var=$timeout_value"
+    assert_eq "$env_var override is honored for $mode" "$timeout_value" "$(resolve_timeout "$mode")"
+  done
+
+  clear_timeout_env
+  export REPOLENS_AGENT_TIMEOUT=99
+  export REPOLENS_AGENT_TIMEOUT_DEPLOY=42
+  export REPOLENS_AGENT_TIMEOUT_AUDIT=31
+  for mode in audit feature bugfix discover deploy custom opensource content; do
+    assert_eq "Global override wins for $mode" "99" "$(resolve_timeout "$mode")"
+  done
+
+  clear_timeout_env
+  export REPOLENS_AGENT_TIMEOUT=""
+  export REPOLENS_AGENT_TIMEOUT_DEPLOY=77
+  assert_eq "Empty global override falls back to mode-specific deploy override" "77" "$(resolve_timeout deploy)"
+
+  clear_timeout_env
+  export REPOLENS_AGENT_TIMEOUT_DEPLOY=""
+  assert_eq "Empty deploy mode override falls back to deploy default" "1800" "$(resolve_timeout deploy)"
+else
+  echo "  SKIP: resolver precedence matrix waits for resolve_agent_timeout"
+fi
+
+echo ""
+echo "=== REPOLENS_AGENT_KILL_GRACE default and override ==="
+
+if assert_function_exists "lib/core.sh exposes resolve_agent_kill_grace" "resolve_agent_kill_grace"; then
+  clear_timeout_env
+  assert_eq "Default kill grace is 30s" "30" "$(resolve_kill_grace)"
+
+  clear_timeout_env
+  export REPOLENS_AGENT_KILL_GRACE=2
+  assert_eq "Kill grace override is honored" "2" "$(resolve_kill_grace)"
+else
+  echo "  SKIP: kill grace resolver waits for resolve_agent_kill_grace"
+fi
+
+echo ""
+echo "=== Timeout watchdog regressions ==="
+
 assert_count_at_least \
-  "lib/core.sh wraps each agent branch with timeout(1) (>=5 call sites)" \
+  "lib/core.sh wraps each agent branch with timeout(1) kill-after grace (>=5 call sites)" \
   "$CORE" \
-  '^[[:space:]]*timeout "\$\{timeout_secs\}s"' \
+  '^[[:space:]]*timeout[[:space:]]+--kill-after="\$\{kill_grace_secs\}s"[[:space:]]+"\$\{timeout_secs\}s"' \
   5
 
-# 3. Subshell closes stdin.
 assert_match \
   "lib/core.sh subshell redirects stdin to /dev/null" \
   "$CORE" \
   'exec[[:space:]]*<[[:space:]]*/dev/null'
 
-# 4. repolens.sh preflight requires timeout(1).
 assert_match \
   "repolens.sh preflight requires the timeout command" \
   "$REPO" \
   '^require_cmd timeout$'
 
-# 5a. Caller captures run_agent exit code (not the old `if ! run_agent`).
 assert_match \
-  "repolens.sh captures run_agent exit code" \
-  "$REPO" \
-  'run_agent "\$AGENT".*\|\| agent_rc='
-
-# 5b. Caller branches on 124 with distinct [ERROR] log.
-assert_match \
-  "repolens.sh branches on exit code 124" \
-  "$REPO" \
-  'agent_rc.*==.*124|agent_rc.*-eq.*124'
-
-assert_match \
-  "repolens.sh logs 'agent timed out' on timeout" \
+  "repolens.sh logs timeout failures distinctly" \
   "$REPO" \
   'agent timed out'
 
-# 5c. Generic non-zero path still logs a warning (regression guard).
 assert_match \
-  "repolens.sh still warns on generic non-zero exit" \
+  "repolens.sh logs hard-killed timeouts distinctly" \
   "$REPO" \
-  'Agent returned non-zero'
+  'hard-killed after'
 
-# 6. --help / README document the env var.
-assert_match \
-  "repolens.sh usage() documents REPOLENS_AGENT_TIMEOUT" \
-  "$REPO" \
-  'REPOLENS_AGENT_TIMEOUT'
+echo ""
+echo "=== README timeout documentation ==="
 
 assert_match \
-  "README documents REPOLENS_AGENT_TIMEOUT" \
+  "README documents the global timeout override" \
   "$README" \
   'REPOLENS_AGENT_TIMEOUT'
 
-# 7. Default value survives sourcing lib/core.sh in an isolated shell.
-# We don't invoke any agent — we just introspect the expansion value
-# that run_agent would use.
+assert_match \
+  "lib/core.sh uses REPOLENS_AGENT_TIMEOUT:-600 fallback in run_agent" \
+  "$CORE" \
+  '\$\{REPOLENS_AGENT_TIMEOUT:-600\}'
+
+assert_match \
+  "README documents the timeout kill grace override" \
+  "$README" \
+  'REPOLENS_AGENT_KILL_GRACE'
+
+assert_match \
+  "README documents the timeout kill grace default" \
+  "$README" \
+  'REPOLENS_AGENT_KILL_GRACE.*30|30.*REPOLENS_AGENT_KILL_GRACE'
+
+assert_match \
+  "repolens.sh usage documents the timeout kill grace override" \
+  "$REPO" \
+  'REPOLENS_AGENT_KILL_GRACE'
+
+for mode_var in \
+  REPOLENS_AGENT_TIMEOUT_AUDIT \
+  REPOLENS_AGENT_TIMEOUT_FEATURE \
+  REPOLENS_AGENT_TIMEOUT_BUGFIX \
+  REPOLENS_AGENT_TIMEOUT_DISCOVER \
+  REPOLENS_AGENT_TIMEOUT_DEPLOY \
+  REPOLENS_AGENT_TIMEOUT_CUSTOM \
+  REPOLENS_AGENT_TIMEOUT_OPENSOURCE \
+  REPOLENS_AGENT_TIMEOUT_CONTENT; do
+  assert_match "README documents $mode_var" "$README" "$mode_var"
+done
+
+assert_match \
+  "README documents deploy's 1800s default" \
+  "$README" \
+  'REPOLENS_AGENT_TIMEOUT_DEPLOY.*1800|1800.*REPOLENS_AGENT_TIMEOUT_DEPLOY'
+
+assert_match \
+  "README documents audit's 600s default" \
+  "$README" \
+  'REPOLENS_AGENT_TIMEOUT_AUDIT.*600|600.*REPOLENS_AGENT_TIMEOUT_AUDIT'
+
+assert_match \
+  "README documents global override precedence" \
+  "$README" \
+  'REPOLENS_AGENT_TIMEOUT.*[Ww]ins over|[Gg]lobal.*[Ww]ins over'
+
+echo ""
+echo "=== Resolved timeout reaches agent invocation and timeout log ==="
+
+if ! command -v git >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  echo "  SKIP: git and jq are required for the orchestrator integration check"
+else
+  PROJECT="$TMPDIR/project"
+  mkdir -p "$PROJECT"
+  (
+    cd "$PROJECT" || exit 1
+    git init -q 2>/dev/null
+    git config user.email test@example.com
+    git config user.name Test
+    echo "# test" > README.md
+    git add README.md
+    git commit -q -m init 2>/dev/null
+  ) || true
+
+  FAKE_BIN="$TMPDIR/bin"
+  mkdir -p "$FAKE_BIN"
+  TIMEOUT_MARKER="$TMPDIR/timeout-args"
+  : > "$TIMEOUT_MARKER"
+
+  cat > "$FAKE_BIN/timeout" <<'SH'
+#!/usr/bin/env bash
+marker="${FAKE_TIMEOUT_MARKER:?marker path required}"
+calls="$(wc -l < "$marker" 2>/dev/null | tr -d ' ')"
+printf '%s %s\n' "$1" "$2" >> "$marker"
+shift 2
+if (( calls == 0 )); then
+  exit 124
+fi
+"$@"
+SH
+  chmod +x "$FAKE_BIN/timeout"
+
+  cat > "$FAKE_BIN/codex" <<'SH'
+#!/usr/bin/env bash
+echo "Analysis complete. No findings."
+echo "DONE"
+exit 0
+SH
+  chmod +x "$FAKE_BIN/codex"
+
+  OUT_FILE="$TMPDIR/run.log"
+  clear_timeout_env
+  PATH="$FAKE_BIN:$PATH" \
+    FAKE_TIMEOUT_MARKER="$TIMEOUT_MARKER" \
+    REPOLENS_AGENT_TIMEOUT_DEPLOY=2 \
+    REPOLENS_AGENT_KILL_GRACE=2 \
+    bash "$REPO" \
+      --project "$PROJECT" \
+      --agent codex \
+      --mode deploy \
+      --focus service-health \
+      --local \
+      --yes \
+      >"$OUT_FILE" 2>&1
+  exit_code=$?
+
+  run_id="$(grep -oE 'RepoLens run [^ ]+ starting' "$OUT_FILE" | head -1 | awk '{print $3}')"
+  RUN_ID="${run_id:-}"
+
+  first_timeout_args="$(head -1 "$TIMEOUT_MARKER" 2>/dev/null || true)"
+  log_contents="$(cat "$OUT_FILE")"
+
+  assert_eq "Kill grace is passed to timeout(1)" "--kill-after=2s 2s" "$first_timeout_args"
+  assert_contains "Startup log includes configured kill grace" "Agent timeout kill grace: 2s" "$log_contents"
+  assert_contains "Timeout log uses deploy mode-specific timeout" "agent timed out after 2s" "$log_contents"
+
+  TOTAL=$((TOTAL + 1))
+  if [[ "$exit_code" -eq 0 ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: Orchestrator recovered after the synthetic timeout"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: Orchestrator exited with $exit_code"
+    echo "---- run.log ----"
+    cat "$OUT_FILE"
+    echo "-----------------"
+  fi
+fi
+
+# Bash expansion default without sourcing RepoLens (same fallback run_agent uses).
 default_val="$(env -i PATH="$PATH" bash -c "
   set -uo pipefail
   unset REPOLENS_AGENT_TIMEOUT
@@ -148,7 +425,6 @@ default_val="$(env -i PATH="$PATH" bash -c "
 ")"
 assert_eq "Default REPOLENS_AGENT_TIMEOUT expands to 600" "600" "$default_val"
 
-# 8. Explicit override is honored.
 override_val="$(env -i PATH="$PATH" REPOLENS_AGENT_TIMEOUT=42 bash -c "
   set -uo pipefail
   echo \"\${REPOLENS_AGENT_TIMEOUT:-600}\"

@@ -176,7 +176,7 @@ assert_matches "has ## Support heading" "^## Support" "$readme_content"
 
 echo ""
 echo "Test 5: README contains Patreon link"
-assert_contains "Patreon URL present" "patreon.com/themorpheus407" "$readme_content"
+assert_contains "Patreon URL present" "patreon.com/themorpheus" "$readme_content"
 
 # =====================================================================
 # Test 6: README support section contains generic acknowledgment wording
@@ -236,7 +236,7 @@ assert_not_contains "no share CTA" "Share it with your team" "$readme_content"
 
 echo ""
 echo "Test 11: Patreon link is a proper markdown link"
-assert_matches "markdown Patreon link" "\[.*\]\(https?://patreon\.com/themorpheus407\)" "$readme_content"
+assert_matches "markdown Patreon link" "\[.*\]\(https?://patreon\.com/themorpheus\)" "$readme_content"
 
 # =====================================================================
 # SECTION C: No Personally-Identifying Supporter Data

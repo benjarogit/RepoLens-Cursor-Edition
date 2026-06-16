@@ -3766,6 +3766,7 @@ if declare -p _FORGE_WARN_SEEN >/dev/null 2>&1 && (( ${#_FORGE_WARN_SEEN[@]} > 0
 fi
 
 finalize_summary "$SUMMARY_FILE"
+enhance_summary_with_run_outcome "$SUMMARY_FILE" "$LOG_BASE"
 apply_rate_limit_abort_final_state || true
 set_summary_health "$SUMMARY_FILE" "$REPOLENS_DEGENERATE_THRESHOLD"
 RUN_HEALTH="$(jq -r '.health // "ok"' "$SUMMARY_FILE" 2>/dev/null || printf 'ok')"
@@ -3812,6 +3813,10 @@ fi
 echo ""
 echo "=== RepoLens Run Summary ==="
 jq '.' "$SUMMARY_FILE"
+
+_ro_outcome="$(jq -r '.run_outcome // "unknown"' "$SUMMARY_FILE" 2>/dev/null || printf 'unknown')"
+printf '\nREPOLENS_RUN_OUTCOME %s run_id=%s summary=%s errors=%s/repolens-errors.ndjson\n' \
+  "$_ro_outcome" "$RUN_ID" "$SUMMARY_FILE" "$LOG_BASE"
 
 if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
   exit "${REPOLENS_INTERRUPT_EXIT_CODE:-130}"

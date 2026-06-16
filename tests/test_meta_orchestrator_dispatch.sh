@@ -14,16 +14,19 @@
 # limitations under the License.
 
 # Tests for issue #154: meta-orchestrator dispatch parsing and handoff.
+# shellcheck disable=SC2034,SC2329
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# shellcheck source=../lib/streak.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/streak.sh"
-# shellcheck source=../lib/template.sh
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/summary.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/template.sh"
-# shellcheck source=../lib/rounds.sh
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/rounds.sh"
 
 PASS=0
@@ -130,6 +133,7 @@ LOG_LINES=()
 
 echo ""
 echo "Test 1: parser extracts valid directives and drops hallucinated lenses"
+REPOLENS_META_ORCH_DISPATCH_CAP=4
 cat > "$TMPDIR/meta-output.txt" <<'EOF'
 ## Round 2 dispatch plan
 LENS: injection
@@ -166,6 +170,7 @@ assert_contains "dispatch preserves bullet custom prompt block" "Review this ris
 assert_contains "hypotheses contains extracted block" "Verify auth follow-up." "$hypotheses"
 assert_not_contains "hypotheses stop at next heading" "This should not be copied" "$hypotheses"
 assert_contains "invalid lens warning is logged" "hallucinated-lens" "${LOG_LINES[*]}"
+unset REPOLENS_META_ORCH_DISPATCH_CAP
 
 echo ""
 echo "Test 1b: prompt vars escape pipe-delimited injection"
@@ -198,49 +203,60 @@ MODE="audit"
 unset TARGET_TYPE
 
 echo ""
-echo "Test 1d: dispatch validation respects DOMAIN_FILTER"
+echo "Test 1d: dispatch validation does NOT leak DOMAIN_FILTER (issue #232)"
+# --domain is a round-1 selection filter; round-2+ meta-orchestrator
+# dispatch must reach across the full lens registry regardless of it.
 cat > "$TMPDIR/domain-meta-output.txt" <<'EOF'
 ## Round 2 dispatch plan
 LENS: injection
 LENS: dead-code
+LENS: does-not-exist
 EOF
 DOMAIN_FILTER="security"
+LOG_LINES=()
 _rounds_meta_parse_output "$TMPDIR/domain-meta-output.txt" "$TMPDIR/domain-dispatch.md" "$TMPDIR/domain-hypotheses.md" "$LENSES_DIR"
 rc=$?
 domain_dispatch="$(cat "$TMPDIR/domain-dispatch.md")"
 assert_eq "domain-filter parse output exits successfully" "0" "$rc"
-assert_contains "selected domain lens is accepted" "LENS: injection" "$domain_dispatch"
-assert_not_contains "other domain lens is rejected" "LENS: dead-code" "$domain_dispatch"
+assert_contains "selected domain lens is accepted under DOMAIN_FILTER" "LENS: injection" "$domain_dispatch"
+assert_contains "cross-domain meta dispatch is accepted under DOMAIN_FILTER" "LENS: dead-code" "$domain_dispatch"
+assert_not_contains "unregistered lens id is still rejected under DOMAIN_FILTER" "does-not-exist" "$domain_dispatch"
+assert_contains "unregistered lens warns with new wording" "Dropping unregistered meta-orchestrator lens id: does-not-exist" "${LOG_LINES[*]}"
 unset DOMAIN_FILTER
 
 echo ""
-echo "Test 1e: dispatch validation respects FOCUS"
+echo "Test 1e: dispatch validation does NOT leak FOCUS (issue #232)"
+# --focus is a round-1 selection filter; the meta-orchestrator must be
+# free to surface adjacent lenses outside the focus selection in round 2+.
 FOCUS="dead-code"
+LOG_LINES=()
 _rounds_meta_parse_output "$TMPDIR/domain-meta-output.txt" "$TMPDIR/focus-dispatch.md" "$TMPDIR/focus-hypotheses.md" "$LENSES_DIR"
 rc=$?
 focus_dispatch="$(cat "$TMPDIR/focus-dispatch.md")"
 assert_eq "focus parse output exits successfully" "0" "$rc"
-assert_not_contains "non-focused lens is rejected" "LENS: injection" "$focus_dispatch"
-assert_contains "focused lens is accepted" "LENS: dead-code" "$focus_dispatch"
+assert_contains "off-focus lens is accepted under FOCUS" "LENS: injection" "$focus_dispatch"
+assert_contains "focused lens is accepted under FOCUS" "LENS: dead-code" "$focus_dispatch"
+assert_not_contains "unregistered lens id is still rejected under FOCUS" "does-not-exist" "$focus_dispatch"
+assert_contains "unregistered lens warns with new wording (FOCUS)" "Dropping unregistered meta-orchestrator lens id: does-not-exist" "${LOG_LINES[*]}"
 unset FOCUS
 
 echo ""
-echo "Test 2: NO_FRESH_ANGLES detection matches first or last normalized word"
-printf '%s\n' 'NO_FRESH_ANGLES saturated.' > "$TMPDIR/no-fresh-first.txt"
-if _rounds_meta_no_fresh_angles "$TMPDIR/no-fresh-first.txt"; then
-  first_rc=0
+echo "Test 2: NO_FRESH_ANGLES detection requires a standalone token line"
+printf '%s\n' 'NO_FRESH_ANGLES' > "$TMPDIR/no-fresh-alone.txt"
+if _rounds_meta_no_fresh_angles "$TMPDIR/no-fresh-alone.txt"; then
+  alone_rc=0
 else
-  first_rc=$?
+  alone_rc=$?
 fi
-assert_eq "NO_FRESH_ANGLES first word is detected" "0" "$first_rc"
+assert_eq "NO_FRESH_ANGLES standalone content is detected" "0" "$alone_rc"
 
-printf '%s\n' 'Search is saturated NO_FRESH_ANGLES.' > "$TMPDIR/no-fresh-last.txt"
-if _rounds_meta_no_fresh_angles "$TMPDIR/no-fresh-last.txt"; then
-  last_rc=0
+printf '%s\n' 'Before' '  NO_FRESH_ANGLES  ' 'After' > "$TMPDIR/no-fresh-line.txt"
+if _rounds_meta_no_fresh_angles "$TMPDIR/no-fresh-line.txt"; then
+  line_rc=0
 else
-  last_rc=$?
+  line_rc=$?
 fi
-assert_eq "NO_FRESH_ANGLES last word with punctuation is detected" "0" "$last_rc"
+assert_eq "NO_FRESH_ANGLES whitespace-padded line is detected" "0" "$line_rc"
 
 printf '%s\n' 'Middle NO_FRESH_ANGLES token is just discussion.' > "$TMPDIR/no-fresh-middle.txt"
 if _rounds_meta_no_fresh_angles "$TMPDIR/no-fresh-middle.txt"; then
@@ -250,8 +266,16 @@ else
 fi
 assert_eq "NO_FRESH_ANGLES middle word is not detected" "1" "$middle_rc"
 
+printf '%s\n' 'LENS: injection - `lib/rounds.sh:1`; valid dispatch.' 'Search is saturated NO_FRESH_ANGLES.' > "$TMPDIR/no-fresh-prose-last.txt"
+if _rounds_meta_no_fresh_angles "$TMPDIR/no-fresh-prose-last.txt"; then
+  prose_last_rc=0
+else
+  prose_last_rc=$?
+fi
+assert_eq "NO_FRESH_ANGLES prose ending is not detected" "1" "$prose_last_rc"
+
 echo ""
-echo "Test 3: run_meta_orchestrator returns 2 and writes saturation artifacts"
+echo "Test 3: run_meta_orchestrator returns 0 and writes saturation artifacts"
 RUN_ID="meta-test"
 LOG_BASE="$TMPDIR/logs"
 PROJECT_PATH="$SCRIPT_DIR"
@@ -269,15 +293,16 @@ printf '%s\n' '# Round Digest' 'No findings this round.' > "$LOG_BASE/rounds/rou
 RUN_AGENT_COUNT=0
 run_agent() {
   RUN_AGENT_COUNT=$((RUN_AGENT_COUNT + 1))
-  printf '%s\n' 'No more grounded angles.' 'NO_FRESH_ANGLES.'
+  printf '%s\n' 'No more grounded angles.' 'NO_FRESH_ANGLES'
 }
 
 run_meta_orchestrator 1 2
 rc=$?
-assert_eq "run_meta_orchestrator returns saturation status" "2" "$rc"
+assert_eq "run_meta_orchestrator returns success on saturation" "0" "$rc"
 assert_eq "run_meta_orchestrator invokes agent once" "1" "$RUN_AGENT_COUNT"
-assert_contains "saturation dispatch records token" "NO_FRESH_ANGLES" "$(cat "$LOG_BASE/rounds/round-2/dispatch.md")"
-if [[ -f "$LOG_BASE/rounds/round-2/hypotheses.md" ]]; then
+assert_eq "run_meta_orchestrator sets saturation sentinel" "1" "${META_ORCH_SATURATED:-0}"
+assert_contains "saturation dispatch records token" "NO_FRESH_ANGLES" "$(cat "$LOG_BASE/rounds/round-1/dispatch.md")"
+if [[ -f "$LOG_BASE/rounds/round-1/hypotheses.md" ]]; then
   hypotheses_state="present"
 else
   hypotheses_state="missing"
@@ -285,12 +310,98 @@ fi
 assert_eq "saturation hypotheses artifact exists" "present" "$hypotheses_state"
 
 echo ""
-echo "Test 4: run_rounds uses next-round dispatch lens directives"
+echo "Test 3b: meta-orchestrator rate-limit failure records abort state"
+RUN_ID="meta-rate-limit"
+LOG_BASE="$TMPDIR/meta-rate-limit-logs"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+PROJECT_PATH="$TMPDIR/project"
+MODE="audit"
+AGENT="codex"
+AGENT_TIMEOUT_SECS=5
+AGENT_KILL_GRACE_SECS=1
+BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
+CURRENT_ROUND_TOTAL=2
+LOG_LINES=()
+RUN_AGENT_COUNT=0
+mkdir -p "$LOG_BASE/rounds/round-1" "$PROJECT_PATH"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+printf '%s\n' '# Round Digest' 'No findings this round.' > "$LOG_BASE/rounds/round-1/digest.md"
+
+run_agent() {
+  RUN_AGENT_COUNT=$((RUN_AGENT_COUNT + 1))
+  printf 'RateLimitError: retry budget exhausted\n'
+  return 42
+}
+
+run_meta_orchestrator 1 2
+rc=$?
+assert_eq "rate-limited meta-orchestrator returns distinct rc" "3" "$rc"
+assert_eq "rate-limited meta-orchestrator invokes agent once" "1" "$RUN_AGENT_COUNT"
+assert_contains "rate-limited meta output preserves agent text" "RateLimitError" "$(cat "$LOG_BASE/rounds/round-1/meta-orchestrator-output.txt" 2>/dev/null)"
+if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+  sentinel_state="present"
+else
+  sentinel_state="missing"
+fi
+assert_eq "rate-limited meta creates abort sentinel" "present" "$sentinel_state"
+assert_eq "rate-limited meta records phase stop reason" "rate-limited-meta" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+
+echo ""
+echo "Test 3c: meta-orchestrator structured rc=0 rate-limit records abort state"
+RUN_ID="meta-structured-rate-limit"
+LOG_BASE="$TMPDIR/meta-structured-rate-limit-logs"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+PROJECT_PATH="$TMPDIR/project"
+MODE="audit"
+AGENT="claude"
+AGENT_TIMEOUT_SECS=5
+AGENT_KILL_GRACE_SECS=1
+BASE_PROMPTS_DIR="$SCRIPT_DIR/prompts/_base"
+CURRENT_ROUND_TOTAL=2
+LOG_LINES=()
+RUN_AGENT_COUNT=0
+mkdir -p "$LOG_BASE/rounds/round-1" "$PROJECT_PATH"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+printf '%s\n' '# Round Digest' 'No findings this round.' > "$LOG_BASE/rounds/round-1/digest.md"
+
+run_agent() {
+  RUN_AGENT_COUNT=$((RUN_AGENT_COUNT + 1))
+  local envelope_path="${6:-${REPOLENS_AGENT_ENVELOPE_FILE:-}}"
+  if [[ -n "$envelope_path" ]]; then
+    mkdir -p "$(dirname "$envelope_path")"
+    cat > "$envelope_path" <<'JSON'
+{"result":"LENS: injection\nHYPOTHESIS: This dispatch must not be promoted.\nDONE\n","is_error":true,"api_error_status":429,"error":{"type":"rate_limit_error","message":"rate limited"}}
+JSON
+  fi
+  printf '%s\n' 'LENS: injection' 'HYPOTHESIS: This dispatch must not be promoted.' 'DONE'
+  return 0
+}
+
+run_meta_orchestrator 1 2
+rc=$?
+assert_eq "structured rc=0 rate-limited meta-orchestrator returns distinct rc" "3" "$rc"
+assert_eq "structured rate-limited meta-orchestrator invokes agent once" "1" "$RUN_AGENT_COUNT"
+if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+  sentinel_state="present"
+else
+  sentinel_state="missing"
+fi
+assert_eq "structured rate-limited meta creates abort sentinel" "present" "$sentinel_state"
+assert_eq "structured rate-limited meta records phase stop reason" "rate-limited-meta" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+if [[ -f "$LOG_BASE/rounds/round-1/dispatch.md" ]]; then
+  dispatch_state="present"
+else
+  dispatch_state="missing"
+fi
+assert_eq "structured rate-limited meta does not promote dispatch" "missing" "$dispatch_state"
+
+echo ""
+echo "Test 4: run_rounds uses previous-round dispatch lens directives"
 RUN_ID="dispatch-run"
 LOG_BASE="$TMPDIR/dispatch-logs"
 SUMMARY_FILE="$TMPDIR/dispatch-summary.json"
-mkdir -p "$LOG_BASE/rounds/round-2"
-printf '%s\n' 'LENS: injection' > "$LOG_BASE/rounds/round-2/dispatch.md"
+mkdir -p "$LOG_BASE/rounds/round-1"
+printf '%s\n' 'LENS: injection' > "$LOG_BASE/rounds/round-1/dispatch.md"
 printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
 PARALLEL=false
 LOCAL_MODE=true
@@ -325,8 +436,8 @@ echo "Test 5: run_rounds honors custom-only dispatches"
 RUN_ID="custom-dispatch-run"
 LOG_BASE="$TMPDIR/custom-dispatch-logs"
 SUMMARY_FILE="$TMPDIR/custom-dispatch-summary.json"
-mkdir -p "$LOG_BASE/rounds/round-2"
-cat > "$LOG_BASE/rounds/round-2/dispatch.md" <<'EOF'
+mkdir -p "$LOG_BASE/rounds/round-1"
+cat > "$LOG_BASE/rounds/round-1/dispatch.md" <<'EOF'
 # Meta-Orchestrator Dispatch
 
 CUSTOM: risk review - `lib/example.sh:20`; custom category with rationale.
@@ -349,12 +460,12 @@ run_rounds 2 LENSES
 rc=$?
 assert_eq "custom-only dispatch run exits successfully" "0" "$rc"
 assert_eq "round 2 runs only generated custom lens" \
-          "security/injection code-quality/dead-code custom/risk-review" \
+          "security/injection code-quality/dead-code custom/r2-risk-review" \
           "${RUN_LENS_CALLS[*]}"
 assert_contains "custom-only dispatch handoff is logged" \
                 "Using meta-orchestrator dispatch (1 lens(es))" \
                 "${LOG_LINES[*]}"
-custom_lens_file="$LOG_BASE/rounds/round-2/custom-lenses/custom/risk-review.md"
+custom_lens_file="$LOG_BASE/rounds/round-1/custom-lenses/custom/r2-risk-review.md"
 if [[ -f "$custom_lens_file" ]]; then
   custom_lens_state="present"
 else

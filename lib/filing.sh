@@ -75,6 +75,132 @@ _filing_lock_age() {
   printf '%d' $((now - mtime))
 }
 
+# filing_verify_cluster_citations <project_path> <manifest_entry_json>
+#   Deterministic re-verification of every `path:LINE` (or `path:LSTART-LEND`)
+#   citation embedded in a synthesizer manifest entry's `body` field. This is
+#   the executable counterpart of Step 2 in prompts/_base/file-issue.md and is
+#   intended as the last shell-level guardrail before a cluster can reach
+#   `gh issue create`. Filing callbacks (production or test) may call this
+#   helper to decide whether to write a `.url` or a `VERIFICATION_FAILED:`
+#   `.failed` sentinel.
+#
+#   Citation grammar (extracted from the manifest entry's `body` string):
+#     - `path:LINE`               (single-line citation)
+#     - `path:LSTART-LEND`        (line-range citation; LSTART <= LEND)
+#     - Optionally followed by a backtick-fenced snippet on the same logical
+#       line, e.g. `src/auth.sh:42 — \`return $LOGIN_DENIED\`` — when present,
+#       the snippet text must appear within +/-20 lines of the cited line.
+#
+#   For each citation:
+#     1. The cited file must exist under <project_path>.
+#     2. The cited line (or LSTART..LEND range) must lie within the file's
+#        line count. LSTART > line_count -> MISMATCH "line exceeds file
+#        length".
+#     3. If a backtick snippet is attached, the snippet text must be findable
+#        (substring match) within +/-20 lines of the cited line. Snippet not
+#        found -> MISMATCH "snippet not found near cited line".
+#
+#   On success: returns 0. Prints nothing.
+#   On failure: returns 1. Prints exactly one concise reason line on stdout
+#               of the form `<path>:<line> <description>` so callers can
+#               embed it verbatim after `VERIFICATION_FAILED: `.
+#
+#   If the body contains zero parseable citations the helper treats that as a
+#   verification failure ("no citations to verify"), matching the prompt rule
+#   that an issue must be backed by at least one verified citation.
+filing_verify_cluster_citations() {
+  local project_path="${1:-}"
+  local entry_json="${2:-}"
+  if [[ -z "$project_path" || ! -d "$project_path" ]]; then
+    printf 'project path missing or not a directory: %s\n' "$project_path"
+    return 1
+  fi
+  if [[ -z "$entry_json" ]]; then
+    printf 'manifest entry json is empty\n'
+    return 1
+  fi
+
+  local body
+  body="$(jq -r '.body // empty' <<<"$entry_json" 2>/dev/null)"
+  if [[ -z "$body" ]]; then
+    printf 'manifest entry has no body to verify citations against\n'
+    return 1
+  fi
+
+  # Extract citations of the form `path:N` or `path:N-M`. The path component
+  # accepts letters/digits/_/-/./ slash, must contain at least one '/' or
+  # '.' to avoid trapping things like `step:1`, and the line number must be
+  # numeric. Use a temporary while loop with grep -oE so each match is
+  # processed independently.
+  local citations
+  citations="$(grep -oE '[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+:[0-9]+(-[0-9]+)?' <<<"$body" \
+    | sort -u)"
+
+  if [[ -z "$citations" ]]; then
+    printf 'no citations found in body\n'
+    return 1
+  fi
+
+  local citation path line_spec lstart lend file_path line_count snippet
+  local snippet_pattern context_start context_end snippet_re
+  while IFS= read -r citation; do
+    [[ -n "$citation" ]] || continue
+    path="${citation%:*}"
+    line_spec="${citation##*:}"
+    if [[ "$line_spec" == *-* ]]; then
+      lstart="${line_spec%-*}"
+      lend="${line_spec#*-}"
+    else
+      lstart="$line_spec"
+      lend="$line_spec"
+    fi
+    if ! [[ "$lstart" =~ ^[0-9]+$ ]] || ! [[ "$lend" =~ ^[0-9]+$ ]]; then
+      printf '%s invalid line spec\n' "$citation"
+      return 1
+    fi
+    if (( lstart < 1 )) || (( lend < lstart )); then
+      printf '%s invalid line range\n' "$citation"
+      return 1
+    fi
+
+    file_path="$project_path/$path"
+    if [[ ! -f "$file_path" ]]; then
+      printf '%s file not found\n' "$citation"
+      return 1
+    fi
+    line_count="$(wc -l <"$file_path" | tr -d ' ')"
+    # Treat a final line without a trailing newline as a real line.
+    if [[ -s "$file_path" ]] && [[ "$(tail -c 1 "$file_path" | od -An -c | tr -d ' ')" != '\n' ]]; then
+      line_count=$((line_count + 1))
+    fi
+    if (( lstart > line_count )) || (( lend > line_count )); then
+      printf '%s line exceeds file length (%d lines)\n' "$citation" "$line_count"
+      return 1
+    fi
+
+    # Optional snippet check: look for a backtick-quoted snippet attached to
+    # this citation on the same logical body line. Use grep on the body so
+    # multi-line bodies are searched line-by-line.
+    snippet="$(grep -F "$citation" <<<"$body" \
+      | grep -oE "\`[^\`]+\`" \
+      | head -1 \
+      | sed -e 's/^`//' -e 's/`$//')"
+    if [[ -n "$snippet" ]]; then
+      context_start=$(( lstart - 20 ))
+      (( context_start < 1 )) && context_start=1
+      context_end=$(( lend + 20 ))
+      (( context_end > line_count )) && context_end=$line_count
+      snippet_pattern="$(sed -n "${context_start},${context_end}p" "$file_path")"
+      if [[ "$snippet_pattern" != *"$snippet"* ]]; then
+        printf '%s snippet not found near cited line\n' "$citation"
+        return 1
+      fi
+    fi
+  done <<< "$citations"
+
+  return 0
+}
+
 # _filing_real_agent <run_id> <cluster_id>
 #   Default per-cluster filing callback: composes the file-issue.md prompt
 #   for the cluster and invokes the active agent. The agent owns the
@@ -160,6 +286,8 @@ _filing_real_agent() {
   forge_label_create_esc="${forge_label_create_esc//|/\\|}"
   local forge_issue_list_open_esc="${forge_issue_list_open//\\/\\\\}"
   forge_issue_list_open_esc="${forge_issue_list_open_esc//|/\\|}"
+  local filed_dir_esc="${filed_dir//\\/\\\\}"
+  filed_dir_esc="${filed_dir_esc//|/\\|}"
 
   local vars
   vars="RUN_ID=$run_id"
@@ -169,6 +297,7 @@ _filing_real_agent() {
   vars+="|PROJECT_PATH=$project_path"
   vars+="|CLUSTER_MANIFEST_ENTRY=$entry_esc"
   vars+="|SOURCE_FINDINGS=$source_findings_esc"
+  vars+="|FILED_DIR=$filed_dir_esc"
   vars+="|FORGE_ISSUE_CREATE=$forge_issue_create_esc"
   vars+="|FORGE_LABEL_CREATE=$forge_label_create_esc"
   vars+="|FORGE_ISSUE_LIST_OPEN=$forge_issue_list_open_esc"
@@ -211,13 +340,15 @@ _filing_real_agent() {
 #   cross-link comment that references a non-existent new issue.
 _filing_cross_link_enact() {
   local run_id="${1:-}"
-  local log_base manifest filed_dir cross_dir
+  local log_base manifest preserved_actions verification filed_dir cross_dir
   log_base="$(_filing_log_base "$run_id")"
   manifest="$log_base/final/manifest.json"
+  preserved_actions="$log_base/final/cross-link-actions.preserved.json"
+  verification="$log_base/final/verification.json"
   filed_dir="$log_base/final/filed"
   cross_dir="$filed_dir/cross-link"
 
-  if [[ ! -f "$manifest" ]]; then
+  if [[ ! -f "$manifest" && ! -f "$preserved_actions" ]]; then
     return 0
   fi
 
@@ -229,18 +360,46 @@ _filing_cross_link_enact() {
   fi
   local reopen_label="${REPOLENS_REOPEN_LABEL:-repolens:reopen-candidate}"
 
-  # Build a flat list of (cluster_id, idx, type, issue_number, body) tuples
-  # in NUL-delimited form so multi-line bodies survive intact.
-  local tuples
-  tuples="$(jq -r '
-    to_entries[]
-    | .key as $i
-    | .value.cluster_id as $cid
-    | (.value.cross_link_actions // [])
-    | to_entries[]
-    | [$cid, .key, .value.type, (.value.issue_number | tostring), .value.body]
-    | @tsv
-  ' "$manifest" 2>/dev/null)" || return 0
+  # Build a flat list of (cluster_id, idx, type, issue_number, body) tuples.
+  local tuples manifest_tuples preserved_tuples verification_json
+  manifest_tuples=""
+  preserved_tuples=""
+  verification_json='[]'
+  if [[ -f "$manifest" ]]; then
+    manifest_tuples="$(jq -r '
+      to_entries[]
+      | .key as $i
+      | .value.cluster_id as $cid
+      | (.value.cross_link_actions // [])
+      | to_entries[]
+      | [$cid, .key, .value.type, (.value.issue_number | tostring), .value.body]
+      | @tsv
+    ' "$manifest" 2>/dev/null)" || manifest_tuples=""
+  fi
+  if [[ -f "$verification" ]]; then
+    verification_json="$(jq -c '.' "$verification" 2>/dev/null)" || verification_json='[]'
+  fi
+  if [[ -f "$preserved_actions" ]]; then
+    preserved_tuples="$(jq -r --argjson verification "$verification_json" '
+      def wrong_only_paths($v):
+        ([ $v[]? | select(.status == "WRONG") | .source_finding_path // empty ] | unique) as $wrong
+        | [ $v[]? | select(.status != "WRONG") | .source_finding_path // empty ] as $notwrong
+        | $wrong
+        | map(. as $p | select(($notwrong | index($p)) == null));
+      wrong_only_paths($verification) as $wrong_only
+      | to_entries[]
+      | .value as $action
+      | (($action.source_finding_paths // []) | length) as $path_count
+      | ([($action.source_finding_paths // [])[] | . as $path | select(($wrong_only | index($path)) != null)] | length) as $wrong_count
+      | select(($path_count == 0) or ($wrong_count != $path_count))
+      | [.value.cluster_id, .key, .value.type, (.value.issue_number | tostring), .value.body]
+      | @tsv
+    ' "$preserved_actions" 2>/dev/null)" || preserved_tuples=""
+  fi
+  tuples="$manifest_tuples"
+  if [[ -n "$preserved_tuples" ]]; then
+    tuples="${tuples:+$tuples$'\n'}$preserved_tuples"
+  fi
 
   if [[ -z "$tuples" ]]; then
     return 0
@@ -422,6 +581,13 @@ dispatch_filing_batch() {
   local entry_count
   entry_count="$(jq 'length' "$manifest")"
   if (( entry_count == 0 )); then
+    mkdir -p "$filed_dir" || {
+      echo "dispatch_filing_batch: cannot create filed dir: $filed_dir" >&2
+      return 1
+    }
+    if [[ "${CROSS_LINK_MODE:-off}" != "off" ]]; then
+      _filing_cross_link_enact "$run_id" || true
+    fi
     printf 'Filed: 0, Verification-failed: 0, Skipped-existing: 0\n'
     return 0
   fi

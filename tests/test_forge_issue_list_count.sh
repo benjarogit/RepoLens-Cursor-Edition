@@ -19,8 +19,8 @@
 #   - lib/forge.sh exports forge_issue_list_count <owner/repo> <label>.
 #   - The gh branch counts open issues through `gh issue list ... --json number`
 #     and prints the integer count on stdout.
-#   - gh/jq failures print nothing to stdout and return non-zero so callers do
-#     not collapse "unknown" into "0".
+#   - gh/jq failures and unsupported providers print nothing to stdout and
+#     return non-zero so callers do not collapse "unknown" into "0".
 #   - tea is implemented by issue #61 with the same count/failure contract;
 #     fj is implemented by issue #62 through host-scoped `fj issue search`
 #     output parsing.
@@ -60,6 +60,18 @@ assert_contains() {
   else
     FAIL=$((FAIL + 1))
     echo "  FAIL: $desc (expected to contain '$needle'; got '${haystack:0:200}')"
+  fi
+}
+
+assert_not_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  TOTAL=$((TOTAL + 1))
+  if [[ "$haystack" != *"$needle"* ]]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc (did not expect to contain '$needle'; got '${haystack:0:200}')"
   fi
 }
 
@@ -142,6 +154,14 @@ chmod +x "$FAKE_BIN/tea"
 cat > "$FAKE_BIN/fj" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${REPOLENS_FAKE_FJ_LOG:-/dev/null}"
+previous=""
+for arg in "$@"; do
+  if [[ "$previous" == "--style" && "$arg" == "json" ]]; then
+    printf "error: invalid value 'json' for '--style <STYLE>'\n" >&2
+    exit 2
+  fi
+  previous="$arg"
+done
 if [[ -n "${REPOLENS_FAKE_FJ_STDERR+x}" ]]; then
   printf '%s\n' "$REPOLENS_FAKE_FJ_STDERR" >&2
 fi
@@ -152,6 +172,8 @@ exit "${REPOLENS_FAKE_FJ_RC:-0}"
 SH
 chmod +x "$FAKE_BIN/fj"
 
+# Environment exports are intentionally local to wrapper subshells.
+# shellcheck disable=SC2030,SC2031
 run_wrapper() {
   local provider="$1"; shift
   local fn="$1"; shift
@@ -180,6 +202,33 @@ run_wrapper() {
     # shellcheck source=/dev/null
     source "$SCRIPT_DIR/lib/forge.sh"
     "$fn" "$@"
+  )
+}
+
+# Environment exports are intentionally local to wrapper subshells.
+# shellcheck disable=SC2030,SC2031
+run_wrapper_with_return_marker() {
+  local provider="$1"; shift
+  local fn="$1"; shift
+  (
+    export PATH="$FAKE_BIN:/usr/bin:/bin:$PATH"
+    export FORGE_PROVIDER="$provider"
+    [[ -n "${FORGE_PROJECT_PATH+x}" ]] && export FORGE_PROJECT_PATH
+    [[ -n "${FORGE_REMOTE_NAME+x}" ]] && export FORGE_REMOTE_NAME
+    [[ -n "${FORGE_TEA_LOGIN+x}" ]] && export FORGE_TEA_LOGIN
+    [[ -n "${FORGE_HOST+x}" ]] && export FORGE_HOST
+    [[ -n "${REPOLENS_FAKE_GH_LOG+x}" ]] && export REPOLENS_FAKE_GH_LOG
+    [[ -n "${REPOLENS_FAKE_TEA_LOG+x}" ]] && export REPOLENS_FAKE_TEA_LOG
+    [[ -n "${REPOLENS_FAKE_FJ_LOG+x}" ]] && export REPOLENS_FAKE_FJ_LOG
+    set -uo pipefail
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/lib/core.sh"
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/lib/forge.sh"
+    "$fn" "$@"
+    local wrapper_rc=$?
+    printf '__WRAPPER_RETURNED_RC=%s\n' "$wrapper_rc" >&2
+    exit "$wrapper_rc"
   )
 }
 
@@ -375,30 +424,76 @@ assert_eq "tea branch passes supported issue-list flags in order" \
   "issues list --repo $FORGE_TEST_PROJECT --remote origin --labels audit:demo --state open --limit 1000 --output json" "$logged"
 
 echo ""
-echo "Test 9: fj backend counts open issues with the expected issue-search argv"
+echo "Test 9: fj backend counts open issues with official minimal issue-search output"
 reset_fake_gh
 reset_fake_fj
 fj_log="$TMPDIR/t9-fj.log"
 : > "$fj_log"
 FORGE_HOST=codeberg.org
 REPOLENS_FAKE_FJ_RC=0
+# Official forgejo-cli rejects `--style json`; the wrapper must use minimal
+# output and parse the leading text count.
 REPOLENS_FAKE_FJ_STDOUT='2 issues'
 REPOLENS_FAKE_FJ_LOG="$fj_log"
 out="$(run_wrapper fj forge_issue_list_count owner/repo audit:demo 2>/dev/null)"
 rc=$?
 logged="$(cat "$fj_log")"
 assert_rc_zero "fj branch exits zero on successful issue-search count" "$rc"
-assert_eq "fj branch prints parsed count" "2" "$out"
-assert_eq "fj branch passes supported issue-search flags in order" \
+assert_eq "fj branch prints the minimal-output count" "2" "$out"
+assert_eq "fj branch passes official-compatible issue-search flags in order" \
   "-H codeberg.org --style minimal issue search --repo owner/repo --labels audit:demo --state open" "$logged"
 
 echo ""
-echo "Test 10: empty FORGE_PROVIDER dies through the default arm"
+echo "Test 10: empty FORGE_PROVIDER returns non-zero without invoking a forge CLI"
 reset_fake_gh
-out="$(run_wrapper "" forge_issue_list_count owner/repo audit:demo 2>&1)"
+reset_fake_tea
+reset_fake_fj
+gh_log="$TMPDIR/t10-gh.log"
+tea_log="$TMPDIR/t10-tea.log"
+fj_log="$TMPDIR/t10-fj.log"
+: > "$gh_log"
+: > "$tea_log"
+: > "$fj_log"
+REPOLENS_FAKE_GH_LOG="$gh_log"
+REPOLENS_FAKE_TEA_LOG="$tea_log"
+REPOLENS_FAKE_FJ_LOG="$fj_log"
+err_file="$TMPDIR/t10.err"
+out="$(run_wrapper_with_return_marker "" forge_issue_list_count owner/repo audit:demo 2>"$err_file")"
 rc=$?
-assert_rc_nonzero "empty provider exits non-zero" "$rc"
-assert_contains "empty provider reports unknown provider" "unknown provider" "$out"
+err="$(cat "$err_file")"
+assert_rc_nonzero "empty provider failure is observable to caller" "$rc"
+assert_eq "stdout is empty for empty provider" "" "$out"
+assert_contains "warning reports unknown provider" "unknown provider" "$err"
+assert_contains "empty provider returns instead of exiting the shell" "__WRAPPER_RETURNED_RC=1" "$err"
+assert_log_empty "empty provider does not call gh" "$gh_log"
+assert_log_empty "empty provider does not call tea" "$tea_log"
+assert_log_empty "empty provider does not call fj" "$fj_log"
+
+echo ""
+echo "Test 10b: unknown FORGE_PROVIDER returns non-zero without invoking a forge CLI"
+reset_fake_gh
+reset_fake_tea
+reset_fake_fj
+gh_log="$TMPDIR/t10b-gh.log"
+tea_log="$TMPDIR/t10b-tea.log"
+fj_log="$TMPDIR/t10b-fj.log"
+: > "$gh_log"
+: > "$tea_log"
+: > "$fj_log"
+REPOLENS_FAKE_GH_LOG="$gh_log"
+REPOLENS_FAKE_TEA_LOG="$tea_log"
+REPOLENS_FAKE_FJ_LOG="$fj_log"
+err_file="$TMPDIR/t10b.err"
+out="$(run_wrapper_with_return_marker unknown forge_issue_list_count owner/repo audit:demo 2>"$err_file")"
+rc=$?
+err="$(cat "$err_file")"
+assert_rc_nonzero "unknown provider failure is observable to caller" "$rc"
+assert_eq "stdout is empty for unknown provider" "" "$out"
+assert_contains "warning includes provider value" "unknown provider 'unknown'" "$err"
+assert_contains "unknown provider returns instead of exiting the shell" "__WRAPPER_RETURNED_RC=1" "$err"
+assert_log_empty "unknown provider does not call gh" "$gh_log"
+assert_log_empty "unknown provider does not call tea" "$tea_log"
+assert_log_empty "unknown provider does not call fj" "$fj_log"
 
 echo ""
 echo "Test 11: missing repo argument dies before invoking gh"
@@ -425,10 +520,96 @@ assert_contains "missing label reports missing argument" "missing argument" "$ou
 assert_log_empty "missing label does not call gh" "$gh_log"
 
 # ---------------------------------------------------------------------------
-# Group 4: acceptance regression guard
+# Group 4: open issue backlog snapshot for greenfield planning
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Group 4: acceptance regression guard ---"
+echo "--- Group 4: open issue backlog snapshot for greenfield planning ---"
+echo ""
+
+echo "Test 12a: gh open backlog snapshot lists all open issues without label filtering"
+reset_fake_gh
+gh_log="$TMPDIR/t12a-gh.log"
+err_file="$TMPDIR/t12a.err"
+: > "$gh_log"
+REPOLENS_FAKE_GH_RC=0
+REPOLENS_FAKE_GH_LOG="$gh_log"
+REPOLENS_FAKE_GH_STDOUT='[
+  {"number":2,"title":"Second backlog","body":"Second body","labels":[{"name":"beta"}],"url":"https://github.com/owner/repo/issues/2"},
+  {"number":1,"title":"First backlog","body":"First body\nwith whitespace","labels":[{"name":"alpha"},{"name":"greenfield"}],"url":"https://github.com/owner/repo/issues/1"}
+]'
+out="$(run_wrapper gh forge_open_issue_backlog_snapshot owner/repo 2>"$err_file")"
+rc=$?
+logged="$(cat "$gh_log")"
+assert_rc_zero "gh open backlog snapshot succeeds" "$rc"
+assert_eq "stderr is empty on gh backlog success" "" "$(cat "$err_file")"
+assert_contains "gh backlog snapshot includes first issue title" "### Open issue #1: First backlog" "$out"
+assert_contains "gh backlog snapshot includes normalized body excerpt" "First body with whitespace" "$out"
+assert_contains "gh backlog snapshot includes label names" "- Labels: alpha, greenfield" "$out"
+assert_contains "gh backlog snapshot includes URL" "- URL: https://github.com/owner/repo/issues/1" "$out"
+assert_contains "gh backlog lists open issues" "--state open" "$logged"
+assert_contains "gh backlog uses the 1000 issue limit" "--limit 1000" "$logged"
+assert_contains "gh backlog requests planning fields" "--json number,title,body,labels,url" "$logged"
+assert_not_contains "gh open backlog snapshot is not lens-label filtered" "--label" "$logged"
+
+echo ""
+echo "Test 12b: tea open backlog snapshot uses provider target binding and body fields"
+reset_fake_tea
+tea_log="$TMPDIR/t12b-tea.log"
+err_file="$TMPDIR/t12b.err"
+: > "$tea_log"
+REPOLENS_FAKE_TEA_RC=0
+REPOLENS_FAKE_TEA_LOG="$tea_log"
+REPOLENS_FAKE_TEA_STDOUT='{"issues":[{"index":7,"title":"Tea backlog","description":"Tea body","labels":["product","planning"],"html_url":"https://gitea.example/owner/repo/issues/7"}]}'
+out="$(run_wrapper tea forge_open_issue_backlog_snapshot owner/repo 2>"$err_file")"
+rc=$?
+logged="$(cat "$tea_log")"
+assert_rc_zero "tea open backlog snapshot succeeds" "$rc"
+assert_eq "stderr is empty on tea backlog success" "" "$(cat "$err_file")"
+assert_contains "tea backlog snapshot uses index as issue number" "### Open issue #7: Tea backlog" "$out"
+assert_contains "tea backlog snapshot includes description body" "- Body excerpt: Tea body" "$out"
+assert_contains "tea backlog snapshot includes string labels" "- Labels: product, planning" "$out"
+assert_eq "tea backlog passes supported issue-list flags without labels" \
+  "issues list --repo $FORGE_TEST_PROJECT --remote origin --state open --limit 1000 --output json" "$logged"
+
+echo ""
+echo "Test 12c: fj open backlog snapshot does not pass invalid JSON style to official fj"
+reset_fake_fj
+fj_log="$TMPDIR/t12c-fj.log"
+err_file="$TMPDIR/t12c.err"
+: > "$fj_log"
+FORGE_HOST=codeberg.org
+REPOLENS_FAKE_FJ_RC=0
+REPOLENS_FAKE_FJ_LOG="$fj_log"
+REPOLENS_FAKE_FJ_STDOUT=$'1 issue\n#9 FJ backlog'
+out="$(run_wrapper fj forge_open_issue_backlog_snapshot owner/repo 2>"$err_file")"
+rc=$?
+logged="$(cat "$fj_log")"
+assert_rc_nonzero "official fj backlog snapshot fails cleanly when JSON output is unavailable" "$rc"
+assert_eq "stdout is empty when official fj backlog output is not machine-parseable" "" "$out"
+assert_contains "warning identifies the backlog snapshot function" \
+  "forge_open_issue_backlog_snapshot" "$(cat "$err_file")"
+assert_eq "fj backlog snapshot uses official minimal issue search" \
+  "-H codeberg.org --style minimal issue search --repo owner/repo --state open" "$logged"
+assert_not_contains "fj backlog snapshot never asks official fj for invalid JSON style" \
+  "--style json" "$logged"
+
+echo ""
+echo "Test 12d: malformed open backlog JSON fails without a misleading empty snapshot"
+reset_fake_gh
+err_file="$TMPDIR/t12d.err"
+REPOLENS_FAKE_GH_RC=0
+REPOLENS_FAKE_GH_STDOUT='not json'
+out="$(run_wrapper gh forge_open_issue_backlog_snapshot owner/repo 2>"$err_file")"
+rc=$?
+assert_rc_nonzero "malformed backlog JSON is observable to caller" "$rc"
+assert_eq "stdout is empty on malformed backlog JSON" "" "$out"
+assert_contains "warning reports backlog JSON parse failure" "jq failed to parse issue list" "$(cat "$err_file")"
+
+# ---------------------------------------------------------------------------
+# Group 5: acceptance regression guard
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Group 5: acceptance regression guard ---"
 echo ""
 
 echo "Test 13: lib/streak.sh contains no direct 'gh issue list' call"
@@ -445,7 +626,7 @@ fi
 echo ""
 echo "Test 14: repolens.sh uses forge_issue_list_count at the issue-count call sites"
 legacy_refs="$(grep -nF 'count_repo_issues' "$SCRIPT_DIR/repolens.sh" 2>/dev/null || true)"
-forge_call_count="$(grep -cF 'forge_issue_list_count "$REPO_OWNER/$REPO_NAME" "$lens_label"' "$SCRIPT_DIR/repolens.sh" 2>/dev/null || true)"
+forge_call_count="$(grep -cF 'forge_issue_list_count "$FORGE_REPO_SLUG" "$lens_label"' "$SCRIPT_DIR/repolens.sh" 2>/dev/null || true)"
 forge_context_count="$(grep -cF 'FORGE_PROJECT_PATH="$PROJECT_PATH"' "$SCRIPT_DIR/repolens.sh" 2>/dev/null || true)"
 TOTAL=$((TOTAL + 1))
 if [[ -z "$legacy_refs" && "$forge_call_count" -eq 2 && "$forge_context_count" -ge 1 ]]; then
@@ -458,6 +639,50 @@ else
   echo "    forge_issue_list_count call count: $forge_call_count"
   echo "    FORGE_PROJECT_PATH assignment count: $forge_context_count"
 fi
+
+echo ""
+echo "Test 15: repolens.sh label bootstrap uses the canonical forge repo slug"
+label_bootstrap_count="$(grep -cF 'forge_label_bootstrap "$FORGE_REPO_SLUG" "$label_set_file"' "$SCRIPT_DIR/repolens.sh" 2>/dev/null || true)"
+legacy_label_bootstrap_count="$(grep -cF 'forge_label_bootstrap "$REPO_OWNER/$REPO_NAME" "$label_set_file"' "$SCRIPT_DIR/repolens.sh" 2>/dev/null || true)"
+TOTAL=$((TOTAL + 1))
+if [[ "$label_bootstrap_count" -eq 1 && "$legacy_label_bootstrap_count" -eq 0 ]]; then
+  PASS=$((PASS + 1))
+  echo "  PASS: label bootstrap uses FORGE_REPO_SLUG"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: expected label bootstrap to use FORGE_REPO_SLUG exactly once and never REPO_OWNER/REPO_NAME"
+  echo "    FORGE_REPO_SLUG bootstrap count: $label_bootstrap_count"
+  echo "    legacy bootstrap count: $legacy_label_bootstrap_count"
+fi
+
+echo ""
+echo "Test 16: repolens.sh derives metadata from origin slug for renamed checkouts"
+metadata_project="$TMPDIR/local-dir-metadata"
+mkdir -p "$metadata_project"
+git -C "$metadata_project" init -q
+git -C "$metadata_project" remote add origin "https://github.com/acme/origin-repo.git"
+metadata_block="$(
+  awk '
+    /^# --- Derive repo metadata ---$/ { in_repo_block = 1 }
+    /^# --- Validate agent and dependencies ---$/ { in_repo_block = 0 }
+    in_repo_block { print }
+  ' "$SCRIPT_DIR/repolens.sh"
+)"
+metadata_result="$(
+  bash -c '
+    set -uo pipefail
+    source "$1"
+    PROJECT_PATH="$2"
+    eval "$3"
+    printf "REPO_OWNER=%s\nREPO_NAME=%s\nREPO_OWNER_NAME=%s/%s\nFORGE_REPO_SLUG=%s\n" \
+      "$REPO_OWNER" "$REPO_NAME" "$REPO_OWNER" "$REPO_NAME" "$FORGE_REPO_SLUG"
+  ' bash "$SCRIPT_DIR/lib/forge.sh" "$metadata_project" "$metadata_block" 2>"$TMPDIR/t16.err"
+)"
+metadata_rc=$?
+assert_rc_zero "metadata block completes for renamed checkout" "$metadata_rc"
+assert_contains "metadata derives REPO_OWNER from origin slug" "REPO_OWNER=acme" "$metadata_result"
+assert_contains "metadata derives REPO_NAME from origin slug" "REPO_NAME=origin-repo" "$metadata_result"
+assert_contains "metadata composed owner/name equals FORGE_REPO_SLUG" $'REPO_OWNER_NAME=acme/origin-repo\nFORGE_REPO_SLUG=acme/origin-repo' "$metadata_result"
 
 echo ""
 echo "================================"

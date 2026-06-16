@@ -4,11 +4,16 @@ You are auditing the repository **{{REPO_OWNER}}/{{REPO_NAME}}** located at `{{P
 
 ## Mode: Deploy Audit
 
-Your task is to audit a **live server** hosting this project and find **real, actionable infrastructure and operational issues** within your area of expertise. You have shell access to the production environment. For each finding, create an issue on the active forge.
+Your task is to audit the active deploy target and find **real, actionable infrastructure, operational, or Android deployment issues** within your area of expertise. The deploy target kind is `{{REPOLENS_DEPLOY_TARGET_KIND}}`.
+
+- If `{{REPOLENS_DEPLOY_TARGET_KIND}}` is `server`, audit the live server hosting this project. You have shell access to the production environment.
+- If `{{REPOLENS_DEPLOY_TARGET_KIND}}` is `android`, audit the Android APK resolved at `$REPOLENS_ANDROID_APK_PATH` (`{{REPOLENS_ANDROID_APK_PATH}}`). `{{PROJECT_PATH}}` remains the project/source directory and must not be treated as the APK file.
+
+For each finding, create an issue on the active forge.
 
 ## CRITICAL SAFETY RULE — Read-Only Operation
 
-**You MUST NOT modify the server in any way.** This is a live production system. Your role is strictly observational. Violating this rule can cause outages, data loss, or security incidents.
+**You MUST NOT modify the target in any way.** For server targets, this is a live production system. For Android targets, inspect the resolved APK and source tree read-only. Your role is strictly observational. Violating this rule can cause outages, data loss, or security incidents.
 
 The following actions are **strictly forbidden**:
 - **No service restarts** — Do not `systemctl restart`, `service ... restart`, `docker restart`, or equivalent.
@@ -20,8 +25,11 @@ The following actions are **strictly forbidden**:
 - **No database mutations** — Do not run `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, or any write query. Read-only queries (`SELECT`, `SHOW`, `EXPLAIN`) are permitted.
 - **No permission changes** — Do not `chmod`, `chown`, `setfacl`, or modify any file or directory permissions.
 - **No downloading or executing scripts** — Do not `curl | bash`, `wget`, or download and run anything.
+- **No Android rebuilds or installs** — For Android targets, do not run Gradle, do not rebuild the APK, do not install/uninstall apps, and do not mutate emulator or device state.
 
 If in doubt whether a command is read-only, **do not run it**.
+
+{{REMOTE_EXECUTION_SECTION}}
 
 ## Rules
 
@@ -35,6 +43,8 @@ If in doubt whether a command is read-only, **do not run it**.
   - `[LOW]` — Suboptimal configuration, missing best practices, or hardening opportunities
 - Apply the label `{{LENS_LABEL}}` to every issue you create. Create the label first with color `{{DOMAIN_COLOR}}` if it doesn't exist: `{{FORGE_LABEL_CREATE}}`
 - You may also apply any other existing repository labels you judge useful.
+
+{{MIN_SEVERITY_SECTION}}
 
 ### Issue Sizing — ~1 Hour Rule
 Every issue MUST be scoped so that a human operator can complete it in approximately 1 hour.
@@ -66,37 +76,17 @@ Every issue MUST have this structure:
 - If a substantially similar issue already exists, skip it.
 
 ### Investigation Approach
-Investigate the server thoroughly using **read-only commands only**. Recommended commands by category:
+Investigate the active target thoroughly using **read-only commands only**.
 
-**System Overview:**
-`uname -a`, `uptime`, `hostnamectl`, `cat /etc/os-release`, `lsb_release -a`, `timedatectl`, `cat /etc/hostname`
+For Android targets, use `$REPOLENS_ANDROID_APK_PATH` in shell examples and assign it before inspection, for example:
 
-**Processes & Services:**
-`ps aux`, `top -bn1`, `systemctl list-units --type=service --state=running`, `systemctl list-units --state=failed`, `systemctl status <service>`, `journalctl -u <service> --no-pager -n 100`
+```bash
+apk_path=${REPOLENS_ANDROID_APK_PATH:?REPOLENS_ANDROID_APK_PATH is required}
+aapt dump badging "$apk_path"
+unzip -l "$apk_path"
+```
 
-**Logs:**
-`journalctl --no-pager -n 200`, `journalctl -p err --no-pager -n 100`, `ls -la /var/log/`, `tail -n 100 /var/log/syslog`, `tail -n 100 /var/log/auth.log`, `dmesg --no-pager | tail -50`
-
-**Network:**
-`ss -tlnp`, `ss -ulnp`, `ip addr`, `ip route`, `cat /etc/resolv.conf`, `iptables -L -n` (or `nft list ruleset`), `curl -sI http://localhost:<port>`
-
-**Disk:**
-`df -h`, `du -sh /var/log/*`, `lsblk`, `mount`, `cat /etc/fstab`, `iostat` (if available)
-
-**Memory:**
-`free -h`, `cat /proc/meminfo`, `vmstat 1 3`, `swapon --show`
-
-**Containers:**
-`docker ps -a`, `docker stats --no-stream`, `docker logs --tail 100 <container>`, `docker inspect <container>`, `docker-compose ps` (or `docker compose ps`)
-
-**TLS & Certificates:**
-`openssl s_client -connect localhost:443 </dev/null 2>/dev/null | openssl x509 -noout -dates -subject`, `find /etc/ssl /etc/letsencrypt -name '*.pem' -exec openssl x509 -noout -enddate -in {} \; 2>/dev/null`
-
-**Configuration:**
-`cat /etc/nginx/nginx.conf`, `cat /etc/nginx/sites-enabled/*`, `cat /etc/caddy/Caddyfile`, `env` (check for exposed secrets), `cat .env` (in project directory — check for insecure values)
-
-**Security:**
-`cat /etc/ssh/sshd_config`, `lastlog`, `last -n 20`, `cat /etc/passwd`, `cat /etc/shadow` (check permissions only), `find / -perm -4000 -type f 2>/dev/null` (SUID binaries), `cat /etc/sudoers`
+{{SERVER_INVESTIGATION_SECTION}}
 
 {{SPEC_SECTION}}
 

@@ -30,6 +30,56 @@ warn() {
   echo "WARN: $*" >&2
 }
 
+# severity_normalize <value>
+#   Canonicalizes structured severity values. Display-only title prefixes may
+#   remain uppercase, but data fields use critical|high|medium|low.
+severity_normalize() {
+  local value="${1:-}"
+
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+
+  if [[ "$value" == \[*\] ]]; then
+    value="${value#\[}"
+    value="${value%\]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+  fi
+
+  value="${value,,}"
+  case "$value" in
+    critical|high|medium|low) printf '%s\n' "$value" ;;
+    *) printf '' ;;
+  esac
+}
+
+# severity_rank <value>
+#   Maps canonical severities to an ordered numeric rank. Higher means more
+#   severe. Returns non-zero for invalid values.
+severity_rank() {
+  local severity
+  severity="$(severity_normalize "${1:-}")"
+
+  case "$severity" in
+    low) printf '0\n' ;;
+    medium) printf '1\n' ;;
+    high) printf '2\n' ;;
+    critical) printf '3\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+# severity_meets_min <severity> <min>
+#   Returns success when <severity> is at or above the inclusive threshold.
+severity_meets_min() {
+  local severity_rank_value min_rank_value
+
+  severity_rank_value="$(severity_rank "${1:-}")" || return 1
+  min_rank_value="$(severity_rank "${2:-}")" || return 1
+
+  (( severity_rank_value >= min_rank_value ))
+}
+
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
@@ -67,6 +117,8 @@ declare -A MODE_DEFAULT_DEPTH=(
   [deploy]=1
   [opensource]=1
   [content]=1
+  [greenfield]=1
+  [polish]=1
 )
 
 declare -A MODE_DEFAULT_ROUNDS=(
@@ -79,18 +131,22 @@ declare -A MODE_DEFAULT_ROUNDS=(
   [deploy]=1
   [opensource]=1
   [content]=1
+  [greenfield]=1
+  [polish]=1
 )
 
 declare -A ROUNDS_CAP_BY_MODE=(
-  [audit]=10
-  [feature]=10
-  [bugfix]=10
-  [custom]=10
+  [audit]=1
+  [feature]=1
+  [bugfix]=1
+  [custom]=1
   [bugreport]=10
   [deploy]=1
   [opensource]=1
   [content]=1
   [discover]=1
+  [greenfield]=1
+  [polish]=1
 )
 
 mode_default_depth() {
@@ -124,17 +180,36 @@ validate_rounds() {
 agent_timeout_default_for_mode() {
   local mode="$1"
   case "$mode" in
-    deploy) printf '%s\n' 1800 ;;
-    audit|feature|bugfix|bugreport|discover|custom|opensource|content) printf '%s\n' 600 ;;
+    audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish) printf '%s\n' 1800 ;;
     *) die "Internal error: unsupported mode '$mode' for timeout default" ;;
   esac
 }
 
 resolve_agent_timeout() {
   local mode="$1"
+  local agent="${2:-}"
   local mode_upper="${mode^^}"
   mode_upper="${mode_upper//-/_}"
   local mode_var="REPOLENS_AGENT_TIMEOUT_${mode_upper}"
+  local agent_vars=()
+  local agent_var=""
+
+  case "$agent" in
+    claude) agent_vars=(REPOLENS_AGENT_TIMEOUT_CLAUDE) ;;
+    codex) agent_vars=(REPOLENS_AGENT_TIMEOUT_CODEX) ;;
+    spark) agent_vars=(REPOLENS_AGENT_TIMEOUT_SPARK REPOLENS_AGENT_TIMEOUT_SPARC) ;;
+    sparc) agent_vars=(REPOLENS_AGENT_TIMEOUT_SPARC REPOLENS_AGENT_TIMEOUT_SPARK) ;;
+    opencode|opencode/*) agent_vars=(REPOLENS_AGENT_TIMEOUT_OPENCODE) ;;
+    "") ;;
+    *) ;;
+  esac
+
+  for agent_var in "${agent_vars[@]}"; do
+    if [[ -n "${!agent_var:-}" ]]; then
+      printf '%s\n' "${!agent_var}"
+      return
+    fi
+  done
 
   if [[ -n "${REPOLENS_AGENT_TIMEOUT:-}" ]]; then
     printf '%s\n' "$REPOLENS_AGENT_TIMEOUT"
@@ -153,7 +228,17 @@ resolve_agent_kill_grace() {
   printf '%s\n' "${REPOLENS_AGENT_KILL_GRACE:-30}"
 }
 
-# Usage: run_agent <agent> <prompt> <project_path> [timeout_secs] [kill_grace_secs]
+resolve_lens_max_wall() {
+  local value="${REPOLENS_LENS_MAX_WALL:-3600}"
+
+  if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+    die "REPOLENS_LENS_MAX_WALL must be a positive integer number of seconds"
+  fi
+
+  printf '%s\n' "$((10#$value))"
+}
+
+# Usage: run_agent <agent> <prompt> <project_path> [timeout_secs] [kill_grace_secs] [envelope_file]
 #
 # Executes the given agent inside the target repository directory.
 # The work happens in a subshell so the caller's cwd is never affected.
@@ -162,8 +247,13 @@ run_agent() {
   local agent="$1"
   local prompt="$2"
   local project_path="$3"
-  local timeout_secs="${4:-${REPOLENS_AGENT_TIMEOUT:-600}}"
+  local timeout_secs="${4:-}"
   local kill_grace_secs="${5:-${REPOLENS_AGENT_KILL_GRACE:-30}}"
+  local envelope_file="${6:-${REPOLENS_AGENT_ENVELOPE_FILE:-}}"
+
+  if [[ -z "$timeout_secs" ]]; then
+    timeout_secs="$(resolve_agent_timeout "${MODE:-audit}" "$agent")"
+  fi
 
   [[ -d "$project_path" ]] || die "Project path does not exist: $project_path"
   if [[ ! "$kill_grace_secs" =~ ^[0-9]+$ || "$kill_grace_secs" -le 0 ]]; then
@@ -177,6 +267,10 @@ run_agent() {
     # failure, login wizard) exit quickly instead of blocking on a read
     # that will never deliver input.
     exec </dev/null
+    if [[ -n "${REPOLENS_RUN_LOCK_FD:-}" ]]; then
+      exec {REPOLENS_RUN_LOCK_FD}>&-
+      unset REPOLENS_RUN_LOCK_FD
+    fi
 
     case "$agent" in
       cursor)
@@ -186,7 +280,27 @@ run_agent() {
         run_cursor_ide_agent "$prompt" "$project_path"
         ;;
       claude)
-        timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" claude --dangerously-skip-permissions -p "$prompt"
+        local raw raw_json rc
+        raw="$(
+          timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" claude --dangerously-skip-permissions --output-format json -p "$prompt" 2>&1
+        )"
+        rc=$?
+
+        raw_json="$raw"
+        if command -v jq >/dev/null 2>&1 && ! printf '%s' "$raw_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+          raw_json="${raw//$'\n'/\\n}"
+        fi
+
+        if command -v jq >/dev/null 2>&1 && printf '%s' "$raw_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+          if [[ -n "$envelope_file" ]]; then
+            mkdir -p "$(dirname "$envelope_file")" 2>/dev/null || true
+            printf '%s' "$raw_json" > "$envelope_file" 2>/dev/null || true
+          fi
+          printf '%s' "$raw_json" | jq -r '.result // ""' 2>/dev/null || true
+        else
+          printf '%s' "$raw"
+        fi
+        return "$rc"
         ;;
       codex)
         timeout --kill-after="${kill_grace_secs}s" "${timeout_secs}s" codex exec --yolo "$prompt"

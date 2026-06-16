@@ -16,6 +16,7 @@
 # Tests for issue #171: lib/triage.sh — _triage_truncate_pack and run_triage.
 # All agent invocations are stubbed via _TRIAGE_AGENT_CALLBACK so no real
 # model is ever invoked (per CLAUDE.md::Tests).
+# shellcheck disable=SC2329
 
 set -uo pipefail
 
@@ -24,6 +25,8 @@ TRIAGE_LIB="$SCRIPT_DIR/lib/triage.sh"
 TEMPLATE_LIB="$SCRIPT_DIR/lib/template.sh"
 CORE_LIB="$SCRIPT_DIR/lib/core.sh"
 LOGGING_LIB="$SCRIPT_DIR/lib/logging.sh"
+STREAK_LIB="$SCRIPT_DIR/lib/streak.sh"
+SUMMARY_LIB="$SCRIPT_DIR/lib/summary.sh"
 
 PASS=0
 FAIL=0
@@ -138,6 +141,10 @@ fi
 
 # shellcheck disable=SC1090
 source "$LOGGING_LIB"
+# shellcheck disable=SC1090
+source "$STREAK_LIB"
+# shellcheck disable=SC1090
+source "$SUMMARY_LIB"
 # shellcheck disable=SC1090
 source "$TEMPLATE_LIB"
 # shellcheck disable=SC1090
@@ -279,7 +286,95 @@ status=$?
 assert_failure "callback failure returns non-zero" "$status"
 assert_file_missing "callback failure: no consumable pack" "$TRIAGE_DIR/context-pack.md"
 
-# Case 6: missing AGENT
+# Case 6: direct agent dispatch leaves unset timeout blank for run_agent resolution
+unset _TRIAGE_AGENT_CALLBACK
+unset AGENT_TIMEOUT_SECS
+AGENT="codex"
+RUN_AGENT_ARGS_FILE="$TMPDIR/triage-run-agent-args.txt"
+run_agent() {
+  printf '%s\n%s\n' "${4-}" "${5-}" > "$RUN_AGENT_ARGS_FILE"
+  cat <<'PACK'
+# Triage context pack
+
+## Mentioned files
+- sample.go
+
+## Initial hypothesis tree
+1. Direct agent path.
+DONE
+PACK
+}
+rm -f "$TRIAGE_DIR/context-pack.md"
+run_triage "$RUN_ID" >"$TMPDIR/direct-agent.out" 2>"$TMPDIR/direct-agent.err"
+status=$?
+assert_success "direct agent dispatch returns 0" "$status"
+assert_eq "direct agent dispatch passes empty timeout when AGENT_TIMEOUT_SECS is unset" "" "$(sed -n '1p' "$RUN_AGENT_ARGS_FILE")"
+assert_eq "direct agent dispatch keeps default kill grace" "30" "$(sed -n '2p' "$RUN_AGENT_ARGS_FILE")"
+
+# Case 6b: direct agent rate-limit failure is surfaced as an abort with a
+# forensic transcript and phase-specific summary stop reason.
+RUN_ID="test-run-211-triage-rate-limit"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+TRIAGE_DIR="$LOG_BASE/triage"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+mkdir -p "$LOG_BASE"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+export RUN_ID LOG_BASE SUMMARY_FILE
+run_agent() {
+  printf "ERROR: You've hit your usage limit. Try again at May 14th, 2026 11:00 PM.\n"
+  return 42
+}
+run_triage "$RUN_ID" >"$TMPDIR/rate-limit.out" 2>"$TMPDIR/rate-limit.err"
+status=$?
+assert_eq "rate-limited direct triage returns distinct rc" "3" "$status"
+assert_file_exists "rate-limited triage writes transcript" "$TRIAGE_DIR/transcript.txt"
+assert_contains "rate-limited triage transcript preserves agent output" "usage limit" "$(cat "$TRIAGE_DIR/transcript.txt" 2>/dev/null)"
+assert_file_exists "rate-limited triage creates abort sentinel" "$LOG_BASE/.rate-limit-abort"
+assert_eq "rate-limited triage records phase stop reason" "rate-limited-triage" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+assert_file_missing "rate-limited triage does not promote context pack" "$TRIAGE_DIR/context-pack.md"
+
+# Case 6c: a structured Claude rate-limit envelope with rc=0 must use the
+# same phase rate-limit path instead of accepting the valid-looking result.
+RUN_ID="test-run-214-triage-structured-rate-limit"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+TRIAGE_DIR="$LOG_BASE/triage"
+SUMMARY_FILE="$LOG_BASE/summary.json"
+mkdir -p "$LOG_BASE"
+printf '{"stopped_reason":null,"lenses":[]}\n' > "$SUMMARY_FILE"
+export RUN_ID LOG_BASE SUMMARY_FILE
+run_agent() {
+  local envelope_path="${6:-${REPOLENS_AGENT_ENVELOPE_FILE:-}}"
+  if [[ -n "$envelope_path" ]]; then
+    mkdir -p "$(dirname "$envelope_path")"
+    cat > "$envelope_path" <<'JSON'
+{"result":"# Triage context pack\n\n## Mentioned files\n- sample.go\n\n## Initial hypothesis tree\n1. This result should not be promoted.\nDONE\n","is_error":true,"api_error_status":429,"error":{"type":"rate_limit_error","message":"rate limited"}}
+JSON
+  fi
+  cat <<'PACK'
+# Triage context pack
+
+## Mentioned files
+- sample.go
+
+## Initial hypothesis tree
+1. This result should not be promoted.
+DONE
+PACK
+  return 0
+}
+run_triage "$RUN_ID" >"$TMPDIR/structured-rate-limit.out" 2>"$TMPDIR/structured-rate-limit.err"
+status=$?
+assert_eq "structured rc=0 rate-limited triage returns distinct rc" "3" "$status"
+assert_file_exists "structured rate-limited triage writes transcript" "$TRIAGE_DIR/transcript.txt"
+assert_file_exists "structured rate-limited triage creates abort sentinel" "$LOG_BASE/.rate-limit-abort"
+assert_eq "structured rate-limited triage records phase stop reason" "rate-limited-triage" "$(jq -r '.stopped_reason' "$SUMMARY_FILE")"
+assert_file_missing "structured rate-limited triage does not promote context pack" "$TRIAGE_DIR/context-pack.md"
+RUN_ID="test-run-171"
+LOG_BASE="$TMPDIR/logs/$RUN_ID"
+TRIAGE_DIR="$LOG_BASE/triage"
+unset SUMMARY_FILE
+
+# Case 7: missing AGENT
 unset AGENT
 _TRIAGE_AGENT_CALLBACK=_triage_callback_ok
 rm -f "$TRIAGE_DIR/context-pack.md"
@@ -289,7 +384,7 @@ assert_failure "missing AGENT returns non-zero" "$status"
 assert_contains "missing AGENT error message" "AGENT" "$(cat "$TMPDIR/noagent.err")"
 AGENT="claude"
 
-# Case 7: missing PROJECT_PATH
+# Case 8: missing PROJECT_PATH
 saved_path="$PROJECT_PATH"
 PROJECT_PATH="$TMPDIR/does-not-exist"
 run_triage "$RUN_ID" >"$TMPDIR/nopath.out" 2>"$TMPDIR/nopath.err"
@@ -297,7 +392,7 @@ status=$?
 assert_failure "missing PROJECT_PATH returns non-zero" "$status"
 PROJECT_PATH="$saved_path"
 
-# Case 8: missing run_id
+# Case 9: missing run_id
 run_triage "" >"$TMPDIR/norun.out" 2>"$TMPDIR/norun.err"
 status=$?
 assert_failure "missing run_id returns non-zero" "$status"

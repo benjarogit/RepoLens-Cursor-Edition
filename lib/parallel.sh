@@ -33,6 +33,12 @@ _REPOLENS_MAX_PARALLEL=8
 _REPOLENS_CLEANUP_IN_PROGRESS=0
 _REPOLENS_CLEANUP_FORCE_KILL=0
 
+_parallel_agent_abort_pending() {
+  [[ -n "${LOG_BASE:-}" ]] || return 1
+  [[ -f "$LOG_BASE/.rate-limit-abort" || -f "$LOG_BASE/.rate-limit-sleep-interrupt" \
+    || -f "$LOG_BASE/.agent-no-progress-abort" || -f "$LOG_BASE/.systemic-failure-abort" ]]
+}
+
 # init_parallel <sem_dir> <max_parallel>
 #   Creates semaphore directory, sets max parallel count.
 #   Installs signal handlers for clean shutdown.
@@ -222,6 +228,10 @@ sem_acquire() {
   next_heartbeat=$((now + heartbeat_interval))
 
   while true; do
+    if _parallel_agent_abort_pending; then
+      return 1
+    fi
+
     local count
     count="$(find "$_REPOLENS_SEM_DIR" -maxdepth 1 -name '*.token' 2>/dev/null | wc -l)"
     if [[ "$count" -lt "$_REPOLENS_MAX_PARALLEL" ]]; then
@@ -347,7 +357,10 @@ spawn_lens() {
   local callback="$1"
   shift
 
-  sem_acquire
+  sem_acquire || return 1
+  if _parallel_agent_abort_pending; then
+    return 1
+  fi
   sem_token_create "$lens_id"
 
   (
@@ -439,11 +452,10 @@ wait_batch_complete() {
 #   all succeeded, 1 if any child failed or was killed by the deadline.
 #
 #   REPOLENS_CHILD_MAX_WAIT (env, seconds): hard ceiling per child.
-#     Default: 144000 (40h). Should be >= MAX_ITERATIONS_PER_LENS *
-#     resolved agent timeout plus a safety buffer for non-agent I/O
-#     (gh queries, file locks, etc.). With the longest default of 20
-#     iterations * 1800s deploy timeout = 36000s, 144000s gives a large
-#     buffer for explicit high timeout overrides.
+#     Default: 144000 (40h). This is an outer backstop above the per-lens
+#     REPOLENS_LENS_MAX_WALL budget. Keep it large enough for the configured
+#     lens wall budget plus rate-limit sleep and non-agent I/O (gh queries,
+#     file locks, etc.).
 #
 #   Bash 4.0-compatible: polls with `kill -0` + `sleep 1`, NOT `wait -t`
 #   (bash 5.1+ only). If a child exceeds the deadline, it is sent SIGTERM,

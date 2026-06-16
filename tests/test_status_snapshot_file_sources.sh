@@ -20,6 +20,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+# shellcheck source=tests/status_test_lib.sh
 source "$SCRIPT_DIR/tests/status_test_lib.sh"
 source "$SCRIPT_DIR/lib/status.sh"
 trap status_cleanup EXIT
@@ -59,6 +61,9 @@ cat > "$SUMMARY_FILE" <<'JSON'
 {
   "run_id": "run-files",
   "started_at": "2026-01-02T03:04:05Z",
+  "remote_target": "deploy@example.com",
+  "remote_label": "Recovered target",
+  "stopped_reason": "filing-failed",
   "totals": {
     "issues_created": 7
   }
@@ -107,6 +112,9 @@ assert_jq "Snapshot reads metadata and issue totals from summary.json" "$STATUS_
    and .repo == "owner/repo"
    and .mode == "audit"
    and .agent == "codex"
+   and .remote_target == "deploy@example.com"
+   and .remote_label == "Recovered target"
+   and .stopped_reason == "filing-failed"
    and .parallel == true
    and .max_parallel == 8
    and .started_at == "2026-01-02T03:04:05Z"

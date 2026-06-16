@@ -20,7 +20,7 @@
 #     round-2 lenses re-run, round-2 marker written, round-3 fresh.
 #  2. Fully-completed round-1 marker (plus its lens completion file) causes
 #     round-1 to be skipped entirely with zero run_lens calls.
-#  3. Pre-existing round-N/dispatch.md with zero lens-outputs causes lens
+#  3. Pre-existing round-(N-1)/dispatch.md with zero lens-outputs causes lens
 #     dispatch to run from dispatch.md WITHOUT invoking the meta-orchestrator
 #     for that round.
 #  4. `--resume <run-id>` with a `--rounds N` value that differs from the
@@ -287,9 +287,10 @@ init_run_layout "$RUN_ID" 2 "${#LENSES3[@]}" "${LENSES3[@]}"
 finalize_round "$RUN_ID" 1
 mkdir -p "$LOG_BASE/.rounds"
 printf '%s\n' "${LENSES3[@]}" > "$LOG_BASE/.rounds/round-1.lenses.completed"
-# Round 2 dispatch was written by the prior run; zero lens outputs yet.
-mkdir -p "$LOG_BASE/rounds/round-2"
-cat > "$LOG_BASE/rounds/round-2/dispatch.md" <<'DISPATCH'
+# Round 2 dispatch was written at the end of round 1 by the prior run; zero
+# round-2 lens outputs exist yet.
+mkdir -p "$LOG_BASE/rounds/round-1"
+cat > "$LOG_BASE/rounds/round-1/dispatch.md" <<'DISPATCH'
 # Meta-Orchestrator Dispatch
 
 LENS: injection
@@ -331,6 +332,9 @@ mkdir -p "$mismatch_project"
 git -C "$mismatch_project" init -q
 printf '# resume mismatch project\n' > "$mismatch_project/README.md"
 
+BUG_FILE="$TMPDIR/bug-report.md"
+printf 'Resume gate fixture bug report — placeholder text.\n' > "$BUG_FILE"
+
 # Fabricate a prior run's round-1/metadata.json with rounds_total=3 so that the
 # resume-time gate can read it back.
 FAKE_RUN_ID="20260101T000000Z-resumetest"
@@ -345,6 +349,8 @@ env -u REPOLENS_ROUNDS -u DONE_STREAK_REQUIRED REPOLENS_MAX_ROUNDS=99 PATH="$FAK
   bash "$SCRIPT_DIR/repolens.sh" \
     --project "$mismatch_project" \
     --agent codex \
+    --mode bugreport \
+    --bug-report "$BUG_FILE" \
     --local \
     --output "$TMPDIR/issues-mismatch" \
     --yes \
@@ -367,6 +373,8 @@ env -u REPOLENS_ROUNDS -u DONE_STREAK_REQUIRED PATH="$FAKE_BIN:$PATH" \
   bash "$SCRIPT_DIR/repolens.sh" \
     --project "$mismatch_project" \
     --agent codex \
+    --mode bugreport \
+    --bug-report "$BUG_FILE" \
     --local \
     --output "$TMPDIR/issues-matching" \
     --yes \
@@ -404,6 +412,8 @@ env -u REPOLENS_ROUNDS -u DONE_STREAK_REQUIRED REPOLENS_MAX_ROUNDS=99 PATH="$FAK
   bash "$SCRIPT_DIR/repolens.sh" \
     --project "$legacy_project" \
     --agent codex \
+    --mode bugreport \
+    --bug-report "$BUG_FILE" \
     --local \
     --output "$TMPDIR/issues-legacy" \
     --yes \

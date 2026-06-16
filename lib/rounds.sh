@@ -15,6 +15,13 @@
 
 # RepoLens - round-aware lens execution driver
 
+if ! declare -F severity_normalize >/dev/null 2>&1; then
+  _rounds_core_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/core.sh"
+  # shellcheck source=/dev/null
+  [[ -f "$_rounds_core_lib" ]] && source "$_rounds_core_lib"
+  unset _rounds_core_lib
+fi
+
 # run_rounds <rounds_total> <lens_list_array_name>
 #   Runs the current per-lens dispatch path for rounds 1..rounds_total.
 #   The second argument is the name of a Bash array, for example LENS_LIST.
@@ -69,6 +76,12 @@ round_digest_path() {
   local run_id="${1:-}" round_number="${2:-}" dir
   dir="$(round_dir "$run_id" "$round_number")" || return $?
   printf '%s/digest.md' "$dir"
+}
+
+round_prior_digest_path() {
+  local run_id="${1:-}" round_number="${2:-}" dir
+  dir="$(round_dir "$run_id" "$round_number")" || return $?
+  printf '%s/prior-round-digest.md' "$dir"
 }
 
 round_hypotheses_path() {
@@ -336,6 +349,8 @@ run_meta_orchestrator() {
   local prompt_path output_path template_name template_file project_path prompt vars
   local agent_rc=0
 
+  META_ORCH_SATURATED=0
+
   if [[ "$prev_arg" == */* ]]; then
     prev_round_dir="$prev_arg"
     round="$(_rounds_meta_round_number_from_dir "$prev_round_dir")"
@@ -357,16 +372,16 @@ run_meta_orchestrator() {
 
   repo_root="$(_rounds_repo_root)"
   digest_path="$prev_round_dir/digest.md"
-  dispatch_path="$next_round_dir/dispatch.md"
-  hypotheses_path="$next_round_dir/hypotheses.md"
-  prompt_path="$next_round_dir/meta-orchestrator-prompt.md"
-  output_path="$next_round_dir/meta-orchestrator-output.txt"
+  dispatch_path="$prev_round_dir/dispatch.md"
+  hypotheses_path="$prev_round_dir/hypotheses.md"
+  prompt_path="$prev_round_dir/meta-orchestrator-prompt.md"
+  output_path="$prev_round_dir/meta-orchestrator-output.txt"
   template_name="$(_rounds_meta_template_name_for_mode "${MODE:-}")"
   template_file="${BASE_PROMPTS_DIR:-$repo_root/prompts/_base}/$template_name"
   project_path="${PROJECT_PATH:-$repo_root}"
 
-  if ! mkdir -p "$next_round_dir"; then
-    _rounds_meta_warn "Unable to create next round directory for meta-orchestrator: $next_round_dir"
+  if ! mkdir -p "$prev_round_dir" "$next_round_dir"; then
+    _rounds_meta_warn "Unable to create round directory for meta-orchestrator handoff"
     return 1
   fi
   if [[ ! -f "$template_file" ]]; then
@@ -391,16 +406,28 @@ run_meta_orchestrator() {
   printf '%s\n' "$prompt" > "$prompt_path" || return 1
 
   log_info "[round $round] Running meta-orchestrator for round $next_round"
-  run_agent "$AGENT" "$prompt" "$project_path" "${AGENT_TIMEOUT_SECS:-600}" "${AGENT_KILL_GRACE_SECS:-30}" > "$output_path" 2>&1 || agent_rc=$?
-  if (( agent_rc != 0 )); then
+  local envelope_path="$output_path.envelope.json"
+  run_agent "$AGENT" "$prompt" "$project_path" "${AGENT_TIMEOUT_SECS:-}" "${AGENT_KILL_GRACE_SECS:-30}" "$envelope_path" > "$output_path" 2>&1 || agent_rc=$?
+  if declare -F handle_agent_failure_in_phase >/dev/null 2>&1; then
+    local phase_rc
+    handle_agent_failure_in_phase "meta" "$output_path" "$agent_rc" "$envelope_path" "Meta-orchestrator" >/dev/null
+    phase_rc=$?
+    if (( phase_rc == 3 )); then
+      return 3
+    elif (( phase_rc != 0 )); then
+      _rounds_meta_warn "Meta-orchestrator agent invocation failed"
+      return 1
+    fi
+  elif (( agent_rc != 0 )); then
     _rounds_meta_warn "Meta-orchestrator exited with status $agent_rc"
     return "$agent_rc"
   fi
 
   if _rounds_meta_no_fresh_angles "$output_path"; then
     _rounds_meta_write_no_fresh_dispatch "$dispatch_path" "$hypotheses_path" || return $?
+    META_ORCH_SATURATED=1
     log_info "[round $round] Meta-orchestrator reported NO_FRESH_ANGLES"
-    return 2
+    return 0
   fi
 
   _rounds_meta_parse_output "$output_path" "$dispatch_path" "$hypotheses_path" || return $?
@@ -472,6 +499,12 @@ _rounds_meta_custom_category_from_payload() {
       if [[ "$category" =~ ^(.+)[[:space:]]-[[:space:]] ]]; then
         category="${BASH_REMATCH[1]}"
       fi
+      # Strip any role/focus/anchor/exclude/missed_angle attributes from the
+      # category so the slug derives only from the human-named category. Use
+      # sed (POSIX BRE/ERE has no non-greedy match in Bash) to stop at the
+      # first attribute boundary.
+      category="$(printf '%s' "$category" \
+        | sed -E 's/[[:space:]]+(role|focus|anchor|exclude|missed_angle)=.*$//')"
       _rounds_meta_trim "$category"
       return 0
     fi
@@ -484,9 +517,135 @@ _rounds_meta_custom_category_from_payload() {
 _rounds_meta_dispatch_boundary() {
   local trimmed="$1"
 
-  [[ "$trimmed" =~ ^-?[[:space:]]*(LENS|CUSTOM):[[:space:]]* ]] \
+  [[ "$trimmed" =~ ^-?[[:space:]]*(LENS|CUSTOM|GENERIC):[[:space:]]* ]] \
     || [[ "$trimmed" =~ ^#*[[:space:]]*HYPOTHESES[_[:space:]-]*TO[_[:space:]-]*VERIFY[[:space:]]*:?[[:space:]]* ]] \
     || [[ "$trimmed" =~ ^#{1,6}[[:space:]]+ ]]
+}
+
+_rounds_meta_tuple_escape_field() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//|/\\|}"
+  printf '%s' "$value"
+}
+
+_rounds_meta_tuple_unescape_field() {
+  local value="$1" out="" i len char next
+  len="${#value}"
+  for (( i = 0; i < len; i++ )); do
+    char="${value:i:1}"
+    if [[ "$char" == "\\" && "$((i + 1))" -lt "$len" ]]; then
+      next="${value:i+1:1}"
+      if [[ "$next" == "|" || "$next" == "\\" ]]; then
+        out+="$next"
+        i=$((i + 1))
+        continue
+      fi
+    fi
+    out+="$char"
+  done
+  printf '%s' "$out"
+}
+
+_rounds_meta_tuple_serialize() {
+  local entry="$1" role="${2:-}" focus="${3:-}" anchor="${4:-}" exclude="${5:-}"
+  local has_meta=0
+
+  [[ -n "$role" || -n "$focus" || -n "$anchor" || -n "$exclude" ]] && has_meta=1
+
+  if (( has_meta == 0 )); then
+    printf '%s' "$entry"
+    return 0
+  fi
+
+  printf '%s|%s|%s|%s|%s' \
+    "$entry" \
+    "$(_rounds_meta_tuple_escape_field "$role")" \
+    "$(_rounds_meta_tuple_escape_field "$focus")" \
+    "$(_rounds_meta_tuple_escape_field "$anchor")" \
+    "$(_rounds_meta_tuple_escape_field "$exclude")"
+}
+
+# Parse a tuple "entry|role|focus|anchor|exclude" and assign fields to
+# named variables passed by reference. Honors backslash-escaped pipes
+# inside values.
+_rounds_meta_tuple_parse() {
+  local tuple="$1" entry_var="$2" role_var="$3" focus_var="$4" anchor_var="$5" exclude_var="$6"
+  local -a fields=()
+  local current="" char next i len
+
+  len="${#tuple}"
+  for (( i = 0; i < len; i++ )); do
+    char="${tuple:i:1}"
+    if [[ "$char" == "\\" && "$((i + 1))" -lt "$len" ]]; then
+      next="${tuple:i+1:1}"
+      if [[ "$next" == "|" || "$next" == "\\" ]]; then
+        current+="$next"
+        i=$((i + 1))
+        continue
+      fi
+    fi
+    if [[ "$char" == "|" ]]; then
+      fields+=("$current")
+      current=""
+      continue
+    fi
+    current+="$char"
+  done
+  fields+=("$current")
+
+  printf -v "$entry_var" '%s' "${fields[0]:-}"
+  printf -v "$role_var" '%s' "${fields[1]:-}"
+  printf -v "$focus_var" '%s' "${fields[2]:-}"
+  printf -v "$anchor_var" '%s' "${fields[3]:-}"
+  printf -v "$exclude_var" '%s' "${fields[4]:-}"
+}
+
+# Extract a key=value pair from a line. Supports key="value with spaces",
+# key='value with spaces', key=`backtick value`, key=token (no whitespace),
+# and key=`path/to/file:line` style tokens that contain backticks.
+# Writes the extracted value to stdout. Returns 0 if the key was found.
+_rounds_meta_extract_kv() {
+  local key="$1" haystack="$2"
+  local pattern_dq pattern_sq pattern_bt pattern_token
+
+  pattern_dq="(^|[[:space:]])${key}=\"([^\"]*)\""
+  pattern_sq="(^|[[:space:]])${key}='([^']*)'"
+  pattern_bt="(^|[[:space:]])${key}=\`([^\`]*)\`"
+  pattern_token="(^|[[:space:]])${key}=([^[:space:]\"\`']+)"
+
+  if [[ "$haystack" =~ $pattern_dq ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ "$haystack" =~ $pattern_sq ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ "$haystack" =~ $pattern_bt ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ "$haystack" =~ $pattern_token ]]; then
+    printf '%s' "${BASH_REMATCH[2]}"
+    return 0
+  fi
+
+  return 1
+}
+
+# Strip a trailing " - rationale" segment from a dispatch line so the
+# remaining text is purely the attribute key=value section. The trailing
+# " - " separator is the canonical rationale boundary used in the schema.
+_rounds_meta_strip_rationale() {
+  local value="$1"
+
+  if [[ "$value" =~ ^(.+)[[:space:]]-[[:space:]] ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  printf '%s' "$value"
 }
 
 _rounds_meta_round_number_from_dir() {
@@ -498,11 +657,20 @@ _rounds_meta_round_number_from_dir() {
   fi
 }
 
+_rounds_meta_dispatch_cap() {
+  local cap="${REPOLENS_META_ORCH_DISPATCH_CAP:-3}"
+  if [[ ! "$cap" =~ ^[0-9]+$ || "$cap" -lt 1 ]]; then
+    cap=3
+  fi
+  printf '%s\n' "$cap"
+}
+
 _rounds_meta_prompt_vars() {
   local round="$1" next_round="$2" digest_path="$3" project_path="$4"
-  local round_total original_scope between_round_task coverage_dimension prior_output_anchor
+  local round_total original_scope between_round_task coverage_dimension prior_output_anchor dispatch_cap
 
   round_total="${CURRENT_ROUND_TOTAL:-${ROUND_TOTAL:-$next_round}}"
+  dispatch_cap="$(_rounds_meta_dispatch_cap)"
   original_scope="${ORIGINAL_BUG_REPORT_OR_SCOPE:-}"
   if [[ -z "$original_scope" ]]; then
     if [[ "${MODE:-}" == "bugreport" && -n "${BUG_REPORT:-}" ]]; then
@@ -560,8 +728,15 @@ _rounds_meta_prompt_vars() {
   esac
 
   printf 'PROJECT_PATH=%s' "$(_rounds_meta_prompt_escape_value "$project_path")"
-  printf '|REPO_OWNER=%s' "$(_rounds_meta_prompt_escape_value "${REPO_OWNER:-local}")"
-  printf '|REPO_NAME=%s' "$(_rounds_meta_prompt_escape_value "${REPO_NAME:-$(basename "$project_path")}")"
+  local repo_owner="${REPO_OWNER:-local}"
+  local repo_name="${REPO_NAME:-}"
+  if [[ -z "$repo_name" && -n "${FORGE_REPO_SLUG:-}" ]]; then
+    repo_owner="${FORGE_REPO_SLUG%%/*}"
+    repo_name="${FORGE_REPO_SLUG#*/}"
+  fi
+
+  printf '|REPO_OWNER=%s' "$(_rounds_meta_prompt_escape_value "$repo_owner")"
+  printf '|REPO_NAME=%s' "$(_rounds_meta_prompt_escape_value "$repo_name")"
   printf '|MODE=%s' "$(_rounds_meta_prompt_escape_value "${MODE:-audit}")"
   printf '|RUN_ID=%s' "$(_rounds_meta_prompt_escape_value "${RUN_ID:-}")"
   printf '|ROUND_INDEX=%s' "$(_rounds_meta_prompt_escape_value "$round")"
@@ -572,6 +747,7 @@ _rounds_meta_prompt_vars() {
   printf '|BETWEEN_ROUND_TASK=%s' "$(_rounds_meta_prompt_escape_value "$between_round_task")"
   printf '|COVERAGE_DIMENSION=%s' "$(_rounds_meta_prompt_escape_value "$coverage_dimension")"
   printf '|PRIOR_OUTPUT_ANCHOR=%s' "$(_rounds_meta_prompt_escape_value "$prior_output_anchor")"
+  printf '|DISPATCH_CAP=%s' "$(_rounds_meta_prompt_escape_value "$dispatch_cap")"
 }
 
 _rounds_meta_lenses_dir() {
@@ -613,7 +789,35 @@ _rounds_meta_active_lens_entries() {
     fi
   done < <(
     jq -r --arg mode "$mode" --arg deploy_domain "$deploy_domain" \
-      '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content") end) | .id as $d | .lenses[] | $d + "/" + .' "$domains_file"
+      '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") elif $mode == "greenfield" then select(.mode == "greenfield") elif $mode == "polish" then select(.mode == "polish") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") end) | .id as $d | .lenses[] | (if type == "string" then {id: ., skip_modes: []} else . end) | select(((.skip_modes // []) | index($mode)) | not) | $d + "/" + .id' "$domains_file"
+  )
+}
+
+# Mode-aware lens registry without --focus/--domain user filters.
+# Used to validate meta-orchestrator round 2+ dispatch ids: those are
+# adjacency picks across the full registry, not the user's round-1 selection.
+_rounds_meta_all_lens_entries() {
+  local lenses_dir="${1:-}" domains_file="${2:-}" mode deploy_domain entry
+
+  [[ -n "$lenses_dir" ]] || lenses_dir="$(_rounds_meta_lenses_dir)"
+  [[ -n "$domains_file" ]] || domains_file="$(_rounds_meta_domains_file)"
+  [[ -d "$lenses_dir" && -f "$domains_file" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+
+  mode="${MODE:-audit}"
+  deploy_domain="deployment"
+  if [[ "$mode" == "deploy" && "${TARGET_TYPE:-server}" == "android" ]]; then
+    deploy_domain="android"
+  fi
+
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    if [[ -f "$lenses_dir/$entry.md" ]]; then
+      printf '%s\n' "$entry"
+    fi
+  done < <(
+    jq -r --arg mode "$mode" --arg deploy_domain "$deploy_domain" \
+      '.domains | sort_by(.order)[] | (if $mode == "discover" then select(.mode == "discover") elif $mode == "deploy" then select(.mode == "deploy" and .id == $deploy_domain) elif $mode == "opensource" then select(.mode == "opensource") elif $mode == "content" then select(.mode == "content") elif $mode == "greenfield" then select(.mode == "greenfield") elif $mode == "polish" then select(.mode == "polish") else select(.mode != "discover" and .mode != "deploy" and .mode != "opensource" and .mode != "content" and .mode != "greenfield" and .mode != "polish") end) | .id as $d | .lenses[] | (if type == "string" then {id: ., skip_modes: []} else . end) | select(((.skip_modes // []) | index($mode)) | not) | $d + "/" + .id' "$domains_file"
   )
 }
 
@@ -621,7 +825,7 @@ _rounds_meta_validate_lens_id() {
   local lens_id="$1" lenses_dir="${2:-}"
 
   [[ "$lens_id" =~ ^[A-Za-z0-9_-]+$ ]] || return 1
-  _rounds_meta_lens_entry_for_id "$lens_id" "$lenses_dir" >/dev/null
+  _rounds_meta_lens_entry_for_id_unfiltered "$lens_id" "$lenses_dir" >/dev/null
 }
 
 _rounds_meta_lens_entry_for_id() {
@@ -634,13 +838,18 @@ _rounds_meta_lens_entry_for_id() {
     [[ "${entry#*/}" == "$lens_id" ]] || continue
     printf '%s\n' "$entry"
     return 0
-  done < <(_rounds_meta_active_lens_entries "$lenses_dir" || true)
+  done < <(_rounds_meta_all_lens_entries "$lenses_dir" || true)
 
   return 1
 }
 
+_rounds_meta_lens_entry_for_id_unfiltered() {
+  _rounds_meta_lens_entry_for_id "$@"
+}
+
 _rounds_meta_dispatch_lens_entries() {
   local dispatch_file="$1" lenses_dir="${2:-}" line trimmed lens_id lens_entry
+  local lens_attrs stripped attr_body role focus anchor exclude missed_angle tuple dedup_key
   local -A seen_entries=()
 
   [[ -f "$dispatch_file" ]] || return 0
@@ -648,12 +857,27 @@ _rounds_meta_dispatch_lens_entries() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(_rounds_meta_trim "$line")"
-    if [[ "$trimmed" =~ ^-?[[:space:]]*LENS:[[:space:]]*([A-Za-z0-9_-]+)([[:space:]]+-[[:space:]].*)?$ ]]; then
+    if [[ "$trimmed" =~ ^-?[[:space:]]*LENS:[[:space:]]*([A-Za-z0-9_-]+)([[:space:]]+.*)?$ ]]; then
       lens_id="${BASH_REMATCH[1]}"
+      lens_attrs="${BASH_REMATCH[2]:-}"
+      stripped="$(_rounds_meta_strip_rationale "$lens_attrs")"
+      attr_body="$(_rounds_meta_trim "$stripped")"
+
+      role="$(_rounds_meta_extract_kv role "$attr_body" || true)"
+      focus="$(_rounds_meta_extract_kv focus "$attr_body" || true)"
+      anchor="$(_rounds_meta_extract_kv anchor "$attr_body" || true)"
+      exclude="$(_rounds_meta_extract_kv exclude "$attr_body" || true)"
+      missed_angle="$(_rounds_meta_extract_kv missed_angle "$attr_body" || true)"
+      if [[ -z "$focus" && -n "$missed_angle" ]]; then
+        focus="$missed_angle"
+      fi
+
       if lens_entry="$(_rounds_meta_lens_entry_for_id "$lens_id" "$lenses_dir")"; then
-        if [[ -z "${seen_entries[$lens_entry]:-}" ]]; then
-          seen_entries["$lens_entry"]=1
-          printf '%s\n' "$lens_entry"
+        tuple="$(_rounds_meta_tuple_serialize "$lens_entry" "$role" "$focus" "$anchor" "$exclude")"
+        dedup_key="${lens_entry}|${role}|${focus}|${anchor}|${exclude}"
+        if [[ -z "${seen_entries[$dedup_key]:-}" ]]; then
+          seen_entries["$dedup_key"]=1
+          printf '%s\n' "$tuple"
         fi
       else
         _rounds_meta_warn "Skipping invalid dispatched lens id: $lens_id"
@@ -662,17 +886,134 @@ _rounds_meta_dispatch_lens_entries() {
   done < "$dispatch_file"
 }
 
+_rounds_meta_dispatch_generic_entries() {
+  local dispatch_file="$1" line trimmed generic_attrs stripped attr_body
+  local role focus anchor exclude missed_angle tuple slug entry dedup_key index=0
+  local -A seen_entries=()
+
+  [[ -f "$dispatch_file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="$(_rounds_meta_trim "$line")"
+    if [[ "$trimmed" =~ ^-?[[:space:]]*GENERIC:[[:space:]]*(.*)$ ]]; then
+      generic_attrs="${BASH_REMATCH[1]}"
+      stripped="$(_rounds_meta_strip_rationale "$generic_attrs")"
+      attr_body="$(_rounds_meta_trim "$stripped")"
+
+      role="$(_rounds_meta_extract_kv role "$attr_body" || true)"
+      focus="$(_rounds_meta_extract_kv focus "$attr_body" || true)"
+      anchor="$(_rounds_meta_extract_kv anchor "$attr_body" || true)"
+      exclude="$(_rounds_meta_extract_kv exclude "$attr_body" || true)"
+      missed_angle="$(_rounds_meta_extract_kv missed_angle "$attr_body" || true)"
+      if [[ -z "$focus" && -n "$missed_angle" ]]; then
+        focus="$missed_angle"
+      fi
+
+      dedup_key="${role}|${focus}|${anchor}|${exclude}"
+      if [[ -n "${seen_entries[$dedup_key]:-}" ]]; then
+        continue
+      fi
+      seen_entries["$dedup_key"]=1
+      index=$((index + 1))
+
+      slug="$(_rounds_meta_slug "${role}-${focus}")"
+      [[ -n "$slug" ]] || slug="investigator-$index"
+      entry="generic/$slug"
+      tuple="$(_rounds_meta_tuple_serialize "$entry" "$role" "$focus" "$anchor" "$exclude")"
+      printf '%s\n' "$tuple"
+    fi
+  done < "$dispatch_file"
+}
+
+_rounds_meta_custom_focus_body() {
+  # Extract the agent-supplied focus instructions from a CUSTOM payload.
+  # If the payload contains a ```fenced block, return its inner content
+  # (de-indented to the fence's leading indent). Otherwise strip the
+  # leading `- CUSTOM:` bullet and any `Draft prompt:` label and return
+  # the remainder.
+  local payload="$1"
+  local line trimmed in_fence=0 saw_fence=0 dropped_first=0
+  local fenced_body="" fallback_body="" fence_indent=""
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="$(_rounds_meta_trim "$line")"
+
+    if [[ "${trimmed:0:3}" == '```' ]]; then
+      if (( in_fence == 0 )); then
+        in_fence=1
+        saw_fence=1
+        fence_indent="${line%%\`*}"
+      else
+        in_fence=0
+      fi
+      continue
+    fi
+
+    if (( in_fence )); then
+      if [[ -n "$fence_indent" && "$line" == "$fence_indent"* ]]; then
+        line="${line#"$fence_indent"}"
+      fi
+      [[ -n "$fenced_body" ]] && fenced_body+=$'\n'
+      fenced_body+="$line"
+      continue
+    fi
+
+    if (( dropped_first == 0 )); then
+      dropped_first=1
+      if [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]* ]]; then
+        continue
+      fi
+    fi
+
+    if [[ "${trimmed,,}" == "draft prompt:" ]]; then
+      continue
+    fi
+
+    [[ -n "$fallback_body" ]] && fallback_body+=$'\n'
+    fallback_body+="$line"
+  done <<< "$payload"
+
+  if (( saw_fence )) && [[ -n "$fenced_body" ]]; then
+    printf '%s' "$fenced_body"
+  else
+    printf '%s' "$fallback_body"
+  fi
+}
+
 _rounds_meta_write_custom_lens() {
   local custom_lenses_dir="$1" payload="$2" index="$3"
-  local category slug lens_dir lens_file
+  local category base_slug slug lens_dir lens_file focus_body
+  local round_prefix="" collision_suffix=2
 
   category="$(_rounds_meta_custom_category_from_payload "$payload")" || return 1
-  slug="$(_rounds_meta_slug "$category")"
-  [[ -n "$slug" ]] || slug="custom-$index"
+  base_slug="$(_rounds_meta_slug "$category")"
+  [[ -n "$base_slug" ]] || base_slug="custom-$index"
+
+  # Bug 1 — cross-round disambiguation. When CURRENT_ROUND_INDEX is set
+  # (multi-round mode), prefix the slug with r<N>- so the same agent-named
+  # category in round 2 and round 3 produces distinct lens IDs.
+  if [[ -n "${CURRENT_ROUND_INDEX:-}" && "$CURRENT_ROUND_INDEX" =~ ^[0-9]+$ ]]; then
+    round_prefix="r${CURRENT_ROUND_INDEX}-"
+  fi
+
+  slug="${round_prefix}${base_slug}"
   lens_dir="$custom_lenses_dir/custom"
   lens_file="$lens_dir/$slug.md"
 
   mkdir -p "$lens_dir" || return 1
+
+  # Bug 2 — same-round collision counter. Two distinct categories that
+  # slugify identically (e.g. "Payment retry race!" and "payment-retry race")
+  # would otherwise overwrite each other. Append -2, -3, ... until we land
+  # on a free filename.
+  while [[ -e "$lens_file" ]]; do
+    slug="${round_prefix}${base_slug}-${collision_suffix}"
+    lens_file="$lens_dir/$slug.md"
+    collision_suffix=$(( collision_suffix + 1 ))
+  done
+
+  focus_body="$(_rounds_meta_custom_focus_body "$payload")"
+
   {
     printf -- '---\n'
     printf 'id: %s\n' "$slug"
@@ -682,16 +1023,50 @@ _rounds_meta_write_custom_lens() {
     printf -- '---\n'
     printf '## Your Expert Focus\n\n'
     printf 'Category: %s\n\n' "$category"
-    printf '%s\n' "$payload"
+    if [[ -n "$focus_body" ]]; then
+      printf '%s\n' "$focus_body"
+    fi
   } > "$lens_file" || return 1
 
   printf 'custom/%s\n' "$slug"
 }
 
+_rounds_meta_custom_attrs_from_payload() {
+  local payload="$1" role_var="$2" focus_var="$3" anchor_var="$4" exclude_var="$5"
+  local _attr_line _attr_trimmed _attr_header _attr_body _attr_stripped
+  local _attr_role="" _attr_focus="" _attr_anchor="" _attr_exclude="" _attr_missed_angle=""
+
+  while IFS= read -r _attr_line || [[ -n "$_attr_line" ]]; do
+    _attr_trimmed="$(_rounds_meta_trim "$_attr_line")"
+    [[ -n "$_attr_trimmed" ]] || continue
+    if [[ "$_attr_trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
+      _attr_header="${BASH_REMATCH[1]}"
+      _attr_stripped="$(_rounds_meta_strip_rationale "$_attr_header")"
+      _attr_body="$(_rounds_meta_trim "$_attr_stripped")"
+
+      _attr_role="$(_rounds_meta_extract_kv role "$_attr_body" || true)"
+      _attr_focus="$(_rounds_meta_extract_kv focus "$_attr_body" || true)"
+      _attr_anchor="$(_rounds_meta_extract_kv anchor "$_attr_body" || true)"
+      _attr_exclude="$(_rounds_meta_extract_kv exclude "$_attr_body" || true)"
+      _attr_missed_angle="$(_rounds_meta_extract_kv missed_angle "$_attr_body" || true)"
+      if [[ -z "$_attr_focus" && -n "$_attr_missed_angle" ]]; then
+        _attr_focus="$_attr_missed_angle"
+      fi
+    fi
+    break
+  done <<< "$payload"
+
+  printf -v "$role_var" '%s' "$_attr_role"
+  printf -v "$focus_var" '%s' "$_attr_focus"
+  printf -v "$anchor_var" '%s' "$_attr_anchor"
+  printf -v "$exclude_var" '%s' "$_attr_exclude"
+}
+
 _rounds_meta_dispatch_custom_entries() {
   local dispatch_file="$1" custom_lenses_dir="$2"
   local line trimmed payload="" custom_entry index=0
-  local in_custom=0
+  local role="" focus="" anchor="" exclude="" tuple
+  local in_custom=0 in_fence=0
   local -A seen_entries=()
 
   [[ -f "$dispatch_file" ]] || return 0
@@ -699,21 +1074,32 @@ _rounds_meta_dispatch_custom_entries() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(_rounds_meta_trim "$line")"
-    if (( in_custom )) && _rounds_meta_dispatch_boundary "$trimmed"; then
+
+    if (( in_custom )) && [[ "${trimmed:0:3}" == '```' ]]; then
+      in_fence=$(( 1 - in_fence ))
+      payload+=$'\n'"$line"
+      continue
+    fi
+
+    if (( in_custom )) && (( in_fence == 0 )) && _rounds_meta_dispatch_boundary "$trimmed"; then
       index=$((index + 1))
       if custom_entry="$(_rounds_meta_write_custom_lens "$custom_lenses_dir" "$payload" "$index")"; then
         if [[ -z "${seen_entries[$custom_entry]:-}" ]]; then
           seen_entries["$custom_entry"]=1
-          printf '%s\n' "$custom_entry"
+          _rounds_meta_custom_attrs_from_payload "$payload" role focus anchor exclude
+          tuple="$(_rounds_meta_tuple_serialize "$custom_entry" "$role" "$focus" "$anchor" "$exclude")"
+          printf '%s\n' "$tuple"
         fi
       fi
       payload=""
       in_custom=0
+      in_fence=0
     fi
 
-    if [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
+    if (( in_fence == 0 )) && [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
       payload="$trimmed"
       in_custom=1
+      in_fence=0
       continue
     fi
 
@@ -723,11 +1109,16 @@ _rounds_meta_dispatch_custom_entries() {
   done < "$dispatch_file"
 
   if (( in_custom )); then
+    if (( in_fence )); then
+      _rounds_meta_warn "Custom dispatch payload reached EOF with an unclosed fence; flushing as-is."
+    fi
     index=$((index + 1))
     if custom_entry="$(_rounds_meta_write_custom_lens "$custom_lenses_dir" "$payload" "$index")"; then
       if [[ -z "${seen_entries[$custom_entry]:-}" ]]; then
         seen_entries["$custom_entry"]=1
-        printf '%s\n' "$custom_entry"
+        _rounds_meta_custom_attrs_from_payload "$payload" role focus anchor exclude
+        tuple="$(_rounds_meta_tuple_serialize "$custom_entry" "$role" "$focus" "$anchor" "$exclude")"
+        printf '%s\n' "$tuple"
       fi
     fi
   fi
@@ -739,7 +1130,7 @@ _rounds_meta_dispatch_has_entries() {
   [[ -f "$dispatch_file" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(_rounds_meta_trim "$line")"
-    if [[ "$trimmed" =~ ^-?[[:space:]]*(LENS|CUSTOM):[[:space:]]* ]]; then
+    if [[ "$trimmed" =~ ^-?[[:space:]]*(LENS|CUSTOM|GENERIC):[[:space:]]* ]]; then
       return 0
     fi
   done < "$dispatch_file"
@@ -748,18 +1139,18 @@ _rounds_meta_dispatch_has_entries() {
 }
 
 _rounds_meta_no_fresh_angles() {
-  local output_file="$1" first_norm last_norm
+  local output_file="$1" line trimmed
 
-  if ! declare -F first_word >/dev/null 2>&1 \
-      || ! declare -F last_word >/dev/null 2>&1 \
-      || ! declare -F normalize_word >/dev/null 2>&1; then
-    _rounds_meta_warn "streak helpers are not available for NO_FRESH_ANGLES detection"
-    return 1
-  fi
+  [[ -f "$output_file" ]] || return 1
 
-  first_norm="$(normalize_word "$(first_word "$output_file")")"
-  last_norm="$(normalize_word "$(last_word "$output_file")")"
-  [[ "$first_norm" == "NO_FRESH_ANGLES" || "$last_norm" == "NO_FRESH_ANGLES" ]]
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    trimmed="$(_rounds_meta_trim "$line")"
+    if [[ "$trimmed" == "NO_FRESH_ANGLES" ]]; then
+      return 0
+    fi
+  done < "$output_file"
+
+  return 1
 }
 
 _rounds_meta_extract_hypotheses() {
@@ -782,7 +1173,7 @@ _rounds_meta_extract_hypotheses() {
     fi
 
     if [[ "$trimmed" =~ ^#{1,6}[[:space:]]+ ]] \
-        || [[ "$trimmed" =~ ^-?[[:space:]]*(LENS|CUSTOM):[[:space:]]* ]]; then
+        || [[ "$trimmed" =~ ^-?[[:space:]]*(LENS|CUSTOM|GENERIC):[[:space:]]* ]]; then
       break
     fi
 
@@ -795,9 +1186,11 @@ _rounds_meta_extract_hypotheses() {
 _rounds_meta_parse_output() {
   local output_file="$1" dispatch_file="$2" hypotheses_file="$3" lenses_dir="${4:-}"
   local dispatch_dir hypotheses_dir tmp_dispatch line trimmed lens_id custom_payload custom_category
-  local in_custom=0
-  local -a lens_ids=() custom_payloads=()
-  local -A seen_lenses=() seen_custom=()
+  local lens_attrs lens_dispatch_line generic_attrs generic_dispatch_line stripped attr_body
+  local role focus anchor exclude missed_angle dedup_key
+  local in_custom=0 in_fence=0
+  local -a lens_dispatch_lines=() custom_payloads=() generic_dispatch_lines=()
+  local -A seen_lens_keys=() seen_custom=() seen_generic_keys=()
 
   [[ -n "$lenses_dir" ]] || lenses_dir="$(_rounds_meta_lenses_dir)"
   dispatch_dir="${dispatch_file%/*}"
@@ -807,7 +1200,13 @@ _rounds_meta_parse_output() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(_rounds_meta_trim "$line")"
 
-    if (( in_custom )) && _rounds_meta_dispatch_boundary "$trimmed"; then
+    if (( in_custom )) && [[ "${trimmed:0:3}" == '```' ]]; then
+      in_fence=$(( 1 - in_fence ))
+      custom_payload+=$'\n'"$line"
+      continue
+    fi
+
+    if (( in_custom )) && (( in_fence == 0 )) && _rounds_meta_dispatch_boundary "$trimmed"; then
       custom_category="$(_rounds_meta_custom_category_from_payload "$custom_payload")"
       if [[ -n "$custom_category" && -z "${seen_custom[$custom_category]:-}" ]]; then
         seen_custom["$custom_category"]=1
@@ -815,6 +1214,7 @@ _rounds_meta_parse_output() {
       fi
       custom_payload=""
       in_custom=0
+      in_fence=0
     fi
 
     if (( in_custom )); then
@@ -824,15 +1224,73 @@ _rounds_meta_parse_output() {
 
     [[ -n "$trimmed" ]] || continue
 
-    if [[ "$trimmed" =~ ^-?[[:space:]]*LENS:[[:space:]]*([A-Za-z0-9_-]+)([[:space:]]+-[[:space:]].*)?$ ]]; then
+    if [[ "$trimmed" =~ ^-?[[:space:]]*LENS:[[:space:]]*([A-Za-z0-9_-]+)([[:space:]]+.*)?$ ]]; then
       lens_id="${BASH_REMATCH[1]}"
+      lens_attrs="${BASH_REMATCH[2]:-}"
+      stripped="$(_rounds_meta_strip_rationale "$lens_attrs")"
+      attr_body="$(_rounds_meta_trim "$stripped")"
+
+      role="$(_rounds_meta_extract_kv role "$attr_body" || true)"
+      focus="$(_rounds_meta_extract_kv focus "$attr_body" || true)"
+      anchor="$(_rounds_meta_extract_kv anchor "$attr_body" || true)"
+      exclude="$(_rounds_meta_extract_kv exclude "$attr_body" || true)"
+      missed_angle="$(_rounds_meta_extract_kv missed_angle "$attr_body" || true)"
+      if [[ -z "$focus" && -n "$missed_angle" ]]; then
+        focus="$missed_angle"
+      fi
+
       if _rounds_meta_validate_lens_id "$lens_id" "$lenses_dir"; then
-        if [[ -z "${seen_lenses[$lens_id]:-}" ]]; then
-          seen_lenses["$lens_id"]=1
-          lens_ids+=("$lens_id")
+        dedup_key="${lens_id}|${role}|${focus}|${anchor}|${exclude}"
+        if [[ -z "${seen_lens_keys[$dedup_key]:-}" ]]; then
+          seen_lens_keys["$dedup_key"]=1
+          lens_dispatch_line="LENS: $lens_id"
+          [[ -n "$role" ]] && lens_dispatch_line+=" role=$role"
+          if [[ -n "$focus" ]]; then
+            if [[ "$focus" == *[[:space:]]* ]]; then
+              lens_dispatch_line+=" focus=\"$focus\""
+            else
+              lens_dispatch_line+=" focus=$focus"
+            fi
+          fi
+          [[ -n "$anchor" ]] && lens_dispatch_line+=" anchor=$anchor"
+          [[ -n "$exclude" ]] && lens_dispatch_line+=" exclude=$exclude"
+          lens_dispatch_lines+=("$lens_dispatch_line")
         fi
       else
-        _rounds_meta_warn "Dropping hallucinated meta-orchestrator lens id: $lens_id"
+        _rounds_meta_warn "Dropping unregistered meta-orchestrator lens id: $lens_id"
+      fi
+      continue
+    fi
+
+    if [[ "$trimmed" =~ ^-?[[:space:]]*GENERIC:[[:space:]]*(.*)$ ]]; then
+      generic_attrs="${BASH_REMATCH[1]}"
+      stripped="$(_rounds_meta_strip_rationale "$generic_attrs")"
+      attr_body="$(_rounds_meta_trim "$stripped")"
+
+      role="$(_rounds_meta_extract_kv role "$attr_body" || true)"
+      focus="$(_rounds_meta_extract_kv focus "$attr_body" || true)"
+      anchor="$(_rounds_meta_extract_kv anchor "$attr_body" || true)"
+      exclude="$(_rounds_meta_extract_kv exclude "$attr_body" || true)"
+      missed_angle="$(_rounds_meta_extract_kv missed_angle "$attr_body" || true)"
+      if [[ -z "$focus" && -n "$missed_angle" ]]; then
+        focus="$missed_angle"
+      fi
+
+      dedup_key="${role}|${focus}|${anchor}|${exclude}"
+      if [[ -z "${seen_generic_keys[$dedup_key]:-}" ]]; then
+        seen_generic_keys["$dedup_key"]=1
+        generic_dispatch_line="GENERIC:"
+        [[ -n "$role" ]] && generic_dispatch_line+=" role=$role"
+        if [[ -n "$focus" ]]; then
+          if [[ "$focus" == *[[:space:]]* ]]; then
+            generic_dispatch_line+=" focus=\"$focus\""
+          else
+            generic_dispatch_line+=" focus=$focus"
+          fi
+        fi
+        [[ -n "$anchor" ]] && generic_dispatch_line+=" anchor=$anchor"
+        [[ -n "$exclude" ]] && generic_dispatch_line+=" exclude=$exclude"
+        generic_dispatch_lines+=("$generic_dispatch_line")
       fi
       continue
     fi
@@ -840,10 +1298,14 @@ _rounds_meta_parse_output() {
     if [[ "$trimmed" =~ ^-?[[:space:]]*CUSTOM:[[:space:]]*(.+)$ ]]; then
       custom_payload="$trimmed"
       in_custom=1
+      in_fence=0
     fi
   done < "$output_file"
 
   if (( in_custom )); then
+    if (( in_fence )); then
+      _rounds_meta_warn "Meta-orchestrator output reached EOF with an unclosed CUSTOM fence; flushing as-is."
+    fi
     custom_category="$(_rounds_meta_custom_category_from_payload "$custom_payload")"
     if [[ -n "$custom_category" && -z "${seen_custom[$custom_category]:-}" ]]; then
       seen_custom["$custom_category"]=1
@@ -851,15 +1313,55 @@ _rounds_meta_parse_output() {
     fi
   fi
 
+  # Bug 3 — enforce REPOLENS_META_ORCH_DISPATCH_CAP across LENS+GENERIC+CUSTOM.
+  # The cap is advisory in the prompt; if the agent emits more, drop the
+  # surplus from the tail (preserving the agent's prioritized ordering:
+  # LENS first, then GENERIC, then CUSTOM).
+  local dispatch_cap total_dispatches lens_count generic_count custom_count
+  local lens_kept generic_kept custom_kept
+  dispatch_cap="$(_rounds_meta_dispatch_cap)"
+  lens_count="${#lens_dispatch_lines[@]}"
+  generic_count="${#generic_dispatch_lines[@]}"
+  custom_count="${#custom_payloads[@]}"
+  total_dispatches=$(( lens_count + generic_count + custom_count ))
+  lens_kept="$lens_count"
+  generic_kept="$generic_count"
+  custom_kept="$custom_count"
+  if (( total_dispatches > dispatch_cap )); then
+    local remaining="$dispatch_cap"
+    if (( lens_kept > remaining )); then
+      lens_kept="$remaining"
+    fi
+    remaining=$(( remaining - lens_kept ))
+    if (( generic_kept > remaining )); then
+      generic_kept="$remaining"
+    fi
+    remaining=$(( remaining - generic_kept ))
+    if (( custom_kept > remaining )); then
+      custom_kept="$remaining"
+    fi
+    _rounds_meta_warn "Meta-orchestrator dispatch cap enforced: kept $dispatch_cap of $total_dispatches dispatches (cap=$dispatch_cap)."
+  fi
+
   tmp_dispatch="${dispatch_file}.tmp.$$"
   {
     printf '# Meta-Orchestrator Dispatch\n\n'
-    for lens_id in "${lens_ids[@]}"; do
-      printf 'LENS: %s\n' "$lens_id"
-    done
-    for custom_payload in "${custom_payloads[@]}"; do
-      printf '%s\n' "$custom_payload"
-    done
+    local _cap_idx=0
+    if (( lens_kept > 0 )); then
+      for ((_cap_idx = 0; _cap_idx < lens_kept; _cap_idx++)); do
+        printf '%s\n' "${lens_dispatch_lines[$_cap_idx]}"
+      done
+    fi
+    if (( generic_kept > 0 )); then
+      for ((_cap_idx = 0; _cap_idx < generic_kept; _cap_idx++)); do
+        printf '%s\n' "${generic_dispatch_lines[$_cap_idx]}"
+      done
+    fi
+    if (( custom_kept > 0 )); then
+      for ((_cap_idx = 0; _cap_idx < custom_kept; _cap_idx++)); do
+        printf '%s\n' "${custom_payloads[$_cap_idx]}"
+      done
+    fi
   } > "$tmp_dispatch" || {
     rm -f "$tmp_dispatch"
     return 1
@@ -900,6 +1402,55 @@ _round_digest_warn() {
   fi
 }
 
+_round_digest_info() {
+  if declare -F log_info >/dev/null 2>&1 && [[ -n "${_REPOLENS_LOG_FILE:-}" ]]; then
+    log_info "$*"
+  fi
+}
+
+_round_digest_filtered_state_file() {
+  [[ -n "${SUMMARY_FILE:-}" ]] || return 1
+  printf '%s/.local-min-severity-filtered' "$(dirname "$SUMMARY_FILE")"
+}
+
+_round_digest_record_filtered_locked() {
+  local state_file="$1" key="$2"
+
+  if [[ -f "$state_file" ]] && grep -Fxq -- "$key" "$state_file" 2>/dev/null; then
+    return 0
+  fi
+
+  increment_findings_filtered "$SUMMARY_FILE" 1 || return 1
+  printf '%s\n' "$key" >> "$state_file"
+}
+
+_round_digest_record_filtered() {
+  local file="$1" decision_type="$2" title="$3" severity="$4" state_file key
+
+  [[ -n "${SUMMARY_FILE:-}" && -f "${SUMMARY_FILE:-}" ]] || return 0
+  declare -F increment_findings_filtered >/dev/null 2>&1 || return 0
+
+  state_file="$(_round_digest_filtered_state_file)" || return 0
+  key="${decision_type}"$'\t'"${file}"$'\t'"${title}"$'\t'"${severity}"
+
+  if declare -F with_file_lock >/dev/null 2>&1; then
+    with_file_lock "${state_file}.lock" "${REPOLENS_SUMMARY_LOCK_TIMEOUT:-30}" \
+      _round_digest_record_filtered_locked "$state_file" "$key"
+  else
+    _round_digest_record_filtered_locked "$state_file" "$key"
+  fi
+}
+
+_round_digest_content_mode_enabled() {
+  local mode="${REPOLENS_MODE:-${MODE:-}}"
+  [[ "$mode" == "content" ]]
+}
+
+_round_digest_title_is_content_priority_proposal() {
+  local title="${1:-}"
+  [[ "$title" =~ ^\[[Pp][0-3]\][[:space:]]* ]]
+}
+
 _round_digest_repo_root() {
   local rounds_lib_dir
   rounds_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -926,7 +1477,7 @@ _round_digest_audit_domains() {
       sub(/".*$/, "", mode)
     }
     /^[[:space:]]*}[,]?[[:space:]]*$/ {
-      if (id != "" && mode != "discover" && mode != "deploy" && mode != "opensource" && mode != "content") {
+      if (id != "" && mode != "discover" && mode != "deploy" && mode != "opensource" && mode != "content" && mode != "greenfield" && mode != "polish") {
         print id
       }
       id = ""
@@ -989,6 +1540,111 @@ _round_digest_frontmatter_block() {
     }
     END {
       if (!found_end) {
+        exit 1
+      }
+    }
+  ' "$file"
+}
+
+_round_digest_finding_segments() {
+  local file="$1" content_mode=0
+
+  if _round_digest_content_mode_enabled; then
+    content_mode=1
+  fi
+
+  awk -v content_mode="$content_mode" '
+    BEGIN {
+      segment_sep = sprintf("%c", 30)
+      field_sep = sprintf("%c", 31)
+      state = "start"
+      frontmatter = ""
+      body = ""
+      emitted = 0
+    }
+    function emit_segment() {
+      if (frontmatter == "") {
+        return
+      }
+      printf "%s%s%s%s", frontmatter, field_sep, body, segment_sep
+      frontmatter = ""
+      body = ""
+      emitted = 1
+    }
+    function valid_finding_frontmatter(candidate,    lines, count, i) {
+      has_severity = 0
+      has_domain = 0
+      has_lens = 0
+      has_content_priority_title = 0
+      has_content_audit_title = 0
+      count = split(candidate, lines, "\n")
+      for (i = 1; i <= count; i++) {
+        if (lines[i] ~ /^[[:space:]]*severity[[:space:]]*:/) {
+          has_severity = 1
+        } else if (lines[i] ~ /^[[:space:]]*domain[[:space:]]*:/) {
+          has_domain = 1
+        } else if (lines[i] ~ /^[[:space:]]*(lens_id|lens)[[:space:]]*:/) {
+          has_lens = 1
+        } else if (content_mode == 1 && lines[i] ~ /^[[:space:]]*title[[:space:]]*:[[:space:]]*["'\'']?\[[Pp][0-3]\][[:space:]]*/) {
+          has_content_priority_title = 1
+        } else if (content_mode == 1 && lines[i] ~ /^[[:space:]]*title[[:space:]]*:[[:space:]]*["'\'']?\[([Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]|[Hh][Ii][Gg][Hh]|[Mm][Ee][Dd][Ii][Uu][Mm]|[Ll][Oo][Ww])\][[:space:]]*/) {
+          has_content_audit_title = 1
+        }
+      }
+      return (has_severity || has_content_priority_title || has_content_audit_title) && has_domain && has_lens
+    }
+    NR == 1 && $0 != "---" {
+      exit 1
+    }
+    state == "start" {
+      if ($0 == "---") {
+        state = "frontmatter"
+        next
+      }
+    }
+    state == "frontmatter" && $0 == "---" {
+      state = "body"
+      next
+    }
+    state == "frontmatter" {
+      frontmatter = frontmatter $0 "\n"
+      next
+    }
+    state == "body" && pending_frontmatter {
+      if ($0 == "---") {
+        if (valid_finding_frontmatter(candidate_frontmatter)) {
+          emit_segment()
+          frontmatter = candidate_frontmatter
+          body = ""
+          pending_frontmatter = 0
+        } else {
+          body = body "---\n" candidate_frontmatter
+          pending_frontmatter = 1
+        }
+        candidate_frontmatter = ""
+        next
+      }
+      candidate_frontmatter = candidate_frontmatter $0 "\n"
+      next
+    }
+    state == "body" && $0 == "---" {
+      pending_frontmatter = 1
+      candidate_frontmatter = ""
+      next
+    }
+    state == "body" {
+      body = body $0 "\n"
+      next
+    }
+    END {
+      if (state == "frontmatter") {
+        exit 1
+      }
+      if (pending_frontmatter) {
+        body = body "---\n" candidate_frontmatter
+      }
+      emit_segment()
+      if (!emitted) {
         exit 1
       }
     }
@@ -1099,12 +1755,102 @@ _round_digest_join_lines() {
   printf '%s\n' "${result:-none}"
 }
 
+_round_digest_section_text_from_stream() {
+  local heading="$1"
+
+  awk -v heading="$heading" '
+    BEGIN { target = "## " heading }
+    tolower($0) == target { collecting = 1; next }
+    collecting && /^##[[:space:]]+/ { exit 0 }
+    collecting { print }
+  '
+}
+
+_round_digest_inline_text() {
+  local limit="${1:-200}" text
+
+  text="$(tr '\r\n\t' '   ' \
+    | sed -E \
+        -e 's/<\/?spec>//g' \
+        -e 's/```+/`/g' \
+        -e 's/[[:space:]]+/ /g' \
+        -e 's/^[[:space:]]+//' \
+        -e 's/[[:space:]]+$//')"
+  text="${text:0:$limit}"
+  printf '%s\n' "$text"
+}
+
+_round_digest_display_path() {
+  local value="$*"
+
+  value="$(_round_digest_trim_yaml_value "$value")"
+  printf '%s\n' "$value" \
+    | sed -E \
+        -e 's/<\/?spec>//g' \
+        -e 's/`//g' \
+        -e 's/[[:space:]]+/ /g' \
+        -e 's/^[[:space:]]+//' \
+        -e 's/[[:space:]]+$//'
+}
+
+_round_digest_confidence_rank() {
+  local confidence
+
+  confidence="$(_round_digest_sanitize_identifier "$1")"
+  case "$confidence" in
+    high) printf '3\n' ;;
+    medium) printf '2\n' ;;
+    low) printf '1\n' ;;
+    *) printf '0\n' ;;
+  esac
+}
+
+_round_digest_finding_id() {
+  local lens="$1" domain="$2" round_number="$3" file="$4" finding_identity="$5"
+  local suspect_count line
+  local -a sorted_suspects=() input_suspects=()
+
+  mapfile -t input_suspects
+  for line in "${input_suspects[@]}"; do
+    [[ -n "$line" ]] || continue
+    sorted_suspects+=("$line")
+  done
+  suspect_count="${#sorted_suspects[@]}"
+  if (( suspect_count == 0 )); then
+    sorted_suspects=("$file")
+  else
+    mapfile -t sorted_suspects < <(printf '%s\n' "${sorted_suspects[@]}" | LC_ALL=C sort)
+  fi
+
+  if command -v sha1sum >/dev/null 2>&1; then
+    { printf '%s\0%s\0%s\0%s\0' "$lens" "$domain" "$round_number" "$finding_identity"; printf '%s\n' "${sorted_suspects[@]}"; } \
+      | sha1sum | awk '{print substr($1, 1, 16)}'
+  elif command -v shasum >/dev/null 2>&1; then
+    { printf '%s\0%s\0%s\0%s\0' "$lens" "$domain" "$round_number" "$finding_identity"; printf '%s\n' "${sorted_suspects[@]}"; } \
+      | shasum -a 1 | awk '{print substr($1, 1, 16)}'
+  else
+    { printf '%s|%s|%s|%s|' "$lens" "$domain" "$round_number" "$finding_identity"; printf '%s\n' "${sorted_suspects[@]}"; } \
+      | cksum | awk '{printf "%016x\n", $1}'
+  fi
+}
+
+_round_digest_rank_suspect_files() {
+  local limit="$1" suspect_file count
+
+  for suspect_file in "${!_round_digest_suspect_file_counts[@]}"; do
+    count="${_round_digest_suspect_file_counts[$suspect_file]}"
+    printf '%s\t%s\n' "$count" "$suspect_file"
+  done | LC_ALL=C sort -t "$(printf '\t')" -k1,1nr -k2,2 | head -n "$limit"
+}
+
 build_round_digest() {
   local round_dir="${1:-}" lens_outputs_dir digest_path repo_root domains_file
-  local file frontmatter severity domain lens category normalized category_seen
+  local file segment segment_sep field_sep segments_output frontmatter body raw_severity severity domain lens category normalized category_seen primary_category
   local suspect_file audit_domain audit_total coverage_count coverage_domains registered_lens display_lens
+  local round_number confidence confidence_rank severity_rank_value score finding_id hypothesis files_display title_text finding_identity
+  local omitted_total content_mode content_priority min_severity log_title
   local tmp_digest digest_lines
-  local -a md_files=() sorted_lenses=() touched_domains=()
+  local -a md_files=() sorted_lenses=() touched_domains=() finding_records=() finding_segments=() suspect_files=() display_files=()
   local -A _round_digest_lens_counts=()
   local -A _round_digest_lens_category_counts=()
   local -A _round_digest_category_counts=()
@@ -1112,6 +1858,7 @@ build_round_digest() {
   local -A _round_digest_audit_domain_set=()
   local -A _round_digest_registered_lens_set=()
   local -A _round_digest_suspect_file_counts=()
+  local -A _round_digest_omitted_lens_counts=()
 
   if [[ -z "$round_dir" ]]; then
     _round_digest_warn "build_round_digest requires a round directory"
@@ -1140,54 +1887,145 @@ build_round_digest() {
   if (( audit_total == 0 )); then
     audit_total=27
   fi
+  content_mode=0
+  if _round_digest_content_mode_enabled; then
+    content_mode=1
+  fi
+  min_severity=""
+  if [[ -n "${REPOLENS_MIN_SEVERITY:-}" ]]; then
+    min_severity="$(severity_normalize "$REPOLENS_MIN_SEVERITY")"
+  fi
 
   if [[ -d "$lens_outputs_dir" ]]; then
     mapfile -t md_files < <(find "$lens_outputs_dir" -type f -name '*.md' -print | LC_ALL=C sort)
   fi
 
   for file in "${md_files[@]}"; do
-    if ! frontmatter="$(_round_digest_frontmatter_block "$file")"; then
+    segment_sep=$'\036'
+    field_sep=$'\037'
+    finding_segments=()
+    if ! segments_output="$(_round_digest_finding_segments "$file")"; then
       _round_digest_warn "Skipping malformed lens output $(basename "$file"): missing or unterminated YAML frontmatter"
       continue
     fi
 
-    severity="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "severity")"
-    domain="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "domain")"
-    lens="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "lens")"
+    while [[ "$segments_output" == *"$segment_sep"* ]]; do
+      finding_segments+=("${segments_output%%"$segment_sep"*}")
+      segments_output="${segments_output#*"$segment_sep"}"
+    done
 
-    if [[ -z "$severity" || -z "$domain" || -z "$lens" ]]; then
-      _round_digest_warn "Skipping malformed lens output $(basename "$file"): required frontmatter keys severity, domain, and lens are required"
-      continue
-    fi
-    if [[ -z "${_round_digest_registered_lens_set[$lens]:-}" ]]; then
-      _round_digest_warn "Skipping untrusted lens output $(basename "$file"): lens id is not registered"
-      continue
-    fi
+    for segment in "${finding_segments[@]}"; do
+      [[ "$segment" == *"$field_sep"* ]] || continue
+      frontmatter="${segment%%"$field_sep"*}"
+      body="${segment#*"$field_sep"}"
 
-    _round_digest_lens_counts["$lens"]=$(( ${_round_digest_lens_counts["$lens"]:-0} + 1 ))
-    if [[ -n "${_round_digest_audit_domain_set[$domain]:-}" ]]; then
-      _round_digest_touched_domains["$domain"]=1
-    fi
+      title_text="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "title" | _round_digest_inline_text 160)"
+      raw_severity="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "severity")"
+      severity="$(severity_normalize "$raw_severity")"
+      domain="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "domain")"
+      lens="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "lens_id")"
+      if [[ -z "$lens" ]]; then
+        lens="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "lens")"
+      fi
+      log_title="${title_text:-<untitled>}"
 
-    category_seen=0
-    while IFS= read -r category; do
-      normalized="$(_round_digest_normalize_label "$category")"
-      [[ -n "$normalized" ]] || continue
-      category_seen=1
-      _round_digest_lens_category_counts["$lens|$normalized"]=$(( ${_round_digest_lens_category_counts["$lens|$normalized"]:-0} + 1 ))
-      _round_digest_category_counts["$normalized"]=$(( ${_round_digest_category_counts["$normalized"]:-0} + 1 ))
-    done < <(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_values "root_cause_category")
+      content_priority=0
+      if (( content_mode )) && _round_digest_title_is_content_priority_proposal "$title_text"; then
+        content_priority=1
+      fi
 
-    if (( category_seen == 0 )); then
-      _round_digest_lens_category_counts["$lens|uncategorized"]=$(( ${_round_digest_lens_category_counts["$lens|uncategorized"]:-0} + 1 ))
-      _round_digest_category_counts["uncategorized"]=$(( ${_round_digest_category_counts["uncategorized"]:-0} + 1 ))
-    fi
+      if [[ -z "$domain" || -z "$lens" ]]; then
+        _round_digest_warn "Skipping malformed lens output $(basename "$file"): required frontmatter keys severity, domain, and lens_id or lens are required"
+        continue
+      fi
+      if [[ -z "${_round_digest_registered_lens_set[$lens]:-}" ]]; then
+        _round_digest_warn "Skipping untrusted lens output $(basename "$file"): lens id is not registered"
+        continue
+      fi
 
-    while IFS= read -r suspect_file; do
-      suspect_file="$(_round_digest_trim_yaml_value "$suspect_file")"
-      [[ -n "$suspect_file" ]] || continue
-      _round_digest_suspect_file_counts["$suspect_file"]=$(( ${_round_digest_suspect_file_counts["$suspect_file"]:-0} + 1 ))
-    done < <(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_values "suspect_files")
+      if (( content_priority )); then
+        severity="priority"
+      else
+        if [[ -z "$severity" ]]; then
+          if [[ -n "$min_severity" ]]; then
+            _round_digest_warn "[$domain/$lens] Finding \"$log_title\" has invalid severity: \"$raw_severity\" (expected critical, high, medium, or low) - skipping"
+            _round_digest_record_filtered "$file" "invalid" "$log_title" "$raw_severity" || return 1
+          elif (( content_mode )); then
+            if [[ -n "$raw_severity" ]]; then
+              _round_digest_warn "round digest: dropping content audit finding with invalid severity $raw_severity: $log_title"
+            else
+              _round_digest_warn "round digest: dropping content audit finding with missing severity: $log_title"
+            fi
+          else
+            _round_digest_warn "Skipping malformed lens output $(basename "$file"): required frontmatter keys severity, domain, and lens_id or lens are required"
+          fi
+          continue
+        fi
+
+        if [[ -n "$min_severity" ]] && ! severity_meets_min "$severity" "$min_severity"; then
+          _round_digest_info "[$domain/$lens] Dropped finding \"$log_title\" (severity=$severity < min=$min_severity)"
+          _round_digest_record_filtered "$file" "below" "$log_title" "$severity" || return 1
+          continue
+        fi
+      fi
+
+      _round_digest_lens_counts["$lens"]=$(( ${_round_digest_lens_counts["$lens"]:-0} + 1 ))
+      if [[ -n "${_round_digest_audit_domain_set[$domain]:-}" ]]; then
+        _round_digest_touched_domains["$domain"]=1
+      fi
+
+      category_seen=0
+      primary_category=""
+      while IFS= read -r category; do
+        normalized="$(_round_digest_normalize_label "$category")"
+        [[ -n "$normalized" ]] || continue
+        category_seen=1
+        if [[ -z "$primary_category" ]]; then
+          primary_category="$normalized"
+        fi
+        _round_digest_lens_category_counts["$lens|$normalized"]=$(( ${_round_digest_lens_category_counts["$lens|$normalized"]:-0} + 1 ))
+        _round_digest_category_counts["$normalized"]=$(( ${_round_digest_category_counts["$normalized"]:-0} + 1 ))
+      done < <(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_values "root_cause_category")
+
+      if (( category_seen == 0 )); then
+        primary_category="uncategorized"
+        _round_digest_lens_category_counts["$lens|uncategorized"]=$(( ${_round_digest_lens_category_counts["$lens|uncategorized"]:-0} + 1 ))
+        _round_digest_category_counts["uncategorized"]=$(( ${_round_digest_category_counts["uncategorized"]:-0} + 1 ))
+      fi
+
+      suspect_files=()
+      display_files=()
+      while IFS= read -r suspect_file; do
+        suspect_file="$(_round_digest_display_path "$suspect_file")"
+        [[ -n "$suspect_file" ]] || continue
+        _round_digest_suspect_file_counts["$suspect_file"]=$(( ${_round_digest_suspect_file_counts["$suspect_file"]:-0} + 1 ))
+        suspect_files+=("$suspect_file")
+        if (( ${#display_files[@]} < 3 )); then
+          display_files+=("$suspect_file")
+        fi
+      done < <(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_values "suspect_files")
+
+      confidence="$(_round_digest_sanitize_identifier "$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "confidence")")"
+      [[ -n "$confidence" ]] || confidence="unknown"
+      confidence_rank="$(_round_digest_confidence_rank "$confidence")"
+      severity_rank_value="$(severity_rank "$severity" 2>/dev/null || printf '0')"
+      score=$(( severity_rank_value * 100 + confidence_rank * 10 ))
+      round_number="$(printf '%s\n' "$frontmatter" | _round_digest_frontmatter_scalar "round")"
+      if [[ ! "$round_number" =~ ^[0-9]+$ ]]; then
+        round_number="$(basename "$round_dir" | sed -nE 's/^round-([0-9]+)$/\1/p')"
+      fi
+      [[ -n "$round_number" ]] || round_number="0"
+      hypothesis="$(printf '%s\n' "$body" | _round_digest_section_text_from_stream "hypothesis" | _round_digest_inline_text 200)"
+      [[ -n "$hypothesis" ]] || hypothesis="(missing)"
+      finding_identity="$title_text"$'\n'"$hypothesis"
+      finding_id="$(_round_digest_finding_id "$lens" "$domain" "$round_number" "$file" "$finding_identity" < <(printf '%s\n' "${suspect_files[@]}"))"
+      if (( ${#display_files[@]} > 0 )); then
+        files_display="$(printf '%s\n' "${display_files[@]}" | paste -sd ',' - | sed 's/,/, /g')"
+      else
+        files_display="none"
+      fi
+      finding_records+=("$score"$'\t'"$lens"$'\t'"$finding_id"$'\t'"$severity"$'\t'"$confidence"$'\t'"$domain"$'\t'"$primary_category"$'\t'"$files_display"$'\t'"$hypothesis")
+    done
   done
 
   tmp_digest="${digest_path}.tmp.$$"
@@ -1199,7 +2037,11 @@ build_round_digest() {
     else
       mapfile -t sorted_lenses < <(printf '%s\n' "${!_round_digest_lens_counts[@]}" | LC_ALL=C sort)
       printf '## Lens Findings\n'
+      local lens_summary_count=0 max_lens_summaries=100
       for lens in "${sorted_lenses[@]}"; do
+        if (( lens_summary_count >= max_lens_summaries )); then
+          continue
+        fi
         display_lens="$(_round_digest_sanitize_identifier "$lens")"
         [[ -n "$display_lens" ]] || continue
         printf -- '- %s: %s finding' "$display_lens" "${_round_digest_lens_counts[$lens]}"
@@ -1207,7 +2049,11 @@ build_round_digest() {
           printf 's'
         fi
         printf '; top categories: %s\n' "$(_round_digest_join_lines < <(_round_digest_rank_lens_categories "$lens" 3))"
+        lens_summary_count=$((lens_summary_count + 1))
       done
+      if (( ${#sorted_lenses[@]} > max_lens_summaries )); then
+        printf -- '- + %s more lenses omitted from digest summary\n' "$(( ${#sorted_lenses[@]} - max_lens_summaries ))"
+      fi
       printf '\n'
 
       printf '## Top Themes\n'
@@ -1221,6 +2067,86 @@ build_round_digest() {
           printf '%s. %s (%s)\n' "$rank" "$theme" "$count"
           rank=$((rank + 1))
         done < <(_round_digest_rank_themes 3)
+      fi
+      printf '\n'
+
+      printf '## Hot Suspect Files\n'
+      if (( ${#_round_digest_suspect_file_counts[@]} == 0 )); then
+        printf 'none\n'
+      else
+        local suspect_rank=1 ranked_count ranked_file display_file
+        while IFS=$'\t' read -r ranked_count ranked_file; do
+          display_file="$(_round_digest_display_path "$ranked_file")"
+          [[ -n "$display_file" ]] || continue
+          printf '%s. `%s` (%s mention' "$suspect_rank" "$display_file" "$ranked_count"
+          if (( ranked_count != 1 )); then
+            printf 's'
+          fi
+          printf ')\n'
+          suspect_rank=$((suspect_rank + 1))
+        done < <(_round_digest_rank_suspect_files 10)
+      fi
+      printf '\n'
+
+      printf '## Findings\n'
+      local emitted=0 max_findings=30 _record_score record_lens record_id record_severity record_confidence
+      local record_domain record_category record_files record_hypothesis
+      if (( ${#finding_records[@]} == 0 )); then
+        printf 'none\n'
+      else
+        while IFS=$'\t' read -r _record_score record_lens record_id record_severity record_confidence record_domain record_category record_files record_hypothesis; do
+          if (( emitted >= max_findings )); then
+            _round_digest_omitted_lens_counts["$record_lens"]=$(( ${_round_digest_omitted_lens_counts["$record_lens"]:-0} + 1 ))
+            continue
+          fi
+          printf -- '- `f:%s` %s/%s `%s/%s` category=%s files=' \
+            "$record_id" "$record_severity" "$record_confidence" \
+            "$(_round_digest_sanitize_identifier "$record_domain")" \
+            "$(_round_digest_sanitize_identifier "$record_lens")" \
+            "$(_round_digest_sanitize_identifier "$record_category")"
+          if [[ "$record_files" == "none" ]]; then
+            printf 'none'
+          else
+            local quoted_files=""
+            while IFS= read -r display_file; do
+              display_file="$(_round_digest_display_path "$display_file")"
+              [[ -n "$display_file" ]] || continue
+              if [[ -n "$quoted_files" ]]; then
+                quoted_files+=", "
+              fi
+              quoted_files+="\`$display_file\`"
+            done < <(printf '%s\n' "$record_files" | tr ',' '\n')
+            printf '%s' "${quoted_files:-none}"
+          fi
+          printf ' hypothesis="%s"\n' "$record_hypothesis"
+          emitted=$((emitted + 1))
+        done < <(printf '%s\n' "${finding_records[@]}" | LC_ALL=C sort -t "$(printf '\t')" -k1,1nr -k2,2 -k3,3)
+
+        omitted_total=0
+        for lens in "${!_round_digest_omitted_lens_counts[@]}"; do
+          omitted_total=$(( omitted_total + _round_digest_omitted_lens_counts["$lens"] ))
+        done
+        if (( omitted_total > 0 )); then
+          local omitted_tail_count=0 max_omitted_lens_tails=20 omitted_rendered=0
+          mapfile -t sorted_lenses < <(printf '%s\n' "${!_round_digest_omitted_lens_counts[@]}" | LC_ALL=C sort)
+          for lens in "${sorted_lenses[@]}"; do
+            if (( omitted_tail_count >= max_omitted_lens_tails )); then
+              continue
+            fi
+            printf -- '- + %s more finding' "${_round_digest_omitted_lens_counts[$lens]}"
+            if (( ${_round_digest_omitted_lens_counts[$lens]} != 1 )); then
+              printf 's'
+            fi
+            printf ' in %s\n' "$(_round_digest_sanitize_identifier "$lens")"
+            omitted_rendered=$(( omitted_rendered + _round_digest_omitted_lens_counts["$lens"] ))
+            omitted_tail_count=$((omitted_tail_count + 1))
+          done
+          if (( omitted_rendered < omitted_total )); then
+            printf -- '- + %s more findings across %s additional lenses\n' \
+              "$(( omitted_total - omitted_rendered ))" \
+              "$(( ${#sorted_lenses[@]} - omitted_tail_count ))"
+          fi
+        fi
       fi
       printf '\n'
     fi
@@ -1252,15 +2178,188 @@ build_round_digest() {
 }
 
 _rounds_record_skipped_lenses() {
-  local skip_entry skip_domain skip_lens
+  local skip_entry skip_domain skip_lens entry_part
 
   for skip_entry in "$@"; do
-    skip_domain="${skip_entry%%/*}"
-    skip_lens="${skip_entry#*/}"
-    if ! is_lens_completed "$skip_entry"; then
+    # Strip role/focus/anchor/exclude tuple suffix, if present.
+    entry_part="${skip_entry%%|*}"
+    skip_domain="${entry_part%%/*}"
+    skip_lens="${entry_part#*/}"
+    if ! is_lens_completed "$entry_part"; then
       record_lens "$SUMMARY_FILE" "$skip_domain" "$skip_lens" 0 "skipped" 0 0
     fi
   done
+}
+
+_rounds_agent_abort_reason() {
+  if [[ -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+    local systemic_reason
+    systemic_reason="$(head -n 1 "$LOG_BASE/.systemic-failure-abort" 2>/dev/null || true)"
+    case "$systemic_reason" in
+      auth-expired|model-unavailable|budget-exhausted|agent-refused|max-tokens-truncation|agent-error)
+        printf '%s\n' "$systemic_reason"
+        ;;
+      *)
+        printf '%s\n' "agent-systemic-failure"
+        ;;
+    esac
+    return 0
+  fi
+
+  if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    printf '%s\n' "rate-limited"
+    return 0
+  fi
+
+  if [[ -f "$LOG_BASE/.agent-no-progress-abort" ]]; then
+    local no_progress_lenses=0
+    if [[ -f "${SUMMARY_FILE:-}" ]]; then
+      no_progress_lenses="$(jq '[.lenses[]? | select(.status == "agent-no-progress")] | length' "$SUMMARY_FILE" 2>/dev/null || printf 0)"
+    fi
+    if [[ "$no_progress_lenses" =~ ^[0-9]+$ && "$no_progress_lenses" -ge 5 ]]; then
+      printf '%s\n' "agent-degraded"
+    else
+      printf '%s\n' "agent-no-progress"
+    fi
+    return 0
+  fi
+
+  return 1
+}
+
+_rounds_remote_check_master() {
+  [[ -n "${REMOTE_TARGET:-}" ]] || return 0
+  declare -F remote_check_master >/dev/null 2>&1 || return 0
+  remote_check_master
+}
+
+_rounds_build_prior_digest_context() {
+  local run_id="$1" current_round="$2"
+  local prior_digest context_path context_dir previous_round digest_path
+
+  if (( current_round <= 1 )); then
+    return 2
+  fi
+
+  if (( current_round == 2 )); then
+    prior_digest="$(round_digest_path "$run_id" 1)" || return $?
+    [[ -f "$prior_digest" ]] || return 1
+    printf '%s' "$prior_digest"
+    return 0
+  fi
+
+  context_path="$(round_prior_digest_path "$run_id" "$current_round")" || return $?
+  context_dir="${context_path%/*}"
+  mkdir -p "$context_dir" || return 1
+
+  : > "$context_path" || return 1
+  for previous_round in $(seq 1 "$((current_round - 1))"); do
+    digest_path="$(round_digest_path "$run_id" "$previous_round")" || return $?
+    [[ -f "$digest_path" ]] || continue
+    {
+      printf '# Prior Round %s Digest\n\n' "$previous_round"
+      cat "$digest_path"
+      printf '\n\n'
+    } >> "$context_path" || return 1
+  done
+
+  [[ -s "$context_path" ]] || return 1
+  printf '%s' "$context_path"
+}
+
+# _rounds_wave_width
+#   Returns the wave-1 dispatch fanout cap. Defaults to 7. The cap is clamped
+#   to [1, 50] to defend against pathological inputs from env or future flags.
+_rounds_wave_width() {
+  local raw="${REPOLENS_WAVE_WIDTH:-7}"
+  if ! [[ "$raw" =~ ^[1-9][0-9]*$ ]]; then
+    raw=7
+  fi
+  if (( raw > 50 )); then
+    raw=50
+  fi
+  printf '%s\n' "$raw"
+}
+
+# _rounds_sanitize_seed <raw_seed>
+#   Sanitizes a single seed line for embedding in a dispatch attribute. Strips
+#   control characters, collapses whitespace, and escapes characters that
+#   could break the GENERIC: key=value tokenizer (pipe, backtick, quote).
+_rounds_sanitize_seed() {
+  local seed="${1:-}"
+  seed="${seed//$'\r'/}"
+  seed="${seed//$'\n'/ }"
+  seed="${seed//$'\t'/ }"
+  seed="${seed//|/ }"
+  seed="${seed//\`/ }"
+  seed="${seed//\"/ }"
+  seed="$(printf '%s' "$seed" | tr -s '[:space:]' ' ')"
+  seed="${seed#"${seed%%[![:space:]]*}"}"
+  seed="${seed%"${seed##*[![:space:]]}"}"
+  printf '%s' "$seed"
+}
+
+# _rounds_select_wave_1 <run_id>
+#   Bugreport+waves round 1 selector. Reads the auditable seeds file produced
+#   by run_triage and emits a synthetic dispatch.md under
+#   logs/<run>/rounds/round-0/. Each non-empty seed becomes one
+#   `GENERIC: role=broader focus="<seed>"` directive, clamped to
+#   REPOLENS_WAVE_WIDTH (default 7).
+#
+#   Returns 0 on success regardless of how many seeds were emitted. If the
+#   seeds file is missing, empty, or yields zero usable seeds, no dispatch
+#   file is created and the caller falls back to the full lens list.
+#
+#   This function does not invoke any agent. It is pure file IO over the
+#   triage output and is safe to call multiple times.
+_rounds_select_wave_1() {
+  local run_id="${1:-${RUN_ID:-}}"
+  local base="${LOG_BASE:-}"
+  [[ -n "$base" ]] || return 1
+
+  local seeds_file="$base/triage/investigation-seeds.txt"
+  if [[ ! -f "$seeds_file" ]]; then
+    return 1
+  fi
+
+  local wave_width
+  wave_width="$(_rounds_wave_width)"
+
+  local round0_dir="$base/rounds/round-0"
+  local dispatch_path="$round0_dir/dispatch.md"
+  local tmp_path="$dispatch_path.tmp.$$"
+
+  mkdir -p "$round0_dir" || return 1
+  : > "$tmp_path" || return 1
+  printf '# Wave-1 Dispatch (triage investigation seeds)\n\n' >> "$tmp_path"
+
+  local seed clean count=0
+  while IFS= read -r seed || [[ -n "$seed" ]]; do
+    [[ -n "$seed" ]] || continue
+    clean="$(_rounds_sanitize_seed "$seed")"
+    [[ -n "$clean" ]] || continue
+    count=$((count + 1))
+    if (( count > wave_width )); then
+      count=$wave_width
+      break
+    fi
+    printf 'GENERIC: role=broader focus="%s"\n' "$clean" >> "$tmp_path"
+  done < "$seeds_file"
+
+  if (( count == 0 )); then
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  if ! mv "$tmp_path" "$dispatch_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  if declare -F log_info >/dev/null 2>&1; then
+    log_info "[round 1] Wave-1 selection wrote $count GENERIC dispatch(es) to $dispatch_path"
+  fi
+  return 0
 }
 
 run_rounds() {
@@ -1269,9 +2368,9 @@ run_rounds() {
   local round lens_entry parallel_count local_count lens_total
   local original_completed_lenses_file had_completed_lenses_file
   local round_completed_lenses_file round_completed_lenses_dir round_rc
-  local current_round_dir previous_digest_path previous_hypotheses_path current_hypotheses_path
-  local dispatch_path dispatched_lenses_output dispatched_custom_output
-  local round_custom_lenses_dir dispatch_has_entries
+  local current_round_dir prior_digest_path previous_hypotheses_path current_hypotheses_path
+  local dispatch_path dispatched_lenses_output dispatched_custom_output dispatched_generic_output
+  local round_custom_lenses_dir dispatch_has_entries abort_reason
 
   if [[ ! "$rounds_total" =~ ^[1-9][0-9]*$ ]]; then
     log_warn "Invalid rounds_total: $rounds_total"
@@ -1296,20 +2395,47 @@ run_rounds() {
       return "$round_rc"
     fi
 
+    CURRENT_ROUND_INDEX=""
+    CURRENT_ROUND_TOTAL=""
     if (( rounds_total > 1 )); then
-      dispatch_path="$current_round_dir/dispatch.md"
-      if [[ -f "$dispatch_path" ]]; then
+      CURRENT_ROUND_INDEX="$round"
+      CURRENT_ROUND_TOTAL="$rounds_total"
+    fi
+
+    if (( rounds_total > 1 )); then
+      dispatch_path=""
+      if (( round == 1 )) \
+          && [[ "${MODE:-}" == "bugreport" ]] \
+          && [[ "${STRATEGY:-}" == "waves" ]]; then
+        if _rounds_select_wave_1 "${RUN_ID:-}"; then
+          dispatch_path="${LOG_BASE:-}/rounds/round-0/dispatch.md"
+        else
+          if declare -F log_info >/dev/null 2>&1; then
+            log_info "[round 1] No usable investigation seeds; falling back to full-fanout lens list"
+          fi
+        fi
+      fi
+      if (( round > 1 )); then
+        local previous_round_dir
+        previous_round_dir="$(round_dir "${RUN_ID:-}" "$((round - 1))")" || return $?
+        dispatch_path="$previous_round_dir/dispatch.md"
+      fi
+      if [[ -n "$dispatch_path" && -f "$dispatch_path" ]]; then
         dispatched_lenses_output="$(_rounds_meta_dispatch_lens_entries "$dispatch_path")"
-        round_custom_lenses_dir="$current_round_dir/custom-lenses"
+        round_custom_lenses_dir="${dispatch_path%/*}/custom-lenses"
         dispatched_custom_output="$(_rounds_meta_dispatch_custom_entries "$dispatch_path" "$round_custom_lenses_dir")"
+        dispatched_generic_output="$(_rounds_meta_dispatch_generic_entries "$dispatch_path")"
         if _rounds_meta_dispatch_has_entries "$dispatch_path"; then
           dispatch_has_entries=1
         fi
-        if [[ -n "$dispatched_lenses_output" || -n "$dispatched_custom_output" || "$dispatch_has_entries" -eq 1 ]]; then
+        if [[ -n "$dispatched_lenses_output" || -n "$dispatched_custom_output" || -n "$dispatched_generic_output" || "$dispatch_has_entries" -eq 1 ]]; then
           active_lens_list=()
           while IFS= read -r lens_entry; do
             [[ -n "$lens_entry" ]] && active_lens_list+=("$lens_entry")
           done <<< "$dispatched_lenses_output"
+          while IFS= read -r lens_entry; do
+            [[ -n "$lens_entry" ]] && active_lens_list+=("$lens_entry")
+          done <<< "$dispatched_generic_output"
           while IFS= read -r lens_entry; do
             [[ -n "$lens_entry" ]] && active_lens_list+=("$lens_entry")
           done <<< "$dispatched_custom_output"
@@ -1334,8 +2460,8 @@ run_rounds() {
       fi
     fi
 
-    if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
-      set_stop_reason "$SUMMARY_FILE" "rate-limited"
+    if abort_reason="$(_rounds_agent_abort_reason)"; then
+      set_stop_reason "$SUMMARY_FILE" "$abort_reason"
       return 1
     fi
 
@@ -1354,23 +2480,27 @@ run_rounds() {
       CURRENT_ROUND_INDEX="$round"
       CURRENT_ROUND_TOTAL="$rounds_total"
       if [[ -n "$round_custom_lenses_dir" && -d "$round_custom_lenses_dir" ]]; then
+        # shellcheck disable=SC2034 # Read by prompt rendering during the round.
         CURRENT_ROUND_CUSTOM_LENSES_DIR="$round_custom_lenses_dir"
       fi
 
       if (( round > 1 )); then
-        previous_digest_path="$(round_digest_path "${RUN_ID:-}" "$((round - 1))")" || return $?
         previous_hypotheses_path="$(round_hypotheses_path "${RUN_ID:-}" "$((round - 1))")" || return $?
         current_hypotheses_path="$(round_hypotheses_path "${RUN_ID:-}" "$round")" || return $?
-        [[ -f "$previous_digest_path" ]] && PRIOR_ROUND_DIGEST_FILE="$previous_digest_path"
+        # shellcheck disable=SC2034 # Read by prompt rendering during the round.
+        prior_digest_path="$(_rounds_build_prior_digest_context "${RUN_ID:-}" "$round")" && PRIOR_ROUND_DIGEST_FILE="$prior_digest_path"
         if [[ -f "$current_hypotheses_path" ]]; then
+          # shellcheck disable=SC2034 # Read by prompt rendering during the round.
           HYPOTHESES_TO_VERIFY_FILE="$current_hypotheses_path"
         elif [[ -f "$previous_hypotheses_path" ]]; then
+          # shellcheck disable=SC2034 # Read by prompt rendering during the round.
           HYPOTHESES_TO_VERIFY_FILE="$previous_hypotheses_path"
         fi
       fi
     fi
 
     if ${LOCAL_MODE:-false} && ! ${OUTPUT_DIR_SET:-false}; then
+      # shellcheck disable=SC2034 # Read by prompt rendering during the round.
       CURRENT_ROUND_OUTPUT_DIR="$(round_lens_outputs_dir "${RUN_ID:-}" "$round")" || return $?
     fi
 
@@ -1396,17 +2526,33 @@ run_rounds() {
 
       parallel_count=0
       for lens_entry in "${active_lens_list[@]}"; do
-        # Skip spawning new lenses if a sibling tripped the rate-limit detector.
+        # Skip spawning new lenses if a sibling tripped an agent abort guard.
         # In-flight children continue; the summary still records skipped lenses
         # so --resume picks them up.
-        if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
-          log_warn "Rate-limit abort detected. Skipping remaining lenses."
+        if abort_reason="$(_rounds_agent_abort_reason)"; then
+          log_warn "Agent abort detected ($abort_reason). Skipping remaining lenses."
           _rounds_record_skipped_lenses "${active_lens_list[@]:$parallel_count}"
-          set_stop_reason "$SUMMARY_FILE" "rate-limited"
+          set_stop_reason "$SUMMARY_FILE" "$abort_reason"
           break
         fi
+        if ! _rounds_remote_check_master; then
+          log_warn "Remote ControlMaster unavailable. Skipping remaining lenses."
+          _rounds_record_skipped_lenses "${active_lens_list[@]:$parallel_count}"
+          set_stop_reason "$SUMMARY_FILE" "remote-controlmaster-lost"
+          wait_all || true
+          _rounds_restore_completed_lenses_file "$had_completed_lenses_file" "$original_completed_lenses_file"
+          return 1
+        fi
         parallel_count=$((parallel_count + 1))
-        spawn_lens "$lens_entry" run_lens "$lens_entry"
+        if ! spawn_lens "$lens_entry" run_lens "$lens_entry"; then
+          if abort_reason="$(_rounds_agent_abort_reason)"; then
+            log_warn "Agent abort detected ($abort_reason). Skipping remaining lenses."
+            _rounds_record_skipped_lenses "${active_lens_list[@]:$((parallel_count - 1))}"
+            set_stop_reason "$SUMMARY_FILE" "$abort_reason"
+            break
+          fi
+          return 1
+        fi
       done
 
       if ! wait_all; then
@@ -1415,18 +2561,18 @@ run_rounds() {
 
       # Children may have tripped the abort after the spawn loop finished.
       # Make sure the stop_reason is recorded even then.
-      if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
-        set_stop_reason "$SUMMARY_FILE" "rate-limited"
+      if abort_reason="$(_rounds_agent_abort_reason)"; then
+        set_stop_reason "$SUMMARY_FILE" "$abort_reason"
       fi
     else
       log_info "Running in sequential mode"
       local_count=0
       for lens_entry in "${active_lens_list[@]}"; do
-        # Check for rate-limit abort from a previous lens in this run.
-        if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
-          log_warn "Rate-limit abort detected. Skipping remaining lenses."
+        # Check for an agent abort from a previous lens in this run.
+        if abort_reason="$(_rounds_agent_abort_reason)"; then
+          log_warn "Agent abort detected ($abort_reason). Skipping remaining lenses."
           _rounds_record_skipped_lenses "${active_lens_list[@]:$local_count}"
-          set_stop_reason "$SUMMARY_FILE" "rate-limited"
+          set_stop_reason "$SUMMARY_FILE" "$abort_reason"
           break
         fi
 
@@ -1438,14 +2584,22 @@ run_rounds() {
           break
         fi
 
+        if ! _rounds_remote_check_master; then
+          log_warn "Remote ControlMaster unavailable. Skipping remaining lenses."
+          _rounds_record_skipped_lenses "${active_lens_list[@]:$local_count}"
+          set_stop_reason "$SUMMARY_FILE" "remote-controlmaster-lost"
+          _rounds_restore_completed_lenses_file "$had_completed_lenses_file" "$original_completed_lenses_file"
+          return 1
+        fi
+
         local_count=$((local_count + 1))
         log_info "--- Lens $local_count/$lens_total ---"
         run_lens "$lens_entry"
       done
     fi
 
-    if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
-      set_stop_reason "$SUMMARY_FILE" "rate-limited"
+    if abort_reason="$(_rounds_agent_abort_reason)"; then
+      set_stop_reason "$SUMMARY_FILE" "$abort_reason"
       _rounds_restore_completed_lenses_file "$had_completed_lenses_file" "$original_completed_lenses_file"
       return 1
     fi
@@ -1465,7 +2619,16 @@ run_rounds() {
     fi
 
     if (( round < rounds_total )); then
-      run_meta_orchestrator "$round" "$((round + 1))" || return $?
+      META_ORCH_SATURATED=0
+      run_meta_orchestrator "$round" "$((round + 1))"
+      round_rc=$?
+      if (( round_rc != 0 )); then
+        return "$round_rc"
+      fi
+      if [[ "${META_ORCH_SATURATED:-0}" == "1" ]]; then
+        log_info "[round $round] Investigation saturated; skipping remaining rounds"
+        break
+      fi
     fi
   done
 }

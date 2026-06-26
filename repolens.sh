@@ -62,6 +62,8 @@ source "$SCRIPT_DIR/lib/triage.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/synthesize.sh"
 # shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/result_pointer.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/filing.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/hosted.sh"
@@ -69,6 +71,8 @@ source "$SCRIPT_DIR/lib/hosted.sh"
 source "$SCRIPT_DIR/lib/android.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/forge.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/human_review.sh"
 
 VERSION="0.2.0"
 
@@ -124,6 +128,7 @@ usage() {
 Usage: repolens.sh --project <path> --agent <agent> [OPTIONS]
        repolens.sh status [run-id] [OPTIONS]
        repolens.sh clean [OPTIONS]
+       repolens.sh supersede <run-id>
 
 RepoLens — Multi-lens code audit tool. Runs expert analysis agents against
 any git repository and creates remote issues for real findings.
@@ -135,6 +140,8 @@ Required:
 Commands:
   status [run-id]         Show a live run snapshot from logs/<run-id>/status.json
   clean [OPTIONS]         Remove old run directories under logs/ (see clean --help)
+  supersede <run-id>      Mark a run dir no-longer-authoritative (.superseded):
+                          hidden from status auto-select, eligible for clean
 
 Options:
   --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content | greenfield | polish
@@ -189,6 +196,9 @@ Options:
                            for --mode bugreport; off for every other mode.
                            Never auto-reopens — suggest-reopen files a small
                            repolens:reopen-candidate issue instead.
+  --human-review          Curated, noise-budgeted human-review digest at
+                          finalize time instead of dumping every finding.
+                          Env var fallback: REPOLENS_HUMAN_REVIEW=1.
   --local                 Write findings as local markdown files instead of creating remote issues
   --output <path>         Output directory for local markdown files (requires --local, default: logs/<run-id>/issues/)
   --forge <provider>      gh (GitHub) | tea (Gitea) | fj (Forgejo/Codeberg) — overrides auto-detection from origin
@@ -238,6 +248,7 @@ Examples:
   repolens.sh --project ~/myapp --agent claude --mode content --focus topic-extraction --source ~/docs/textbook.pdf
   repolens.sh --project ~/myapp --agent claude --mode bugreport --bug-report ~/reports/crash-on-login.txt
   repolens.sh --project ~/myapp --agent claude --mode audit --cross-link suggest-reopen
+  repolens.sh --project ~/myapp --agent claude --human-review
   repolens.sh --project ~/AutoDev --agent claude --logs ~/CybersecurityAssessment/logs/auto-develop/ --domain logs --parallel
   repolens.sh --project ~/myapp --agent claude --hosted --domain toolgate
   repolens.sh --project ~/myapp --agent claude --hosted --focus dast-web
@@ -371,6 +382,9 @@ Environment:
                            when the CLI flag is not used.
   REPOLENS_CROSS_LINK      Fallback for --cross-link. Accepts off|comment|
                            suggest-reopen. Used only when the CLI flag is unset.
+  REPOLENS_HUMAN_REVIEW    Fallback for --human-review. Set to "true"/"1" to
+                           enable the curated human-review digest when the CLI
+                           flag is not used.
   REPOLENS_STRATEGY        Fallback for --strategy when the CLI flag is unset.
                            Accepted values: fanout, waves. Only meaningful for
                            --mode bugreport.
@@ -505,6 +519,14 @@ if [[ "${1:-}" == "clean" ]]; then
   exit "$?"
 fi
 
+# `supersede` marks a run dir no-longer-authoritative by writing a .superseded
+# marker; like clean/status it needs no --project/--agent, so dispatch it here.
+if [[ "${1:-}" == "supersede" ]]; then
+  shift
+  supersede_command "$@"
+  exit "$?"
+fi
+
 # --- Argument parsing ---
 PROJECT_PATH=""
 AGENT=""
@@ -531,6 +553,8 @@ NO_TRIAGE=""
 NO_TRIAGE_SET=false
 CROSS_LINK_MODE=""
 CROSS_LINK_MODE_SET=false
+HUMAN_REVIEW=false
+HUMAN_REVIEW_SET=false
 STRATEGY=""
 STRATEGY_SET=false
 CHANGE_STATEMENT=""
@@ -655,6 +679,11 @@ while [[ $# -gt 0 ]]; do
       CROSS_LINK_MODE="$2"
       CROSS_LINK_MODE_SET=true
       shift 2
+      ;;
+    --human-review)
+      HUMAN_REVIEW=true
+      HUMAN_REVIEW_SET=true
+      shift
       ;;
     --strategy)
       [[ $# -ge 2 ]] || die "Option --strategy requires an argument (fanout|waves)."
@@ -1191,6 +1220,25 @@ elif [[ -n "${REPOLENS_SCOPE_BY_KEYWORDS:-}" ]]; then
   esac
 fi
 export SCOPE_BY_KEYWORDS
+
+# --- Resolve --human-review ---
+# Noise-budget / curated-digest mode. A full run can emit hundreds of findings;
+# this opt-in will eventually render a curated, noise-budgeted digest from the
+# finding registry at finalize time instead of dumping every finding. The
+# bucketing/renderer/accounting land in sibling issues — this is plumbing only,
+# no behavior change beyond resolving + exporting the boolean. CLI flag wins,
+# then the REPOLENS_HUMAN_REVIEW env var; default off. No mode-driven default
+# (no mode should auto-enable it).
+if $HUMAN_REVIEW_SET; then
+  : # explicit CLI flag wins
+elif [[ -n "${REPOLENS_HUMAN_REVIEW:-}" ]]; then
+  case "${REPOLENS_HUMAN_REVIEW,,}" in
+    1|true|yes|on) HUMAN_REVIEW=true ;;
+    0|false|no|off|"") HUMAN_REVIEW=false ;;
+    *) die "REPOLENS_HUMAN_REVIEW must be a boolean (true/false), got: $REPOLENS_HUMAN_REVIEW" ;;
+  esac
+fi
+export HUMAN_REVIEW
 
 CURRENT_ROUND_INDEX=""
 CURRENT_ROUND_TOTAL=""
@@ -2842,6 +2890,7 @@ if $DRY_RUN; then
   if [[ "$MODE" == "bugreport" ]]; then
     echo "Strategy:     $STRATEGY"
   fi
+  echo "Human review: $HUMAN_REVIEW"
   echo "Lenses:       $TOTAL_LENSES"
   if [[ -n "$REMOTE_TARGET" ]]; then
     if [[ -n "$REMOTE_KEY" ]]; then
@@ -3795,6 +3844,17 @@ case "$RUN_HEALTH" in
     fi
     ;;
 esac
+
+# Emit the canonical latest-result pointer at the top of the logs tree (#308).
+# Non-fatal: a pointer-write failure logs a warning and never changes exit code.
+write_latest_result_pointer \
+  "$SCRIPT_DIR/logs" \
+  "$RUN_ID" \
+  "$MODE" \
+  "$AGENT" \
+  "$SUMMARY_FILE" \
+  "${REPOLENS_FINAL_STATE:-finished}" \
+  "$LOG_BASE/final" || true
 
 log_info "=============================="
 log_info "RepoLens run $RUN_ID complete"

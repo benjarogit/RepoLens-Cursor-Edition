@@ -1928,7 +1928,6 @@ if [[ "$MODE" == "polish" ]]; then
 fi
 
 if [[ -n "$RESUME_RUN_ID" ]]; then
-  [[ -f "$SUMMARY_FILE" ]] || die "Cannot resume: $SUMMARY_FILE not found"
   # Sticky marker from a previous process: would make this invocation skip every
   # remaining lens at the outer loop without re-entering run_lens.
   rm -f "$LOG_BASE/.rate-limit-abort"

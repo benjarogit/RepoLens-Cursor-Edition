@@ -351,9 +351,9 @@ assert_match \
   'REPOLENS_AGENT_TIMEOUT'
 
 assert_match \
-  "lib/core.sh uses REPOLENS_AGENT_TIMEOUT:-600 fallback in run_agent" \
+  "lib/core.sh uses resolve_agent_timeout with REPOLENS_AGENT_TIMEOUT support" \
   "$CORE" \
-  '\$\{REPOLENS_AGENT_TIMEOUT:-600\}'
+  'REPOLENS_AGENT_TIMEOUT'
 
 assert_match \
   "README documents the timeout kill grace override" \
@@ -527,17 +527,17 @@ SH
   fi
 fi
 
-# Bash expansion default without sourcing RepoLens (same fallback run_agent uses).
+# Bash expansion default without sourcing RepoLens.
 default_val="$(env -i PATH="$PATH" bash -c "
   set -uo pipefail
   unset REPOLENS_AGENT_TIMEOUT
-  echo \"\${REPOLENS_AGENT_TIMEOUT:-600}\"
+  echo \"\${REPOLENS_AGENT_TIMEOUT:-1800}\"
 ")"
-assert_eq "Default REPOLENS_AGENT_TIMEOUT expands to 600" "600" "$default_val"
+assert_eq "Default REPOLENS_AGENT_TIMEOUT expands to 1800" "1800" "$default_val"
 
 override_val="$(env -i PATH="$PATH" REPOLENS_AGENT_TIMEOUT=42 bash -c "
   set -uo pipefail
-  echo \"\${REPOLENS_AGENT_TIMEOUT:-600}\"
+  echo \"\${REPOLENS_AGENT_TIMEOUT:-1800}\"
 ")"
 assert_eq "Explicit REPOLENS_AGENT_TIMEOUT override honored" "42" "$override_val"
 

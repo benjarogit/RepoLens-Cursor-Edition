@@ -49,6 +49,21 @@ If the repository does not call any LLM provider SDK (`anthropic`, `openai`, `@a
 - Agent code execution using `eval()`, `exec()`, or language-level dynamic dispatch on untrusted input
 - Missing signal handling: no `SIGKILL` after timeout grace period, leaving zombie agent processes
 
+**Memory Poisoning & Persistent Context (OWASP AI Agent)**
+- User or retrieved content written to agent memory, conversation summaries, or vector stores without sanitization — injection payloads survive across sessions
+- Shared memory or embedding indexes across users/tenants without isolation (one user's poisoned context affects another)
+- No TTL, size cap, or integrity check on long-term agent memory entries
+- Model-generated summaries trusted as system facts on re-injection without validation
+- RAG chunks or tool outputs persisted to memory without stripping role markers or instruction-like text
+
+**Excessive Autonomy & High-Impact Actions (OWASP AI Agent)**
+- Sensitive tools (`send_email`, `database_write`, `file_delete`, `execute_code`, payment, admin APIs) callable without user confirmation or policy middleware
+- MCP or function-calling tools with wildcard permissions (`allowed_commands: "*"`, unrestricted paths)
+- Goal or plan objects modifiable by untrusted intermediate agent output (goal hijacking)
+- Multi-agent pipelines where a compromised upstream agent escalates privileges downstream without trust boundaries
+- Missing kill switch or spend ceiling when agent loops or tool chains run autonomously
+- Approval thresholds, risk scores, or confidence gates influenced by attacker-controlled context
+
 **Process Lifecycle & Cleanup**
 - No kill/cleanup logic on timeout — zombie agent processes accumulate
 - Temporary files or directories created by agents not cleaned up after execution

@@ -614,11 +614,13 @@ cursor_rate_limit_hint_sleep_sec() {
   line="$(printf '%s\n' "$low" | grep -E 'try again in[[:space:]]+[0-9]+' | head -1 || true)"
   if [[ -n "$line" ]]; then
     if [[ "$line" =~ try[[:space:]]+again[[:space:]]+in[[:space:]]+([0-9]+)[[:space:]]*hours? ]]; then
-      echo $((${BASH_REMATCH[1]} * 3600))
+      local hours="${BASH_REMATCH[1]}"
+      echo $((hours * 3600))
       return 0
     fi
     if [[ "$line" =~ try[[:space:]]+again[[:space:]]+in[[:space:]]+([0-9]+)[[:space:]]*minutes? ]]; then
-      echo $((${BASH_REMATCH[1]} * 60))
+      local minutes="${BASH_REMATCH[1]}"
+      echo $((minutes * 60))
       return 0
     fi
     if [[ "$line" =~ try[[:space:]]+again[[:space:]]+in[[:space:]]+([0-9]+)[[:space:]]*seconds? ]]; then

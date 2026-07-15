@@ -59,7 +59,7 @@ with_fake_gh() {
   local rc=$?
   PATH="$_ORIG_PATH"
   rm -rf "$dir"
-  return $rc
+  return "$rc"
 }
 
 record_pass() {

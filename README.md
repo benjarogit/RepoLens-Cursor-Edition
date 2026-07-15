@@ -72,6 +72,8 @@ Need [Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL)? Install it, open c
 
 More: [docs site](https://benjarogit.github.io/RepoLens-Cursor-Edition/) · [upstream sync](UPSTREAM.md) · [changelog](CHANGELOG.md)
 
+Set `REPOLENS_TEST_DOCKER=1` to also run integration tests requiring Docker.
+
 ## License
 
 [Apache-2.0](LICENSE). Upstream © Bootstrap Academy / TheMorpheus407; Cursor Edition under the same terms where applicable.

@@ -19,6 +19,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# shellcheck disable=SC1091
 # shellcheck source=../lib/template.sh
 source "$SCRIPT_DIR/lib/template.sh"
 
@@ -232,6 +233,7 @@ log_warn() {
   :
 }
 
+# shellcheck disable=SC1091
 # shellcheck source=../lib/rounds.sh
 source "$SCRIPT_DIR/lib/rounds.sh"
 
@@ -251,13 +253,22 @@ run_meta_orchestrator() {
 
 RUN_ID="round-vars"
 LOG_BASE="$TMPDIR/logs/$RUN_ID"
+# Used by sourced rounds.sh helpers (not referenced in this file).
+# shellcheck disable=SC2034
 SUMMARY_FILE="$TMPDIR/summary.json"
+# shellcheck disable=SC2034
 PARALLEL=false
+# shellcheck disable=SC2034
 LOCAL_MODE=true
+# shellcheck disable=SC2034
 OUTPUT_DIR_SET=false
+# shellcheck disable=SC2034
 OUTPUT_DIR=""
+# shellcheck disable=SC2034
 MAX_ISSUES=""
+# shellcheck disable=SC2034
 GLOBAL_ISSUES_CREATED=0
+# shellcheck disable=SC2034
 TOTAL_LENSES=1
 LENSES=("security/injection")
 
@@ -299,6 +310,7 @@ run_meta_orchestrator() {
 
 RUN_ID="round-vars-next"
 LOG_BASE="$TMPDIR/logs/$RUN_ID"
+# shellcheck disable=SC2034
 SUMMARY_FILE="$TMPDIR/summary-next.json"
 init_run_layout "$RUN_ID" 2 1 "${LENSES[@]}"
 run_rounds 2 LENSES

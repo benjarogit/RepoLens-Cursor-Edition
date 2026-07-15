@@ -1,16 +1,18 @@
 .PHONY: check
 
-# Recursion guard: when make check is invoked from within a test that make check
-# itself runs, skip tests that call 'make check' to prevent infinite recursion.
-# The recipe exports REPOLENS_MAKE_CHECK=1 for child processes; on recursive
-# invocation make sees the env var at parse time and sets _SKIP_META accordingly.
-_SKIP_META := $(if $(REPOLENS_MAKE_CHECK),1,)
-
+# Recursion guard: meta-tests that spawn `make check` / `tests/run-all.sh` must
+# always be skipped here (same criterion as tests/run-all.sh). Relying only on
+# parse-time $(REPOLENS_MAKE_CHECK) left the *outer* invocation unprotected and
+# caused nested full-suite wedges via tests/test_issue6_test27_fix.sh.
 check:
 	@export REPOLENS_MAKE_CHECK=1; \
+	_SKIP_META=1; \
 	suites_run=0; suites_failed=0; \
 	for f in $$(find tests -maxdepth 1 -name 'test_*.sh' -type f | sort); do \
-	  if [ "$(_SKIP_META)" = "1" ] && grep -q '&& make check' "$$f" 2>/dev/null; then \
+	  if [ "$$_SKIP_META" = "1" ] && grep -q '&& make check' "$$f" 2>/dev/null; then \
+	    continue; \
+	  fi; \
+	  if [ "$$_SKIP_META" = "1" ] && grep -q 'tests/run-all\.sh' "$$f" 2>/dev/null; then \
 	    continue; \
 	  fi; \
 	  output=$$(bash "$$f" 2>&1); rc=$$?; \

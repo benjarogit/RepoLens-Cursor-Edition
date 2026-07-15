@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -226,15 +226,15 @@ status=$?
 filing_prompt="$(cat "$TMPDIR/last-agent-prompt.md")"
 assert_success "_filing_real_agent completes when filing agent writes url sentinel" "$status"
 assert_contains "filing prompt create command targets origin slug" \
-  "gh issue create -R acme/origin-repo" "$filing_prompt"
+  "gh issue create -R 'acme/origin-repo'" "$filing_prompt"
 assert_contains "filing prompt list command targets origin slug" \
-  "gh issue list -R acme/origin-repo --state open" "$filing_prompt"
+  "gh issue list -R 'acme/origin-repo' --state 'open'" "$filing_prompt"
 assert_contains "filing prompt label command targets origin slug" \
-  "gh label create <label> --color ededed --force -R acme/origin-repo" "$filing_prompt"
+  "gh label create '<label>' --color 'ededed' --force -R 'acme/origin-repo'" "$filing_prompt"
 assert_not_contains "filing prompt does not create issues against checkout basename" \
-  "gh issue create -R acme/local-dir" "$filing_prompt"
+  "gh issue create -R 'acme/local-dir'" "$filing_prompt"
 assert_not_contains "filing prompt does not list issues against checkout basename" \
-  "gh issue list -R acme/local-dir" "$filing_prompt"
+  "gh issue list -R 'acme/local-dir'" "$filing_prompt"
 
 echo ""
 echo "=== issue #205: cross-link enactment uses FORGE_REPO ==="
@@ -267,8 +267,8 @@ status=$?
 synth_prompt="$(cat "$TMPDIR/last-agent-prompt.md")"
 assert_success "run_synthesizer accepts empty manifest from stub agent" "$status"
 assert_contains "synthesizer issue-list command targets origin slug" \
-  "gh issue list -R acme/origin-repo --state open" "$synth_prompt"
+  "gh issue list -R 'acme/origin-repo' --state 'open'" "$synth_prompt"
 assert_not_contains "synthesizer issue-list command does not target checkout basename" \
-  "gh issue list -R acme/local-dir" "$synth_prompt"
+  "gh issue list -R 'acme/local-dir'" "$synth_prompt"
 
 finish

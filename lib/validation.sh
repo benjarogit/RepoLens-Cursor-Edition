@@ -34,9 +34,25 @@
 # SLOT stores; wiring it into the ledger builders is a separate slice and is
 # out of scope here.
 #
+# This module also provides `validate_proof_anchors` (issue #345), the pure
+# scorer that reads a validation object's `proof_anchors` array and prints ONE
+# normalized strength verdict (`solid` / `weak` / `none`) on stdout, with
+# per-anchor rejection reasons on stderr — the single source of truth for anchor
+# strength. See the comment block above that function for the taxonomy.
+#
+# This module also provides `classify_validation_status` (issue #334), the pure
+# rule that maps a structured `validation` object onto a registry `status`
+# (`new` / `needs-validation` / `likely-false-positive`) from two axes — anchor
+# strength (delegated to `validate_proof_anchors`) and the command class of
+# `suggested_validation` (locally-runnable check vs external scanner). See the
+# comment block above that function for the exact precedence.
+#
 # Pure: each function works from its arguments / stdin plus jq alone, depends on
 # no globals, and is safe to source under `set -uo pipefail`. This module is
-# sourceable; it defines functions only and has no top-level side effects.
+# sourceable; it defines functions plus two named constant command-class lists
+# (used by the classifier) and the `PROOF_ANCHOR_MIN_QUOTE_LEN` threshold
+# constant, and has no top-level runtime side effects — no output, no file
+# writes.
 
 # _validation_ltrim <string>
 #   Prints the string with leading whitespace removed. Pure string transform
@@ -185,4 +201,290 @@ parse_validation_block() {
       proof_anchors: $proof_anchors,
       suggested_validation: $suggested_validation
     }'
+}
+
+# ---------------------------------------------------------------------------
+# Proof-anchor strength validator (issue #345)
+# ---------------------------------------------------------------------------
+
+# PROOF_ANCHOR_MIN_QUOTE_LEN
+#   Minimum trimmed length for a non-`path:line` anchor to qualify as a
+#   substantive verbatim code quote (the second well-formed shape). Paired with
+#   the code-ish character floor below, it rejects vague prose like
+#   `see the auth handler` while accepting `os.system(user_input)`. A named
+#   constant so the threshold is a one-line tuning edit, consistent with the
+#   `VALIDATION_LOCAL_CMDS` / `VALIDATION_SCANNER_KEYWORDS` constants. A
+#   top-level scalar assignment emits nothing, so sourcing stays side-effect free.
+PROOF_ANCHOR_MIN_QUOTE_LEN=12
+
+# _validation_codeish_count <string>
+#   Prints how many "code-ish" structural characters the string contains, from
+#   the set ( ) { } [ ] < > = ; : / \ $ | & * . These signal a verbatim code
+#   quote; `.`, `_`, `-` are deliberately EXCLUDED because they are pervasive in
+#   prose and paths, so a trailing period or a hyphenated word earns no "code"
+#   credit. Pure: a character-by-character bash scan, no external process, and
+#   the string is data (never evaluated). Side effect: writes the count to stdout.
+_validation_codeish_count() {
+  local s="$1" i ch count=0
+  for (( i = 0; i < ${#s}; i++ )); do
+    ch="${s:i:1}"
+    # shellcheck disable=SC1003 # '\' is a literal backslash pattern, not an escaped single quote.
+    case "$ch" in
+      '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>' | '=' | ';' | ':' | '/' | '\' | '$' | '|' | '&' | '*')
+        count=$((count + 1))
+        ;;
+    esac
+  done
+  printf '%s' "$count"
+}
+
+# validate_proof_anchors <validation_json> [<project_path>]
+#   Reads the `proof_anchors` array out of a structured `validation` object (the
+#   shape `parse_validation_block` emits) and scores anchor strength, printing
+#   EXACTLY ONE normalized verdict on stdout:
+#
+#     solid — >=1 anchor is well-formed: a `path:line` reference (matches
+#             `^[^[:space:]]+:[0-9]+`, e.g. `lib/template.sh:208`) OR a
+#             substantive verbatim code quote (trimmed length >=
+#             PROOF_ANCHOR_MIN_QUOTE_LEN and >= 2 code-ish chars).
+#     weak  — >=1 non-empty anchor, but every one is vague prose (no `path:line`
+#             shape, not a substantive code quote).
+#     none  — no usable anchors: `proof_anchors` is missing / null / not an array
+#             (e.g. a legacy singular string), or every element is empty /
+#             whitespace-only.
+#
+#   This is the single source of truth for anchor strength that
+#   `classify_validation_status` (#334) consumes instead of re-deriving a
+#   length-only heuristic. Per-anchor rejection reasons go to STDERR, prefixed
+#   with the function name, mirroring the house pattern
+#   `lib/verify.sh::validate_verification_manifest`. The return code mirrors that
+#   pattern's "non-zero on failure": 0 when solid, 1 when weak, 2 when none.
+#
+#   The optional <project_path> is the issue's best-effort containment check: a
+#   `path:line` anchor whose file does not exist under the project is reported and
+#   NOT counted as solid. It only READS the filesystem (`-e`/`-d`), never writes,
+#   and is skipped when no project path is given — so the function stays usable on
+#   a bare JSON fixture. The classifier calls the bare (1-arg) form to keep its
+#   documented purity (no global/filesystem dependency).
+#
+#   Pure: the JSON is read with jq alone (anchor values are extracted base64-safe
+#   and treated as DATA — quotes, `$(...)`, backticks, backslashes are never
+#   evaluated) and classification is bash string ops only. No file writes. Side
+#   effect: writes one verdict token to stdout (and rejection lines to stderr).
+validate_proof_anchors() {
+  local validation_json="${1:-}" project_path="${2:-}"
+
+  # Extract each anchor base64-encoded, one per line. jq owns parsing; anything
+  # that is not a JSON array yields no anchors (defensive: missing / null /
+  # legacy singular string all degrade to `none`).
+  local encoded
+  encoded="$(jq -r \
+    'if (.proof_anchors | type) == "array"
+       then (.proof_anchors[] | tostring | @base64)
+       else empty end' \
+    <<<"$validation_json" 2>/dev/null)"
+
+  local solid=0 nonempty=0 line anchor trimmed file
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    anchor="$(printf '%s' "$line" | base64 -d 2>/dev/null)"
+
+    # Trim leading/trailing whitespace; a whitespace-only anchor is not usable.
+    trimmed="${anchor#"${anchor%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -z "$trimmed" ]] && continue
+
+    nonempty=$((nonempty + 1))
+
+    if [[ "$trimmed" =~ ^[^[:space:]]+:[0-9]+ ]]; then
+      # `path:line` shape. Optionally require the file to exist under the project.
+      if [[ -n "$project_path" && -d "$project_path" ]]; then
+        file="${trimmed%%:*}"
+        if [[ ! -e "$project_path/$file" ]]; then
+          echo "validate_proof_anchors: anchor '$anchor' file not found under project ($file)" >&2
+          continue
+        fi
+      fi
+      solid=$((solid + 1))
+    elif [[ "${#trimmed}" -ge "$PROOF_ANCHOR_MIN_QUOTE_LEN" \
+            && "$(_validation_codeish_count "$trimmed")" -ge 2 ]]; then
+      # Substantive verbatim code quote.
+      solid=$((solid + 1))
+    else
+      echo "validate_proof_anchors: rejected anchor '$anchor' (vague prose: no path:line shape, not a substantive code quote)" >&2
+    fi
+  done <<<"$encoded"
+
+  if (( nonempty == 0 )); then
+    echo "validate_proof_anchors: no usable proof_anchors" >&2
+    printf 'none\n'
+    return 2
+  elif (( solid >= 1 )); then
+    printf 'solid\n'
+    return 0
+  else
+    printf 'weak\n'
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Validation `status` classifier (issue #334)
+# ---------------------------------------------------------------------------
+
+# VALIDATION_LOCAL_CMDS
+#   Allowlist of command tokens that mark a `suggested_validation` as a LOCAL,
+#   self-contained check the audit host can run without any external service.
+#   Matched against the command's FIRST token only (case-insensitive). One named
+#   array so adding a tool is a one-line edit (AC). `curl` is intentionally NOT
+#   listed here — it is local only against localhost / 127.0.0.1 and is handled
+#   as a special case in `_validation_command_class`.
+VALIDATION_LOCAL_CMDS=(
+  grep rg test '[' bash sh cat ls find jq head tail wc diff awk sed
+)
+
+# VALIDATION_SCANNER_KEYWORDS
+#   Denylist of external-scanner signals. Matched as a SUBSTRING anywhere in the
+#   command (case-insensitive) so both bare tool names (`semgrep ...`) and the
+#   prose form (`needs external scanner — npm audit`) are caught. The literal
+#   phrase `external scanner` is included so this classifier is a SUPERSET of the
+#   existing repo convention (artifacts.sh / human_review.sh / audit.md) and the
+#   three consumers cannot drift. One named array so adding a scanner is a
+#   one-line edit (AC).
+VALIDATION_SCANNER_KEYWORDS=(
+  'external scanner'
+  semgrep trivy snyk bandit gitleaks trufflehog
+  'npm audit' 'yarn audit' 'pnpm audit'
+  'pip-audit' 'pip audit'
+  'cargo audit'
+  osv-scanner grype checkov tfsec dependency-check
+)
+
+# _validation_command_class <command-string>
+#   Classifies a `suggested_validation` command string into exactly one of:
+#     local   — first token is in VALIDATION_LOCAL_CMDS (or a curl against
+#               localhost / 127.0.0.1).
+#     scanner — references an external scanner (a VALIDATION_SCANNER_KEYWORDS
+#               substring).
+#     none    — empty / whitespace-only command (nothing to run).
+#     unknown — a non-empty command that is neither local nor a known scanner.
+#   The allowlist (first-token) is evaluated BEFORE the scanner denylist
+#   (substring), so a genuinely local command that merely mentions a scanner name
+#   as an argument — `grep -rn "semgrep" .` — classifies as `local`, not
+#   `scanner`. The command string is treated purely as data (string ops only);
+#   it is never evaluated by the shell. Side effect: writes the class to stdout.
+#
+#   Known limitation (accepted, per issue): classification keys off the first
+#   token, so a wrapper like `bash -c 'semgrep ...'` classifies as `local`. Deep
+#   argument parsing is out of scope and brittle.
+_validation_command_class() {
+  local cmd first lower tok kw
+  cmd="$(_validation_trim "$1")"
+  if [[ -z "$cmd" ]]; then
+    printf 'none'
+    return 0
+  fi
+
+  lower="${cmd,,}"
+  first="${cmd%%[[:space:]]*}"
+  first="${first,,}"
+
+  if [[ "$first" == "curl" ]]; then
+    # curl is a LOCAL check only when it targets the loopback host; a remote
+    # fetch is not locally validatable and falls through to the scanner/unknown
+    # determination below.
+    if [[ "$lower" == *localhost* || "$lower" == *127.0.0.1* ]]; then
+      printf 'local'
+      return 0
+    fi
+  else
+    for tok in "${VALIDATION_LOCAL_CMDS[@]}"; do
+      # RHS quoted -> literal compare (so `[` is not read as a glob bracket).
+      if [[ "$first" == "${tok,,}" ]]; then
+        printf 'local'
+        return 0
+      fi
+    done
+  fi
+
+  for kw in "${VALIDATION_SCANNER_KEYWORDS[@]}"; do
+    if [[ "$lower" == *"${kw,,}"* ]]; then
+      printf 'scanner'
+      return 0
+    fi
+  done
+
+  printf 'unknown'
+}
+
+# classify_validation_status <validation_json>
+#   Pure rule that maps a structured `validation` object (the 6-key object
+#   `parse_validation_block` emits — this function reads only two of its keys)
+#   onto a registry `status`. Prints EXACTLY ONE of `new`, `needs-validation`,
+#   or `likely-false-positive` on stdout. It NEVER emits `duplicate` (owned by
+#   the dedup slice) and never writes `findings.jsonl` (owned by the ledger
+#   slice) — it just returns the string for the ledger to store.
+#
+#   Two axes drive the decision:
+#     anchors — anchor strength from `validate_proof_anchors` (#345): `solid`
+#               (>= 1 well-formed `path:line` or substantive code quote) vs
+#               `weak` / `none` (prose-only or no usable anchors). This is the
+#               shared single source of truth — the classifier consumes the
+#               verdict rather than re-deriving a length-only heuristic, so a
+#               vague prose anchor no longer counts as solid evidence. A missing,
+#               null, or non-array `proof_anchors` degrades to `none`.
+#     class   — the command class of `suggested_validation` (see
+#               `_validation_command_class`): local / scanner / none / unknown.
+#
+#   Precedence — FIRST match wins:
+#     1. class == scanner                     -> needs-validation
+#        (external scanner required; aligns with the `external-dependency` type.
+#        This dominates anchor strength: a scanner-gated finding is parked, not
+#        discarded, regardless of anchors.)
+#     2. solid anchors AND class == local     -> new
+#        (locally validatable — issue rule 1.)
+#     3. solid anchors AND class in {none,unknown} -> needs-validation
+#        (real evidence but no runnable local check — park for validation.)
+#     4. NO anchors AND class == local        -> needs-validation
+#        (a cheap local check exists, so park rather than discard; research §6
+#        recommendation 4a.)
+#     5. NO anchors AND class in {none,unknown} -> likely-false-positive
+#        (unsubstantiated and nothing to run — the conservative default.)
+#   Corollary (issue rule 1): a finding with NO anchors NEVER classifies `new`.
+#
+#   Pure / jq-driven: the JSON is read with jq alone (so quotes, `$(...)`,
+#   backticks, backslashes in the command string are data, never evaluated), and
+#   the function has no side effects. Side effect: writes one status to stdout.
+classify_validation_status() {
+  local validation_json="${1:-}" strength cmd cls status
+
+  # Anchor strength from the shared validator (#345). Its stderr (per-anchor
+  # rejection detail) is suppressed here — the classifier must not leak it. Only
+  # the `solid` verdict counts as solid evidence; `weak` / `none` do not.
+  strength="$(validate_proof_anchors "$validation_json" 2>/dev/null)"
+
+  # Command string (only honoured when it is a JSON string; null/missing -> "").
+  cmd="$(jq -r \
+    'if (.suggested_validation | type) == "string" then .suggested_validation else "" end' \
+    <<<"$validation_json" 2>/dev/null)"
+
+  cls="$(_validation_command_class "$cmd")"
+
+  if [[ "$cls" == "scanner" ]]; then
+    status="needs-validation"
+  elif [[ "$strength" == "solid" ]]; then
+    if [[ "$cls" == "local" ]]; then
+      status="new"
+    else
+      status="needs-validation"
+    fi
+  else
+    if [[ "$cls" == "local" ]]; then
+      status="needs-validation"
+    else
+      status="likely-false-positive"
+    fi
+  fi
+
+  printf '%s\n' "$status"
 }

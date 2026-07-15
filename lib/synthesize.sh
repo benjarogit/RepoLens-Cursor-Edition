@@ -165,11 +165,59 @@ _synthesize_log_min_severity_info() {
 
 _synthesize_log_min_severity_warn() {
   local message="$1"
-  if declare -F log_warn >/dev/null 2>&1; then
+  # Delegate to log_warn ONLY when RepoLens logging is initialized
+  # (_REPOLENS_LOG_FILE set) — the same gate lib/forge.sh, lib/streak.sh, and the
+  # _synthesize_log_min_severity_info sibling above use. This is not just an
+  # optimization: it is a `set -u` safety gate. A bare `declare -F log_warn` is
+  # true whenever ANY log_warn is in scope, including a FOREIGN one. Under the
+  # AutoDev quality gate an exported AutoDev `log_warn` is inherited (it delegates
+  # to AutoDev's `_log`, which reads an UNEXPORTED `_AUTODEV_LOG_FILE` directly);
+  # the gate exports the functions but not that var, so under `set -u` the read
+  # aborts the CALLER mid-warn — right after the WARN reaches stderr — which
+  # empties the threshold _dedupe_resolve_sim_threshold was about to print (the
+  # empty value then resolves to 0 in the arithmetic and matches every pair).
+  # Whenever _REPOLENS_LOG_FILE is set, RepoLens's own logging.sh has been sourced
+  # and seeded all of its globals, so its log_warn is safe; otherwise the
+  # printf fallback emits the WARN to stderr and can never crash.
+  if declare -F log_warn >/dev/null 2>&1 && [[ -n "${_REPOLENS_LOG_FILE:-}" ]]; then
     log_warn "$message"
   else
     printf '[WARN] %s\n' "$message" >&2
   fi
+}
+
+# _dedupe_resolve_sim_threshold <env_var_name> <default_x10000>
+#   Echoes a Jaccard-similarity threshold on the x10000 integer scale (the same
+#   scale _synthesize_jaccard_x10000 returns). Reads the named env var:
+#     - unset            -> default (silent; preserves byte-for-byte behavior)
+#     - matches ^[0-9]+$ -> accepted, leading zeros normalized via $((10#$raw))
+#     - anything else    -> default + a single log_warn (non-numeric, negative,
+#                           or empty-after-set). Never `die`, never crash.
+#   It does NOT cap the upper bound: numeric values > 10000 are legal and mean
+#   "effectively disabled" (no pair's similarity, capped at 10000, can reach
+#   them) — e.g. the DEDUPE_TITLE_SIM_SECONDARY=99999 secondary-off sentinel.
+#   The warning routes to log/stderr only (never stdout), because callers
+#   capture this function's stdout as the threshold value. Pure, no model.
+_dedupe_resolve_sim_threshold() {
+  local env_name="$1" default="$2"
+  # Read the named env var WITHOUT the indirect-expansion-with-default form
+  # `${!env_name:-$default}`: on older bash builds that combination aborts with
+  # "unbound variable" under `set -u` when the target var is unset (the resolver
+  # then crashes, returning an empty threshold that makes every pair match). Guard
+  # existence with `declare -p` (a builtin that never trips `set -u`) and only
+  # dereference once the variable is known to be set — plain `${!env_name}` is
+  # safe for a set target on every bash version.
+  local raw="$default"
+  if declare -p "$env_name" >/dev/null 2>&1; then
+    raw="${!env_name}"
+  fi
+  if [[ ! "$raw" =~ ^[0-9]+$ ]]; then
+    _synthesize_log_min_severity_warn \
+      "Invalid ${env_name}='${raw}'; using default ${default} (Jaccard x10000)."
+    printf '%s\n' "$default"
+    return 0
+  fi
+  printf '%s\n' "$((10#$raw))"
 }
 
 # _synthesize_filter_manifest_min_severity <manifest_path> <min_severity> [verification_path]
@@ -386,6 +434,134 @@ _synthesize_jaccard_x10000() {
   printf '%d' $(( intersection * 10000 / union ))
 }
 
+# _synthesize_compute_duplicate_groups <manifest_path>
+#   Shared, deterministic, model-free grouping used by the post-synthesis
+#   duplicate passes: _synthesize_attach_also_reported_by (#328) and
+#   _synthesize_mark_duplicates (#335). Reads the candidate manifest (a JSON
+#   array of finding records) and prints ONE JSON OBJECT PER LINE (JSONL), one
+#   line for every duplicate group of size >= 2:
+#       {"canonical_idx": <int>, "canonical_id": <string>, "member_indices": [<int>...]}
+#     - canonical_idx  : array index of the canonical record
+#                        (selected by _dedupe_pick_canonical)
+#     - canonical_id   : that record's cluster_id (the manifest id field today;
+#                        carries over to findings.jsonl's id later), "" if absent
+#     - member_indices : ALL member array indices of the group, ascending
+#                        (the canonical index included)
+#
+#   Grouping is the transitive closure / connected components of _dedupe_is_match
+#   over every record pair (union-find), keyed on the array INDEX (never on
+#   cluster_id — two grouped records may share one). Groups of size 1 emit
+#   nothing; an empty / single-record manifest prints nothing and returns 0.
+#   Group emission order is canonical-root-ascending so the JSONL is stable
+#   run-to-run regardless of associative-array iteration order.
+#
+#   Lazy-loads the dedupe helpers (#316 canonical selection, #322 matching) the
+#   same way the old #328 pass did. Returns non-zero on a non-array manifest or
+#   any jq/helper failure (callers bail and discard the candidate). Pure: no
+#   side effects beyond stdout, no globals leaked, no model invocation.
+_synthesize_compute_duplicate_groups() {
+  local manifest="${1:-}"
+  [[ -n "$manifest" && -f "$manifest" ]] || return 2
+
+  # Lazy-load the dedupe helpers (#316 canonical selection, #322 matching). By
+  # the time run_synthesizer reaches these passes, synthesize.sh is fully loaded,
+  # so dedupe.sh's own on-demand source of synthesize.sh is a no-op and there
+  # is no recursive source.
+  if ! declare -F _dedupe_pick_canonical >/dev/null 2>&1 \
+     || ! declare -F _dedupe_is_match >/dev/null 2>&1; then
+    local _sx_dedupe_lib
+    _sx_dedupe_lib="$(_synthesize_repo_root)/lib/dedupe.sh"
+    # shellcheck source=/dev/null
+    [[ -f "$_sx_dedupe_lib" ]] && source "$_sx_dedupe_lib"
+    unset _sx_dedupe_lib
+  fi
+  if ! declare -F _dedupe_pick_canonical >/dev/null 2>&1 \
+     || ! declare -F _dedupe_is_match >/dev/null 2>&1; then
+    echo "_synthesize_compute_duplicate_groups: dedupe helpers unavailable" >&2
+    return 1
+  fi
+
+  # Must be a JSON array; -1 sentinel marks "not an array" so we bail cleanly
+  # (validate_manifest reports the shape error separately).
+  local count
+  count="$(jq 'if type == "array" then length else -1 end' "$manifest" 2>/dev/null)" || return 1
+  [[ "$count" -ge 0 ]] || return 1
+
+  # Fewer than two records can form no group of size >= 2: emit nothing.
+  (( count >= 2 )) || return 0
+
+  # Load each record (compact, one line) into an index-addressed array.
+  local -a records=()
+  local rec
+  while IFS= read -r rec; do
+    records+=("$rec")
+  done < <(jq -c '.[]' "$manifest") || return 1
+  if (( ${#records[@]} != count )); then
+    return 1
+  fi
+
+  # Union-find over record indices: union i,j whenever they match. Identity is
+  # the array INDEX, never cluster_id (two grouped records may share one).
+  local -a parent=()
+  local i j
+  for (( i = 0; i < count; i++ )); do
+    parent[i]=$i
+  done
+  for (( i = 0; i < count; i++ )); do
+    for (( j = i + 1; j < count; j++ )); do
+      if _dedupe_is_match "${records[i]}" "${records[j]}"; then
+        local ri="$i" rj="$j"
+        while [[ "${parent[ri]}" != "$ri" ]]; do ri="${parent[ri]}"; done
+        while [[ "${parent[rj]}" != "$rj" ]]; do rj="${parent[rj]}"; done
+        if [[ "$ri" != "$rj" ]]; then
+          parent[rj]="$ri"
+        fi
+      fi
+    done
+  done
+
+  # Bucket indices by connected-component root.
+  local -A groups=()
+  local root
+  for (( i = 0; i < count; i++ )); do
+    root="$i"
+    while [[ "${parent[root]}" != "$root" ]]; do root="${parent[root]}"; done
+    groups[$root]+="$i "
+  done
+
+  # Emit groups of size >= 2 in ascending root order for deterministic output.
+  local -a roots_sorted=()
+  while IFS= read -r root; do
+    roots_sorted+=("$root")
+  done < <(printf '%s\n' "${!groups[@]}" | sort -n)
+
+  for root in "${roots_sorted[@]}"; do
+    local -a midx=()
+    read -ra midx <<< "${groups[$root]}"
+    (( ${#midx[@]} >= 2 )) || continue
+
+    # Tag each member with its global index so canonical selection is keyed on
+    # the unambiguous index rather than a possibly-shared cluster_id.
+    local idx_json subarray canon_idx canon_id
+    idx_json="$(printf '%s\n' "${midx[@]}" | jq -cs '.')" || return 1
+    subarray="$(jq -c --argjson idx "$idx_json" \
+      '[ $idx[] as $k | .[$k] + {__rl_idx: $k} ]' "$manifest")" || return 1
+
+    canon_idx="$(_dedupe_pick_canonical "$subarray" __rl_idx)" || return 1
+    [[ -n "$canon_idx" ]] || return 1
+
+    # The canonical record's id field (cluster_id today) — the duplicate_of link
+    # target. "" if the canonical record happens to lack one.
+    canon_id="$(jq -r --argjson k "$canon_idx" '.[$k].cluster_id // ""' "$manifest")" || return 1
+
+    printf '%s\n' "${midx[@]}" | sort -n | jq -cs \
+      --argjson canon_idx "$canon_idx" --arg canon_id "$canon_id" \
+      '{canonical_idx: $canon_idx, canonical_id: $canon_id, member_indices: .}' || return 1
+  done
+
+  return 0
+}
+
 # _synthesize_attach_also_reported_by <manifest_path>
 #   Deterministic, model-free post-synthesis pass (#328). Groups the candidate
 #   manifest's records into duplicate groups (transitive closure / connected
@@ -410,35 +586,12 @@ _synthesize_jaccard_x10000() {
 #
 #   The non-canonical records are intentionally NOT removed or marked (that is
 #   #335, out of scope): only location-based duplicate groups (title similarity
-#   below validate_manifest's 0.85 bar, same file) survive the downstream title
-#   gate and therefore actually carry also_reported_by[] in production.
+#   below validate_manifest's title bar — configurable, default 0.85 / 8500 via
+#   DEDUPE_TITLE_SIM_PRIMARY — same file) survive the downstream title gate and
+#   therefore actually carry also_reported_by[] in production.
 _synthesize_attach_also_reported_by() {
   local manifest="${1:-}"
   [[ -n "$manifest" && -f "$manifest" ]] || return 2
-
-  # Lazy-load the dedupe helpers (#316 canonical selection, #322 matching). By
-  # the time run_synthesizer reaches this pass, synthesize.sh is fully loaded,
-  # so dedupe.sh's own on-demand source of synthesize.sh is a no-op and there
-  # is no recursive source.
-  if ! declare -F _dedupe_pick_canonical >/dev/null 2>&1 \
-     || ! declare -F _dedupe_is_match >/dev/null 2>&1; then
-    local _sx_dedupe_lib
-    _sx_dedupe_lib="$(_synthesize_repo_root)/lib/dedupe.sh"
-    # shellcheck source=/dev/null
-    [[ -f "$_sx_dedupe_lib" ]] && source "$_sx_dedupe_lib"
-    unset _sx_dedupe_lib
-  fi
-  if ! declare -F _dedupe_pick_canonical >/dev/null 2>&1 \
-     || ! declare -F _dedupe_is_match >/dev/null 2>&1; then
-    echo "_synthesize_attach_also_reported_by: dedupe helpers unavailable" >&2
-    return 1
-  fi
-
-  # Must be a JSON array; -1 sentinel marks "not an array" so we bail cleanly
-  # (validate_manifest reports the shape error separately).
-  local count
-  count="$(jq 'if type == "array" then length else -1 end' "$manifest" 2>/dev/null)" || return 1
-  [[ "$count" -ge 0 ]] || return 1
 
   # assign: JSON object mapping a canonical record's array index (as a string)
   # to its computed contributor list. Empty when there are no duplicate groups;
@@ -446,75 +599,25 @@ _synthesize_attach_also_reported_by() {
   # idempotent.
   local assign='{}'
 
-  if (( count >= 2 )); then
-    # Load each record (compact, one line) into an index-addressed array.
-    local -a records=()
-    local rec
-    while IFS= read -r rec; do
-      records+=("$rec")
-    done < <(jq -c '.[]' "$manifest") || return 1
-    if (( ${#records[@]} != count )); then
-      return 1
-    fi
+  # Reuse the shared grouping computation (union-find over _dedupe_is_match,
+  # canonical selection via _dedupe_pick_canonical). One JSONL record per
+  # duplicate group of size >= 2; empty for tiny manifests; non-zero rc on a
+  # non-array manifest or any helper failure (propagated so run_synthesizer
+  # discards the candidate).
+  local groups_jsonl
+  groups_jsonl="$(_synthesize_compute_duplicate_groups "$manifest")" || return 1
 
-    # Union-find over record indices: union i,j whenever they match. Identity is
-    # the array INDEX, never cluster_id (two grouped records may share one).
-    local -a parent=()
-    local i j
-    for (( i = 0; i < count; i++ )); do
-      parent[i]=$i
-    done
-    for (( i = 0; i < count; i++ )); do
-      for (( j = i + 1; j < count; j++ )); do
-        if _dedupe_is_match "${records[i]}" "${records[j]}"; then
-          local ri="$i" rj="$j"
-          while [[ "${parent[ri]}" != "$ri" ]]; do ri="${parent[ri]}"; done
-          while [[ "${parent[rj]}" != "$rj" ]]; do rj="${parent[rj]}"; done
-          if [[ "$ri" != "$rj" ]]; then
-            parent[rj]="$ri"
-          fi
-        fi
-      done
-    done
+  if [[ -n "$groups_jsonl" ]]; then
+    local group canon_idx contrib_idx_json contrib_json
+    while IFS= read -r group; do
+      [[ -n "$group" ]] || continue
+      canon_idx="$(jq -r '.canonical_idx' <<<"$group")" || return 1
 
-    # Bucket indices by connected-component root.
-    local -A groups=()
-    local root
-    for (( i = 0; i < count; i++ )); do
-      root="$i"
-      while [[ "${parent[root]}" != "$root" ]]; do root="${parent[root]}"; done
-      groups[$root]+="$i "
-    done
+      # Non-canonical contributor indices (every member except the canonical).
+      contrib_idx_json="$(jq -c --argjson c "$canon_idx" \
+        '[ .member_indices[] | select(. != $c) ]' <<<"$group")" || return 1
+      [[ "$(jq 'length' <<<"$contrib_idx_json")" -ge 1 ]] || continue
 
-    # For each group of size >= 2, pick the canonical by index and build the
-    # contributor list for every non-canonical member.
-    local members
-    for root in "${!groups[@]}"; do
-      local -a midx=()
-      read -ra midx <<< "${groups[$root]}"
-      (( ${#midx[@]} >= 2 )) || continue
-
-      # Tag each member with its global index so canonical selection is keyed on
-      # the unambiguous index rather than a possibly-shared cluster_id.
-      local idx_json subarray canon_idx
-      idx_json="$(printf '%s\n' "${midx[@]}" | jq -cs '.')" || return 1
-      subarray="$(jq -c --argjson idx "$idx_json" \
-        '[ $idx[] as $k | .[$k] + {__rl_idx: $k} ]' "$manifest")" || return 1
-
-      canon_idx="$(_dedupe_pick_canonical "$subarray" __rl_idx)" || return 1
-      [[ -n "$canon_idx" ]] || return 1
-
-      # Non-canonical contributor indices.
-      local -a contrib=()
-      local m
-      for m in "${midx[@]}"; do
-        [[ "$m" == "$canon_idx" ]] && continue
-        contrib+=("$m")
-      done
-      (( ${#contrib[@]} >= 1 )) || continue
-
-      local contrib_idx_json contrib_json
-      contrib_idx_json="$(printf '%s\n' "${contrib[@]}" | jq -cs '.')" || return 1
       contrib_json="$(jq -c --argjson idx "$contrib_idx_json" '
         [ $idx[] as $k
           | .[$k]
@@ -528,7 +631,7 @@ _synthesize_attach_also_reported_by() {
 
       assign="$(jq -c --arg k "$canon_idx" --argjson v "$contrib_json" \
         '.[$k] = $v' <<<"$assign")" || return 1
-    done
+    done <<< "$groups_jsonl"
   fi
 
   # Single atomic rewrite: strip stale also_reported_by from every object, then
@@ -559,11 +662,103 @@ _synthesize_attach_also_reported_by() {
   fi
 }
 
+# _synthesize_mark_duplicates <manifest_path>
+#   Deterministic, model-free post-synthesis pass (#335). Companion to
+#   _synthesize_attach_also_reported_by (#328): same shared grouping, but it
+#   annotates the NON-canonical records instead of the canonical one. For every
+#   duplicate group of size >= 2 it sets, on each non-canonical member:
+#       status:       "duplicate"
+#       duplicate_of: "<canonical record's cluster_id>"
+#   so downstream consumers never treat two equivalent findings as two separate
+#   TODOs. The CANONICAL record is left status-UNSET (the ledger status enum —
+#   lib/ledger.sh — is the closed set new/duplicate/needs-validation/
+#   likely-false-positive with NO "canonical" value, so "canonical" would be an
+#   invalid forward-compat status; absence is the clear, safe distinguisher).
+#   Singleton groups are untouched.
+#
+#   IDEMPOTENT: the pass OWNS duplicate_of (stripped from every object record and
+#   recomputed) and owns status ONLY when it equals the managed value
+#   "duplicate" (stripped+recomputed) — any other pre-existing status is
+#   preserved verbatim. Grouping/selection key off title, location, severity, and
+#   confidence only (never off status/duplicate_of), so a re-run is
+#   byte-identical and a record that was a duplicate in a prior run but no longer
+#   matches has its marks cleared.
+#
+#   Operates in place on the candidate file (jq into a temp, mv back), mirroring
+#   _synthesize_attach_also_reported_by. Returns non-zero on any jq/helper
+#   failure, leaving the candidate untouched so run_synthesizer discards it.
+#   No model invocation. Pure transform of the JSON array. validate_manifest
+#   tolerates the extra status/duplicate_of fields (no validator change needed).
+_synthesize_mark_duplicates() {
+  local manifest="${1:-}"
+  [[ -n "$manifest" && -f "$manifest" ]] || return 2
+
+  # assign: JSON object mapping a NON-canonical record's array index (as a
+  # string) to the canonical record's cluster_id. Empty when there are no
+  # duplicate groups; the final jq still strips stale status/duplicate_of,
+  # keeping tiny manifests idempotent.
+  local assign='{}'
+
+  # Reuse the shared grouping computation — identical to the #328 pass.
+  local groups_jsonl
+  groups_jsonl="$(_synthesize_compute_duplicate_groups "$manifest")" || return 1
+
+  if [[ -n "$groups_jsonl" ]]; then
+    local group canon_idx canon_id member_idx_json
+    while IFS= read -r group; do
+      [[ -n "$group" ]] || continue
+      canon_idx="$(jq -r '.canonical_idx' <<<"$group")" || return 1
+      canon_id="$(jq -r '.canonical_id' <<<"$group")" || return 1
+
+      # Non-canonical member indices (every member except the canonical).
+      member_idx_json="$(jq -c --argjson c "$canon_idx" \
+        '[ .member_indices[] | select(. != $c) ]' <<<"$group")" || return 1
+
+      # Map each non-canonical index (as a string key) to the canonical id.
+      assign="$(jq -c --argjson members "$member_idx_json" --arg id "$canon_id" '
+        reduce ($members[] | tostring) as $k (.; .[$k] = $id)
+      ' <<<"$assign")" || return 1
+    done <<< "$groups_jsonl"
+  fi
+
+  # Single atomic rewrite: on every object record strip the pass-owned fields
+  # (duplicate_of always; status only when it is the managed value "duplicate"),
+  # then set status/duplicate_of on each non-canonical index. Non-object array
+  # elements (if any survive to this pre-validation stage) pass through
+  # untouched.
+  local tmp="${manifest}.mdup.$$"
+  if ! jq --argjson assign "$assign" '
+    to_entries
+    | map(
+        .value as $v
+        | (.key | tostring) as $k
+        | if ($v | type) == "object"
+          then ($v
+                | del(.duplicate_of)
+                | if .status == "duplicate" then del(.status) else . end) as $base
+            | if ($assign | has($k))
+              then $base + { status: "duplicate", duplicate_of: $assign[$k] }
+              else $base
+              end
+          else $v
+          end
+      )
+  ' "$manifest" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv "$tmp" "$manifest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # validate_manifest <manifest_path>
 #   Validates a synthesizer manifest. Performs:
 #     1. JSON parse and top-level-array shape check.
 #     2. Per-entry schema check on required S1 fields.
-#     3. Pairwise Jaccard title-similarity check (> 0.85 threshold).
+#     3. Pairwise Jaccard title-similarity check (strict > threshold;
+#        configurable via DEDUPE_TITLE_SIM_PRIMARY, default 8500 = 0.85).
 #     4. Cross-link gate: when CROSS_LINK_MODE=off (env), every entry's
 #        cross_link_actions[] MUST be empty.
 #   Reports every failure to stderr. Returns 0 on success, non-zero on any
@@ -725,13 +920,19 @@ validate_manifest() {
     ngram_lists+=("$(_synthesize_title_ngrams "$normalized")")
   done
 
+  # Resolve the primary title-similarity bar ONCE, before the O(n^2) loop, so an
+  # invalid override warns at most once (not per pair). Shared with
+  # _dedupe_is_match via DEDUPE_TITLE_SIM_PRIMARY (#353).
+  local dedupe_title_threshold
+  dedupe_title_threshold="$(_dedupe_resolve_sim_threshold DEDUPE_TITLE_SIM_PRIMARY 8500)"
+
   for (( i = 0; i < n; i++ )); do
     for (( j = i + 1; j < n; j++ )); do
       if [[ -z "${normalized_titles[i]}" && -z "${normalized_titles[j]}" ]]; then
         continue
       fi
       sim="$(_synthesize_jaccard_x10000 "${ngram_lists[i]}" "${ngram_lists[j]}")"
-      if (( sim > 8500 )); then
+      if (( sim > dedupe_title_threshold )); then
         echo "validate_manifest: near-duplicate titles (similarity ${sim}/10000):" >&2
         echo "  [${i}] ${titles[i]}" >&2
         echo "  [${j}] ${titles[j]}" >&2
@@ -1012,6 +1213,19 @@ run_synthesizer() {
   # field (forward-compat). Pure, model-free, deterministic, idempotent.
   if ! _synthesize_attach_also_reported_by "$candidate"; then
     echo "run_synthesizer: failed to attach also_reported_by[]" >&2
+    rm -f "$candidate"
+    rm -f "$final_dir/manifest.json"
+    rm -f "$final_dir/cross-link-actions.preserved.json"
+    return 1
+  fi
+
+  # Mark each NON-canonical duplicate record with status="duplicate" and
+  # duplicate_of=<canonical cluster_id> (#335). Companion to the also_reported_by
+  # pass; shares the same deterministic grouping. Runs before validate_manifest
+  # so the promoted manifest is validated WITH the new fields (the validator
+  # tolerates them). Pure, model-free, deterministic, idempotent.
+  if ! _synthesize_mark_duplicates "$candidate"; then
+    echo "run_synthesizer: failed to mark duplicate records" >&2
     rm -f "$candidate"
     rm -f "$final_dir/manifest.json"
     rm -f "$final_dir/cross-link-actions.preserved.json"

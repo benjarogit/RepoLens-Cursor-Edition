@@ -172,6 +172,7 @@ cleanup_status_snapshot_temps() {
     "$log_base"/.status.active.* \
     "$log_base"/.status.completed.* \
     "$log_base"/.status.lenses.* \
+    "$log_base"/.status.attempts.* \
     2>/dev/null || true
 }
 
@@ -200,7 +201,7 @@ _write_status_snapshot_locked() {
   local remote_target="${14:-}" remote_label="${15:-}"
   local status_file="$log_base/status.json"
   local tmp_file="${status_file}.tmp.${BASHPID}"
-  local active_tmp completed_tmp lenses_tmp
+  local active_tmp completed_tmp lenses_tmp attempts_tmp
   local now_iso now_epoch started_at issues_created health stopped_reason next_action_earliest_at
   local heartbeat_file
 
@@ -271,6 +272,10 @@ _write_status_snapshot_locked() {
     rm -f "$active_tmp" "$completed_tmp"
     return 1
   }
+  attempts_tmp="$(mktemp "$log_base/.status.attempts.XXXXXX")" || {
+    rm -f "$active_tmp" "$completed_tmp" "$lenses_tmp"
+    return 1
+  }
 
   : > "$active_tmp"
   if [[ -d "$heartbeat_dir" ]]; then
@@ -315,6 +320,26 @@ _write_status_snapshot_locked() {
     : > "$lenses_tmp"
   fi
 
+  # Project the per-attempt audit trail (#371/#375) into a compact array for the
+  # snapshot. Absent / corrupt / non-array attempts.json degrades to [] — strictly
+  # non-fatal, consistent with the rest of this builder.
+  if [[ -f "$log_base/attempts.json" ]]; then
+    jq -c '
+      if type == "array" then
+        map({
+          attempt_id: .attempt_id,
+          status: .status,
+          why_stopped: .why_stopped,
+          lenses_completed_this_attempt: .lenses_completed_this_attempt
+        })
+      else
+        []
+      end
+    ' "$log_base/attempts.json" > "$attempts_tmp" 2>/dev/null || printf '[]' > "$attempts_tmp"
+  else
+    printf '[]' > "$attempts_tmp"
+  fi
+
   jq -n \
     --arg run_id "$run_id" \
     --arg project "$project" \
@@ -327,12 +352,14 @@ _write_status_snapshot_locked() {
     --argjson max_parallel "$max_parallel" \
     --arg started_at "$started_at" \
     --arg updated_at "$now_iso" \
+    --argjson now_epoch "$now_epoch" \
     --arg state "$state" \
     --arg health "$health" \
     --arg stopped_reason "$stopped_reason" \
     --arg next_action_earliest_at "$next_action_earliest_at" \
     --argjson issues_created "$issues_created" \
     --slurpfile active_raw <(jq -s 'sort_by(.domain, .lens_id)' "$active_tmp" 2>/dev/null || printf '[]') \
+    --slurpfile attempts_raw "$attempts_tmp" \
     --rawfile completed_raw "$completed_tmp" \
     --rawfile lenses_raw "$lenses_tmp" \
     '
@@ -350,6 +377,17 @@ _write_status_snapshot_locked() {
       | ($lenses | map(select(. as $item | (($active_keys | index($item)) | not) and (($completed | index($item)) | not)))) as $queued
       | ($lenses | length) as $total
       | ($completed | length) as $completed_count
+      | ($started_at | (try fromdateiso8601 catch null)) as $start_epoch
+      | (if $start_epoch == null then null
+         else (($now_epoch - $start_epoch) | floor | if . < 0 then 0 else . end)
+         end) as $elapsed_seconds
+      | (if $state == "running"
+            and $completed_count > 0
+            and $elapsed_seconds != null
+            and $elapsed_seconds > 0
+         then ((($total - $completed_count) / $completed_count) * $elapsed_seconds | floor)
+         else null
+         end) as $eta_seconds_remaining
       | {
           run_id: $run_id,
           project: $project,
@@ -373,9 +411,15 @@ _write_status_snapshot_locked() {
             issues_created: $issues_created
           },
           completion_percentage: (if $total == 0 then 0 else (($completed_count * 10000 / $total) | round / 100) end),
+          elapsed_seconds: $elapsed_seconds,
+          eta_seconds_remaining: $eta_seconds_remaining,
+          eta_completion_at: (if $eta_seconds_remaining == null then null
+                              else (($now_epoch + $eta_seconds_remaining) | todateiso8601)
+                              end),
           active: $active,
           queued: $queued,
-          completed: $completed
+          completed: $completed,
+          attempts: ($attempts_raw[0] // [])
         }
       | if $state == "rate-limit-pending" and $next_action_earliest_at != "" then
           . + {next_action: {earliest_at: $next_action_earliest_at}}
@@ -385,7 +429,7 @@ _write_status_snapshot_locked() {
     ' > "$tmp_file" && mv -f "$tmp_file" "$status_file"
 
   local rc=$?
-  rm -f "$active_tmp" "$completed_tmp" "$lenses_tmp" "$tmp_file"
+  rm -f "$active_tmp" "$completed_tmp" "$lenses_tmp" "$attempts_tmp" "$tmp_file"
   return "$rc"
 }
 
@@ -919,6 +963,7 @@ status_render_human() {
   local meta=()
   local run_id project repo mode agent parallel max_parallel started_at updated_at total_lenses
   local completed_count active_count queued_count issues_created project_display parallel_display
+  local elapsed_seconds eta_seconds_remaining eta_completion_at
   local remote_target remote_label
   local stale_red color_reset
   local rows=()
@@ -940,10 +985,13 @@ status_render_human() {
     ((.counts.completed // 0) | tostring),
     ((.counts.active // 0) | tostring),
     ((.counts.queued // 0) | tostring),
-    ((.counts.issues_created // 0) | tostring)
+    ((.counts.issues_created // 0) | tostring),
+    ((.elapsed_seconds // "") | tostring),
+    ((.eta_seconds_remaining // "") | tostring),
+    (.eta_completion_at // "")
   ' "$status_file") || return 1
 
-  if (( ${#meta[@]} < 16 )); then
+  if (( ${#meta[@]} < 19 )); then
     printf 'Invalid status.json: missing expected fields in %s\n' "$(status_sanitize_display "$status_file")" >&2
     return 1
   fi
@@ -964,6 +1012,9 @@ status_render_human() {
   active_count="$(status_sanitize_display "${meta[13]}")"
   queued_count="$(status_sanitize_display "${meta[14]}")"
   issues_created="$(status_sanitize_display "${meta[15]}")"
+  elapsed_seconds="$(status_sanitize_display "${meta[16]}")"
+  eta_seconds_remaining="$(status_sanitize_display "${meta[17]}")"
+  eta_completion_at="$(status_sanitize_display "${meta[18]}")"
 
   project_display="$repo"
   [[ -n "$project_display" ]] || project_display="$project"
@@ -999,6 +1050,30 @@ status_render_human() {
   printf '  updated:   %s  (%s ago)\n' "$(status_format_iso_utc "$updated_at")" "$(status_relative_from_iso "$updated_at")"
   printf '  progress:  %s/%s completed  |  %s active  |  %s queued  |  %s issues created\n' \
     "$completed_count" "$total_lenses" "$active_count" "$queued_count" "$issues_created"
+
+  # Surface the parent-run attempts count (#377) when this run took more than one
+  # attempt (a fresh start + one or more resumes). Read standalone rather than via
+  # the meta mapfile so the field-count guard above is unaffected.
+  local attempts_count attempts_latest
+  attempts_count="$(jq -r '(.attempts // []) | length' "$status_file" 2>/dev/null || printf '0')"
+  [[ "$attempts_count" =~ ^[0-9]+$ ]] || attempts_count=0
+  if (( attempts_count > 1 )); then
+    attempts_latest="$(jq -r '(.attempts // []) | last | .status // ""' "$status_file" 2>/dev/null || printf '')"
+    printf '  attempts:  %s  (latest: %s)\n' "$attempts_count" "$(status_sanitize_display "$attempts_latest")"
+  fi
+
+  local elapsed_display remaining_display
+  if [[ "$elapsed_seconds" =~ ^[0-9]+$ ]]; then
+    elapsed_display="~$(status_format_duration "$elapsed_seconds") elapsed"
+  else
+    elapsed_display="elapsed unknown"
+  fi
+  if [[ "$eta_seconds_remaining" =~ ^[0-9]+$ ]]; then
+    remaining_display="~$(status_format_duration "$eta_seconds_remaining") remaining  (ETA $(status_format_iso_utc "$eta_completion_at"))"
+  else
+    remaining_display="remaining unknown"
+  fi
+  printf '  timing:    %s  |  %s\n' "$elapsed_display" "$remaining_display"
   printf '\n'
   printf 'Active lenses:\n'
 

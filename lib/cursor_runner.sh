@@ -110,6 +110,23 @@ cursor_runner_required_cmd() {
   fi
 }
 
+# Allowlist argv[0] for CURSOR_AGENT_RUNNER_CMD (basename cursor-agent, or
+# absolute path whose basename is cursor-agent). Trusted-admin override only.
+# Tests may set CURSOR_AGENT_RUNNER_ALLOW_UNSAFE=1 to inject a fixture binary.
+cursor_runner_validate_cmd() {
+  local -a parts=("$@")
+  local base
+  [[ "${#parts[@]}" -gt 0 && -n "${parts[0]}" ]] || die "CURSOR_AGENT_RUNNER_CMD is empty"
+  base="$(basename -- "${parts[0]}")"
+  if [[ "$base" == "cursor-agent" ]]; then
+    return 0
+  fi
+  if [[ "${CURSOR_AGENT_RUNNER_ALLOW_UNSAFE:-}" == "1" ]]; then
+    return 0
+  fi
+  die "CURSOR_AGENT_RUNNER_CMD argv[0] must be cursor-agent (got: ${parts[0]}); set CURSOR_AGENT_RUNNER_ALLOW_UNSAFE=1 only for trusted fixtures"
+}
+
 cursor_runner_has_model_flag() {
   local -a parts=("$@")
   local i
@@ -174,6 +191,7 @@ run_cursor_agent() {
 
   read -r -a cmd_parts <<< "$runner_cmd"
   [[ "${#cmd_parts[@]}" -gt 0 ]] || die "CURSOR_AGENT_RUNNER_CMD is empty"
+  cursor_runner_validate_cmd "${cmd_parts[@]}"
 
   if ! [[ "$timeout_sec" =~ ^[1-9][0-9]*$ ]]; then
     die "CURSOR_AGENT_TIMEOUT_SEC must be a positive integer, got: $timeout_sec"

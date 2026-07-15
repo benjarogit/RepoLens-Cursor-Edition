@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -296,20 +296,25 @@ forge_prompt_issue_create() {
   case "${FORGE_PROVIDER:-}" in
     gh)
       printf 'gh issue create -R %s --title "$title" --body-file "$body_file" --label %s\n' \
-        "$repo" "$label"
+        "$(_forge_prompt_shell_quote "$repo")" "$(_forge_prompt_shell_quote "$label")"
       ;;
     tea)
       printf 'tea issues create %s --title "$title" --description "$body" --labels %s\n' \
-        "$(_forge_prompt_tea_target "$repo" "$project_path")" "$label"
+        "$(_forge_prompt_tea_target "$repo" "$project_path")" "$(_forge_prompt_shell_quote "$label")"
       ;;
     fj)
       local host="${FORGE_HOST:-<forge-host>}"
-      printf 'issue_output="$(fj -H %s issue create --repo %s "$title" --body "$body" --no-template)" && issue_number="${issue_output##*issues/}" && issue_number="${issue_number%%[^0-9]*}" && issue_number="${issue_number:-${issue_output##*#}}" && issue_number="${issue_number%%[^0-9]*}" && [[ -n "$issue_number" ]] && fj -H %s issue edit "%s#$issue_number" labels --add %s\n' \
-        "$host" "$repo" "$host" "$repo" "$label"
+      # Separate argv use single-quote shell quoting. The edit target must stay
+      # concatenable with runtime $issue_number: 'slug'#"$issue_number" → slug#N
+      # (a lone # after a closing quote would start a comment).
+      printf 'issue_output="$(fj -H %s issue create --repo %s "$title" --body "$body" --no-template)" && issue_number="${issue_output##*issues/}" && issue_number="${issue_number%%[^0-9]*}" && issue_number="${issue_number:-${issue_output##*#}}" && issue_number="${issue_number%%[^0-9]*}" && [[ -n "$issue_number" ]] && fj -H %s issue edit %s"#$issue_number" labels --add %s\n' \
+        "$(_forge_prompt_shell_quote "$host")" "$(_forge_prompt_shell_quote "$repo")" \
+        "$(_forge_prompt_shell_quote "$host")" "$(_forge_prompt_shell_quote "$repo")" \
+        "$(_forge_prompt_shell_quote "$label")"
       ;;
     *)
       printf 'Use the active forge CLI to create the issue with title, body, repo %s, and label %s\n' \
-        "$repo" "$label"
+        "$(_forge_prompt_shell_quote "$repo")" "$(_forge_prompt_shell_quote "$label")"
       ;;
   esac
 }
@@ -324,21 +329,27 @@ forge_prompt_label_create() {
 
   case "${FORGE_PROVIDER:-}" in
     gh)
-      printf 'gh label create %s --color %s --force -R %s\n' "$label" "$color" "$repo"
+      printf 'gh label create %s --color %s --force -R %s\n' \
+        "$(_forge_prompt_shell_quote "$label")" "$(_forge_prompt_shell_quote "$color")" \
+        "$(_forge_prompt_shell_quote "$repo")"
       ;;
     tea)
       printf 'tea labels create --name %s --color %s %s\n' \
-        "$label" "$color" "$(_forge_prompt_tea_target "$repo" "$project_path")"
+        "$(_forge_prompt_shell_quote "$label")" "$(_forge_prompt_shell_quote "$color")" \
+        "$(_forge_prompt_tea_target "$repo" "$project_path")"
       ;;
     fj)
       local host="${FORGE_HOST:-<forge-host>}"
       local fj_color="$color"
       [[ "$fj_color" == \#* ]] || fj_color="#$fj_color"
-      printf 'fj -H %s repo labels %s create %s %s\n' "$host" "$repo" "$label" "$fj_color"
+      printf 'fj -H %s repo labels %s create %s %s\n' \
+        "$(_forge_prompt_shell_quote "$host")" "$(_forge_prompt_shell_quote "$repo")" \
+        "$(_forge_prompt_shell_quote "$label")" "$(_forge_prompt_shell_quote "$fj_color")"
       ;;
     *)
       printf 'Use the active forge CLI to create label %s with color %s on %s\n' \
-        "$label" "$color" "$repo"
+        "$(_forge_prompt_shell_quote "$label")" "$(_forge_prompt_shell_quote "$color")" \
+        "$(_forge_prompt_shell_quote "$repo")"
       ;;
   esac
 }
@@ -351,19 +362,22 @@ forge_prompt_issue_list() {
 
   case "${FORGE_PROVIDER:-}" in
     gh)
-      printf 'gh issue list -R %s --state %s --limit 100\n' "$repo" "$state"
+      printf 'gh issue list -R %s --state %s --limit 100\n' \
+        "$(_forge_prompt_shell_quote "$repo")" "$(_forge_prompt_shell_quote "$state")"
       ;;
     tea)
       printf 'tea issues list %s --state %s --limit 100\n' \
-        "$(_forge_prompt_tea_target "$repo" "$project_path")" "$state"
+        "$(_forge_prompt_tea_target "$repo" "$project_path")" "$(_forge_prompt_shell_quote "$state")"
       ;;
     fj)
       local host="${FORGE_HOST:-<forge-host>}"
       printf 'fj -H %s --style minimal issue search --repo %s --state %s\n' \
-        "$host" "$repo" "$state"
+        "$(_forge_prompt_shell_quote "$host")" "$(_forge_prompt_shell_quote "$repo")" \
+        "$(_forge_prompt_shell_quote "$state")"
       ;;
     *)
-      printf 'Use the active forge CLI to list %s issues on %s\n' "$state" "$repo"
+      printf 'Use the active forge CLI to list %s issues on %s\n' \
+        "$(_forge_prompt_shell_quote "$state")" "$(_forge_prompt_shell_quote "$repo")"
       ;;
   esac
 }
@@ -377,9 +391,11 @@ _forge_prompt_tea_target() {
   elif [[ -n "${FORGE_PROJECT_PATH:-}" ]]; then
     printf -- '--repo %s --remote %s' "$(_forge_prompt_shell_quote "$FORGE_PROJECT_PATH")" "$remote"
   elif [[ -n "${FORGE_TEA_LOGIN:-}" ]]; then
-    printf -- '--repo %s --login %s' "$repo" "$FORGE_TEA_LOGIN"
+    printf -- '--repo %s --login %s' \
+      "$(_forge_prompt_shell_quote "$repo")" "$(_forge_prompt_shell_quote "$FORGE_TEA_LOGIN")"
   else
-    printf -- '--repo %s --remote %s' "$repo" "$remote"
+    printf -- '--repo %s --remote %s' \
+      "$(_forge_prompt_shell_quote "$repo")" "$(_forge_prompt_shell_quote "$remote")"
   fi
 }
 

@@ -16,8 +16,11 @@
 # RepoLens — evidence-ledger / finding-registry helpers.
 #
 # This module is sourceable; it defines functions only and has no top-level
-# side effects. It depends on no globals — every function works purely from
-# its arguments — so it is safe to source alone under `set -uo pipefail`.
+# side effects. Nearly every function works purely from its arguments — so it
+# is safe to source alone under `set -uo pipefail`. The sole exception is the
+# `build_finding_registry` orchestrator, which reads the optional `LOG_BASE`
+# and `OUTPUT_DIR` globals (both `${VAR:-}`-guarded) to resolve where the
+# registry lands and where to find a local `--local` md tree.
 #
 # The finding registry (`logs/<run-id>/final/findings.jsonl`, schema in
 # docs/finding-registry-schema.md) needs a STABLE `id` so the same finding
@@ -133,6 +136,112 @@ _ledger_severity_normalize() {
   esac
 }
 
+# _ledger_complexity_normalize <value>
+#   Canonicalizes a task-complexity estimate (issue #385) to an INTEGER 1..5
+#   (printed as a bare digit) or "" for anything else — absent, out-of-range
+#   (0, 6, 7, ...), non-integer (2.5), or non-numeric. Trims surrounding
+#   whitespace and strips one surrounding pair of matching quotes first, so a
+#   YAML-quoted "5" normalizes exactly like a bare 5. Complexity is an
+#   orthogonal, OPTIONAL routing tier AUTHORED by the audit model; bash only
+#   parses and range-checks it — it never scores or infers it (no LLM logic in
+#   the tool, per CLAUDE.md). Out-of-range is REJECTED to "" rather than clamped
+#   so a miscalibrated model surfaces as null, not a false-legal tier. Pure;
+#   set -u safe with a missing/empty arg.
+_ledger_complexity_normalize() {
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#\"}"; value="${value%\"}"
+  value="${value#\'}"; value="${value%\'}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  case "$value" in
+    1|2|3|4|5) printf '%s' "$value" ;;
+    *) printf '' ;;
+  esac
+}
+
+# _ledger_finding_type_normalize <value>
+#   Canonicalizes a raw finding-TYPE string to one of the six closed taxonomy
+#   ids (or "" for unknown). Prefers the shared finding_type_normalize
+#   (lib/core.sh) when it is already sourced; otherwise falls back to a
+#   self-contained replica so lib/ledger.sh keeps resolving types when sourced on
+#   its own (the same defensive pattern as _ledger_severity_normalize above).
+_ledger_finding_type_normalize() {
+  if declare -F finding_type_normalize >/dev/null 2>&1; then
+    finding_type_normalize "${1:-}"
+    return
+  fi
+
+  # Self-contained replica of lib/core.sh::finding_type_normalize.
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ "$value" == \[*\] ]]; then
+    value="${value#\[}"; value="${value%\]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+  fi
+  value="${value,,}"
+  case "$value" in
+    security-vulnerability) printf '%s\n' 'security-vulnerability' ;;
+    reliability-bug)        printf '%s\n' 'reliability-bug' ;;
+    performance-risk)       printf '%s\n' 'performance-risk' ;;
+    maintainability)        printf '%s\n' 'maintainability' ;;
+    test-gap)               printf '%s\n' 'test-gap' ;;
+    external-dependency)    printf '%s\n' 'external-dependency' ;;
+    security)               printf '%s\n' 'security-vulnerability' ;;
+    bug|correctness|reliability)
+                            printf '%s\n' 'reliability-bug' ;;
+    perf|performance)       printf '%s\n' 'performance-risk' ;;
+    tests|testing)          printf '%s\n' 'test-gap' ;;
+    cve|dependency)         printf '%s\n' 'external-dependency' ;;
+    *) printf '' ;;
+  esac
+}
+
+# _ledger_domain_default_finding_type <domain>
+#   Back-compat fallback: maps a finding's domain to a default canonical type.
+#   Prefers the shared domain_default_finding_type (lib/core.sh) when sourced;
+#   otherwise a self-contained replica so the builders resolve a domain default
+#   even when lib/ledger.sh is sourced alone. Always prints a canonical id
+#   (unknown/empty -> maintainability, the safe non-security default).
+_ledger_domain_default_finding_type() {
+  if declare -F domain_default_finding_type >/dev/null 2>&1; then
+    domain_default_finding_type "${1:-}"
+    return
+  fi
+
+  # Self-contained replica of lib/core.sh::domain_default_finding_type.
+  local domain="${1:-}"
+  domain="${domain#"${domain%%[![:space:]]*}"}"
+  domain="${domain%"${domain##*[![:space:]]}"}"
+  domain="${domain,,}"
+  case "$domain" in
+    security|llm-security) printf '%s\n' 'security-vulnerability' ;;
+    testing)              printf '%s\n' 'test-gap' ;;
+    performance)          printf '%s\n' 'performance-risk' ;;
+    error-handling|concurrency|database)
+                          printf '%s\n' 'reliability-bug' ;;
+    *)                    printf '%s\n' 'maintainability' ;;
+  esac
+}
+
+# _ledger_resolve_finding_type <raw_type> <domain>
+#   Canonical finding type for a registry record: a valid raw type wins (repaired
+#   via _ledger_finding_type_normalize); otherwise fall back to the domain
+#   default. Always prints exactly one of the six canonical ids — never empty (so
+#   registry records are always typed). Value-based: callers pass already-read
+#   frontmatter so the builders do not re-read the file (mirrors
+#   lib/core.sh::finding_resolve_type, which is the file-reading entry point).
+#   Pure; set -u safe with missing/empty args.
+_ledger_resolve_finding_type() {
+  local norm
+  norm="$(_ledger_finding_type_normalize "${1:-}")"
+  [[ -n "$norm" ]] || norm="$(_ledger_domain_default_finding_type "${2:-}")"
+  printf '%s\n' "$norm"
+}
+
 # build_findings_jsonl_from_manifest <manifest_path> <out_jsonl_path>
 #   Reads a validated synthesizer manifest (logs/<run-id>/final/manifest.json:
 #   a JSON array of cluster objects) and writes the canonical finding registry
@@ -179,7 +288,7 @@ build_findings_jsonl_from_manifest() {
   local tmp="${out}.tmp.$$"
   : > "$tmp" || return 1
 
-  local count i entry domain lens title raw_sev sev vstatus status id
+  local count i entry domain lens title raw_sev sev vstatus status id raw_type ftype cx
   count="$(jq 'length' "$manifest")" || { rm -f "$tmp"; return 1; }
   for (( i = 0; i < count; i++ )); do
     entry="$(jq -c --argjson i "$i" '.[$i]' "$manifest")" || { rm -f "$tmp"; return 1; }
@@ -188,9 +297,19 @@ build_findings_jsonl_from_manifest() {
     title="$(jq -r  '.title // ""'   <<<"$entry")"
     raw_sev="$(jq -r '.severity // ""' <<<"$entry")"
     vstatus="$(jq -r '.verification_status // ""' <<<"$entry")"
+    # Manifest clusters carry no finding taxonomy `type:` today, so this is
+    # normally "" and the type resolves purely from the cluster's domain — the
+    # read is defensive/future-proof in case a manifest ever adds one (#344).
+    raw_type="$(jq -r '.type // ""' <<<"$entry")"
+    # Complexity (#385): optional 1..5 routing tier authored by the synthesizer.
+    # Absent/out-of-range normalizes to "" -> stored as null (parity with the
+    # nullable confidence slot). tostring so a JSON number reaches the normalizer
+    # as its bare digits.
+    cx="$(_ledger_complexity_normalize "$(jq -r '.complexity // "" | tostring' <<<"$entry")")"
 
     id="$(finding_id "$domain" "$lens" "$title")"
     sev="$(_ledger_severity_normalize "$raw_sev")"
+    ftype="$(_ledger_resolve_finding_type "$raw_type" "$domain")"
     status="new"
     case "$vstatus" in
       wrong) status="likely-false-positive" ;;
@@ -199,12 +318,13 @@ build_findings_jsonl_from_manifest() {
 
     jq -cn \
       --argjson entry "$entry" \
-      --arg id "$id" --arg severity "$sev" --arg status "$status" '
+      --arg id "$id" --arg severity "$sev" --arg status "$status" --arg ftype "$ftype" \
+      --arg complexity "$cx" '
       {
         id: $id,
         title: ($entry.title // ""),
         severity: $severity,
-        type: null,
+        type: $ftype,
         domain: ($entry.domain // ""),
         lens: ($entry.lens // ""),
         status: $status,
@@ -213,6 +333,7 @@ build_findings_jsonl_from_manifest() {
         duplicate_group: ($entry.cluster_id // null),
         markdown_path: null,
         validation: {},
+        complexity: (if $complexity == "" then null else ($complexity | tonumber) end),
         source_finding_paths: ($entry.source_finding_paths // [])
       }' >> "$tmp" || { rm -f "$tmp"; return 1; }
   done
@@ -322,7 +443,7 @@ build_findings_jsonl_from_local() {
   local tmp="${out}.tmp.$$"
   : > "$tmp" || return 1
 
-  local file rel title severity domain lens id sev
+  local file rel title severity domain lens id sev type_raw ftype cx
   while IFS= read -r -d '' file; do
     # Skip + warn (not fatal) when there is no valid leading frontmatter block.
     if ! _ledger_has_frontmatter "$file"; then
@@ -334,6 +455,11 @@ build_findings_jsonl_from_local() {
     severity="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" severity)")"
     domain="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" domain)")"
     lens="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" lens)")"
+    type_raw="$(_ledger_trim_yaml_value "$(_ledger_frontmatter_scalar "$file" type)")"
+    # Complexity (#385): optional 1..5 routing tier from the finding frontmatter.
+    # The normalizer trims/de-quotes and range-checks; absent or out-of-range
+    # yields "" -> stored as null (parity with the nullable confidence slot).
+    cx="$(_ledger_complexity_normalize "$(_ledger_frontmatter_scalar "$file" complexity)")"
 
     # Directory fallback only when the <domain>/<lens> nesting actually exists.
     # rel like <domain>/<lens>/NNN-x.md has 3+ path components; a flat file does
@@ -346,15 +472,19 @@ build_findings_jsonl_from_local() {
 
     id="$(finding_id "$domain" "$lens" "$title")"
     sev="$(_ledger_severity_normalize "$severity")"
+    # Resolve from the POST directory-fallback $domain (not a fresh file read) so
+    # a type:-less file under <domain>/<lens>/NNN.md still gets the right default.
+    ftype="$(_ledger_resolve_finding_type "$type_raw" "$domain")"
 
     jq -cn \
       --arg id "$id" --arg title "$title" --arg severity "$sev" \
-      --arg domain "$domain" --arg lens "$lens" --arg md "$file" '
+      --arg domain "$domain" --arg lens "$lens" --arg md "$file" --arg ftype "$ftype" \
+      --arg complexity "$cx" '
       {
         id: $id,
         title: $title,
         severity: $severity,
-        type: null,
+        type: $ftype,
         domain: $domain,
         lens: $lens,
         status: "new",
@@ -362,7 +492,8 @@ build_findings_jsonl_from_local() {
         confidence: null,
         duplicate_group: null,
         markdown_path: $md,
-        validation: {}
+        validation: {},
+        complexity: (if $complexity == "" then null else ($complexity | tonumber) end)
       }' >> "$tmp" || { rm -f "$tmp"; return 1; }
   done < <(find "$dir" -type f -name '*.md' -print0 | LC_ALL=C sort -z)
 
@@ -371,14 +502,14 @@ build_findings_jsonl_from_local() {
 
 # build_findings_csv <findings_jsonl_path> <out_csv_path>
 #   Projects the canonical finding registry (findings.jsonl, schema in
-#   docs/finding-registry-schema.md) onto a flat CSV: a fixed 11-column header
+#   docs/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
 #   row, then one row per JSONL line, preserving JSONL line order
 #   (deterministic). Spreadsheet/grep users get a flat view without a second
 #   source of truth — findings.jsonl stays the full-fidelity registry.
 #
 #   Columns (exactly, in this order):
 #     id,title,severity,type,domain,lens,status,primary_location,confidence,
-#     duplicate_group,markdown_path
+#     duplicate_group,markdown_path,complexity
 #   The nested `validation` object and the `source_finding_paths` array are
 #   OMITTED — they don't flatten to a single cell. Keep this column list in
 #   lockstep with the jq array below; the header string and the array are two
@@ -402,9 +533,11 @@ build_findings_csv() {
   [[ -f "$in" ]]  || { echo "build_findings_csv: input not found: $in" >&2; return 2; }
 
   local tmp="${out}.tmp.$$"
-  # Header first. Keep this list in lockstep with the jq array below.
+  # Header first. Keep this list in lockstep with the jq array below. `complexity`
+  # (#385) is appended at the END so every pre-existing column index stays stable
+  # for downstream consumers that read the CSV positionally.
   printf '%s\n' \
-    'id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path' \
+    'id,title,severity,type,domain,lens,status,primary_location,confidence,duplicate_group,markdown_path,complexity' \
     > "$tmp" || return 1
 
   # One CSV row per JSONL value (jq streams values in input order). Raw field
@@ -412,7 +545,8 @@ build_findings_csv() {
   # literal "null". An empty input yields zero rows -> header-only CSV, exit 0.
   jq -r '
     [ .id, .title, .severity, .type, .domain, .lens, .status,
-      .primary_location, .confidence, .duplicate_group, .markdown_path ]
+      .primary_location, .confidence, .duplicate_group, .markdown_path,
+      .complexity ]
     | @csv
   ' "$in" >> "$tmp" || { rm -f "$tmp"; return 1; }
 
@@ -471,7 +605,10 @@ validate_findings_jsonl() {
       def is_nonempty_string: type == "string" and length > 0;
       def severities: ["critical","high","medium","low"];
       def statuses:   ["new","duplicate","needs-validation","likely-false-positive"];
-      def types:      ["security","reliability","performance","maintainability","test-gap","external-dependency"];
+      # Accept BOTH the legacy short forms and the canonical long-form ids that
+      # finding_resolve_type / finding_type_normalize emit (#344). Additive so
+      # existing short-form fixtures stay valid while resolver output validates.
+      def types:      ["security","reliability","performance","maintainability","test-gap","external-dependency","security-vulnerability","reliability-bug","performance-risk"];
       if type != "object" then "not a JSON object"
       else
         . as $v
@@ -488,7 +625,17 @@ validate_findings_jsonl() {
             (if ($v.type != null and $v.type != "") and ((types | index($v.type)) == null)
                then "invalid type: \($v.type | tostring)" else empty end),
             (if ($v | has("validation")) and (($v.validation | type) != "object")
-               then "validation must be an object" else empty end)
+               then "validation must be an object" else empty end),
+            # complexity (#385) is OPTIONAL + nullable (mirrors confidence): an
+            # absent key or an explicit null is fine. When present and non-null it
+            # must be an INTEGER 1..5 — a non-number, out-of-range (0, 6, ...), or
+            # fractional (2.5) value is a violation. NOT added to the required-keys
+            # list above so pre-existing / hand-authored records stay valid.
+            (if ($v | has("complexity")) and ($v.complexity != null)
+                and (($v.complexity | type) != "number"
+                     or $v.complexity < 1 or $v.complexity > 5
+                     or $v.complexity != ($v.complexity | floor))
+               then "invalid complexity: \($v.complexity | tostring)" else empty end)
           )
       end
     ' <<<"$line" 2>/dev/null)"
@@ -509,5 +656,160 @@ validate_findings_jsonl() {
   done < "$findings"
 
   (( errors == 0 )) || return 1
+  return 0
+}
+
+# _ledger_repo_root
+#   Prints the repository root (the parent of this file's lib/ directory).
+#   Self-contained replica of lib/synthesize.sh::_synthesize_repo_root so the
+#   log-base resolver works when lib/ledger.sh is sourced on its own. Both
+#   files live in lib/, so `dirname/..` yields the same root.
+_ledger_repo_root() {
+  local source_dir
+  source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf '%s' "$(cd "$source_dir/.." && pwd)"
+}
+
+# _ledger_log_base <run_id>
+#   Resolves the run's log base: honors the optional `LOG_BASE` global (so the
+#   orchestrator and tests can redirect output) and otherwise falls back to
+#   <repo_root>/logs/<run_id>. Prefers the shared _synthesize_log_base
+#   (lib/synthesize.sh) when it is already sourced, so the registry lands beside
+#   the synthesizer's manifest.json; otherwise uses a self-contained replica so
+#   lib/ledger.sh keeps working when sourced alone (the same defensive pattern
+#   as _ledger_normalize_title / _ledger_severity_normalize above).
+_ledger_log_base() {
+  local run_id="${1:-}"
+  if declare -F _synthesize_log_base >/dev/null 2>&1; then
+    _synthesize_log_base "$run_id"
+    return
+  fi
+  if [[ -n "${LOG_BASE:-}" ]]; then
+    printf '%s' "$LOG_BASE"
+    return 0
+  fi
+  printf '%s/logs/%s' "$(_ledger_repo_root)" "$run_id"
+}
+
+# build_finding_registry <run_id> [local_dir]
+#   Orchestrates the four source-specific builders above into the canonical
+#   finding registry under `<log_base>/final/`: findings.jsonl (full fidelity)
+#   plus findings.csv (flat projection). This is the single producer of
+#   final/findings.jsonl — consumed by result_pointer.sh / human_review.sh /
+#   triage. It is GLUE ONLY; no new parsing logic lives here.
+#
+#   Source selection (both may run, results are concatenated):
+#   - if `<log_base>/final/manifest.json` exists, ingest it via
+#     build_findings_jsonl_from_manifest.
+#   - if a local output dir is supplied (2nd arg, else the OUTPUT_DIR global)
+#     and is a directory, ingest its `*.md` tree via
+#     build_findings_jsonl_from_local.
+#   The concatenation is then collapsed so each `id` appears once, keeping the
+#   FIRST occurrence (manifest-first tie-break — the manifest record carries the
+#   richer cross-run provenance: source_finding_paths passthrough and a
+#   cluster-seeded duplicate_group. Either order satisfies the AC, which mandates
+#   only that identical-id duplicates collapse). jq -s + reduce is single-pass
+#   and order-preserving (unique_by would sort and lose "keep first").
+#
+#   Atomicity mirrors run_synthesizer's tmp+mv discipline: the registry is
+#   assembled in a `.tmp.$$` candidate, validated via validate_findings_jsonl,
+#   and only `mv`-ed into place on success. A validation (or builder) failure
+#   discards every intermediate and promotes NOTHING — a partial/failed build
+#   never leaves a consumable findings.jsonl. The CSV is derived from the
+#   PROMOTED jsonl, so no orphan CSV survives a discarded candidate.
+#
+#   No sources -> a canonical-empty registry: a 0-line findings.jsonl and a
+#   header-only findings.csv, exit 0 (parity with the synthesizer's empty case).
+#
+#   Reads the optional LOG_BASE and OUTPUT_DIR globals (both `${VAR:-}`-guarded).
+#   Returns 2 on a missing run_id, 1 on a builder/jq/IO/validation failure.
+build_finding_registry() {
+  local run_id="${1:-}"
+  local local_dir="${2:-${OUTPUT_DIR:-}}"
+  if [[ -z "$run_id" ]]; then
+    echo "build_finding_registry: missing run_id" >&2
+    return 2
+  fi
+
+  local final_dir
+  final_dir="$(_ledger_log_base "$run_id")/final"
+  if ! mkdir -p "$final_dir"; then
+    echo "build_finding_registry: cannot create $final_dir" >&2
+    return 1
+  fi
+
+  local jsonl="$final_dir/findings.jsonl"
+  local csv="$final_dir/findings.csv"
+  local candidate="$jsonl.tmp.$$"
+  local deduped="$candidate.dedup"
+  local m_tmp="$final_dir/.fr-manifest.$$"
+  local l_tmp="$final_dir/.fr-local.$$"
+
+  # Start from an empty candidate so the no-source path falls out naturally.
+  if ! : > "$candidate"; then
+    echo "build_finding_registry: cannot write candidate $candidate" >&2
+    return 1
+  fi
+
+  # Source 1: synthesizer manifest, when present.
+  local manifest="$final_dir/manifest.json"
+  if [[ -f "$manifest" ]]; then
+    if build_findings_jsonl_from_manifest "$manifest" "$m_tmp"; then
+      cat "$m_tmp" >> "$candidate"
+    else
+      echo "build_finding_registry: manifest ingest failed" >&2
+      rm -f "$candidate" "$m_tmp" "$l_tmp"
+      return 1
+    fi
+    rm -f "$m_tmp"
+  fi
+
+  # Source 2: --local markdown tree, when a directory is supplied. A
+  # provided-but-missing dir is treated as "no local source" (forgiving).
+  if [[ -n "$local_dir" && -d "$local_dir" ]]; then
+    if build_findings_jsonl_from_local "$local_dir" "$l_tmp"; then
+      cat "$l_tmp" >> "$candidate"
+    else
+      echo "build_finding_registry: local ingest failed" >&2
+      rm -f "$candidate" "$m_tmp" "$l_tmp"
+      return 1
+    fi
+    rm -f "$l_tmp"
+  fi
+
+  # Collapse identical-id lines, keeping the first occurrence (input order
+  # preserved). Empty candidate -> empty output (0 lines).
+  if ! jq -c -s '
+        reduce .[] as $r ({seen: {}, out: []};
+          if (.seen[$r.id] // false) then .
+          else .seen[$r.id] = true | .out += [$r] end)
+        | .out[]' "$candidate" > "$deduped" 2>/dev/null; then
+    echo "build_finding_registry: dedup pass failed" >&2
+    rm -f "$candidate" "$deduped"
+    return 1
+  fi
+  if ! mv "$deduped" "$candidate"; then
+    rm -f "$candidate" "$deduped"
+    return 1
+  fi
+
+  # Validate BEFORE promoting. A failure discards the candidate and promotes
+  # nothing (no jsonl, no derived csv).
+  if ! validate_findings_jsonl "$candidate"; then
+    echo "build_finding_registry: registry failed validation, not promoting" >&2
+    rm -f "$candidate"
+    return 1
+  fi
+
+  # Atomic promote, then derive the CSV from the promoted jsonl.
+  if ! mv "$candidate" "$jsonl"; then
+    rm -f "$candidate"
+    return 1
+  fi
+  if ! build_findings_csv "$jsonl" "$csv"; then
+    echo "build_finding_registry: csv projection failed" >&2
+    return 1
+  fi
+
   return 0
 }

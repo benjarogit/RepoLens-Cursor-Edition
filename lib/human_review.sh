@@ -193,3 +193,240 @@ human_review_bucketize() {
 
   return 0
 }
+
+# _human_review_repo_root
+#   Prints the repo root (the parent of lib/). Mirrors the sibling finalize
+#   helpers (_synthesize_repo_root / _verify_repo_root). Pure; prints one path.
+_human_review_repo_root() {
+  local source_dir
+  source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || source_dir="."
+  (cd -- "$source_dir/.." 2>/dev/null && pwd) || printf '%s' "$source_dir/.."
+}
+
+# _human_review_log_base <run_id>
+#   Returns the run log base directory. Honors the global LOG_BASE when set (so
+#   the orchestrator and tests can redirect output) and otherwise falls back to
+#   <repo_root>/logs/<run_id>. Mirrors _synthesize_log_base / _verify_log_base so
+#   the finalize call and the test drive the renderer the same way. Pure; prints
+#   one path.
+_human_review_log_base() {
+  local run_id="${1:-}"
+  if [[ -n "${LOG_BASE:-}" ]]; then
+    printf '%s' "$LOG_BASE"
+    return 0
+  fi
+  printf '%s/logs/%s' "$(_human_review_repo_root)" "$run_id"
+}
+
+# render_human_review_digest <run_id>
+#   Renders the human-facing curated digest at logs/<run-id>/final/HUMAN_REVIEW.md
+#   from the bucketed finding registry (final/findings.jsonl). This is the
+#   CONSUMER of human_review_bucketize: it slices each bucket to its visible cap
+#   and emits a single prioritized Markdown page in a fixed section order —
+#   header (run id + totals), Top Critical/High, Top Medium Security,
+#   Test & Quality (own section), Not actionable without a scanner (own section),
+#   and the themed Remainder — every leftover (bucket-5) finding grouped by
+#   `domain` into collapsed <details> blocks (count desc, then domain name), each
+#   listing severity + lens + title + primary_location, under the `#remainder`
+#   anchor. It RENDERS only — it never builds or mutates the registry and invokes
+#   no model.
+#
+#   PATH RESOLUTION: honors $LOG_BASE when set (the live finalize call exports it;
+#   tests set it to a temp dir), else <repo_root>/logs/<run_id>. So the test drives
+#   the function by just setting LOG_BASE and dropping a fixture findings.jsonl.
+#
+#   ATOMIC WRITE: builds the document into <out>.tmp.$$ and `mv -f`s it into place
+#   on success (the promote pattern from lib/synthesize.sh / lib/triage.sh). On a
+#   render/IO failure the tmp file is removed and the function returns 1, leaving
+#   NO partial HUMAN_REVIEW.md behind.
+#
+#   DEFENSIVE RENDER: a null/empty severity/domain/lens/primary_location renders
+#   as an em dash via disp(), never the literal "null"; a null/empty markdown_path
+#   emits NO link (never a broken "[]()"). Every field is emitted verbatim by jq,
+#   so a title containing backticks / $(...) / pipes is data, never shell-evaluated
+#   and never breaks a row (bullet-list layout, not a Markdown table).
+#
+#   EMPTY REGISTRY: an empty / missing findings.jsonl feeds all-empty buckets
+#   (human_review_bucketize is total), so the digest renders a valid "nothing to
+#   review" page (header + every section header with an empty-state note) and
+#   returns 0.
+#
+#   Returns 0 on success (file written), 1 on a render/IO failure.
+render_human_review_digest() {
+  local run_id="${1:-}"
+  local base final_dir findings out tmp
+
+  base="$(_human_review_log_base "$run_id")"
+  final_dir="$base/final"
+  findings="$final_dir/findings.jsonl"
+  out="$final_dir/HUMAN_REVIEW.md"
+
+  mkdir -p -- "$final_dir" 2>/dev/null || return 1
+  tmp="$out.tmp.$$"
+
+  # Bucketize is a total function (always rc 0, always one valid JSON object),
+  # so the pipeline's exit status is determined solely by the jq renderer.
+  if human_review_bucketize "$findings" \
+    | jq -r --arg run_id "$run_id" --arg ph "—" '
+        def disp(v): (if (v == null or v == "") then $ph else (v | tostring) end);
+
+        # One finding -> a bullet-list block. Severity drives the heading; the
+        # Where line carries domain/lens + primary_location; Details links to the
+        # markdown_path only when present.
+        def entry(f):
+          "### [" + (((f.severity // "") | tostring | ascii_upcase)
+                     | (if . == "" then $ph else . end)) + "] "
+            + (f.title // "(untitled)" | tostring) + "\n"
+          + "- **Where:** " + disp(f.domain) + "/" + disp(f.lens)
+            + " — `" + disp(f.primary_location) + "`\n"
+          + (if (f.markdown_path == null or f.markdown_path == "") then ""
+             else "- **Details:** [" + (f.markdown_path | tostring)
+                    + "](" + (f.markdown_path | tostring) + ")\n"
+             end);
+
+        # A capped bucket -> a "## <title>" section. The visible slice is
+        # items[:cap] (cap null => all items); count and full items are not
+        # truncated by the bucketizer, so an empty slice yields the empty-state.
+        # NO SILENT TRUNCATION: under the header we always emit an explicit
+        # "N total, showing M, K more" accounting line (K = N - M, the held-back
+        # surplus) so a reviewer sees exactly how much of the bucket is curated
+        # away. For an uncapped own-section (cap null) M == N so K == 0 ("0 more",
+        # truthful). Numbers are always integers, so no literal "null" can leak.
+        def section($bucket; $title):
+          ($bucket.items[0:($bucket.cap // ($bucket.items | length))]) as $shown
+          | ($bucket.count) as $n
+          | ($shown | length) as $m
+          | "## " + $title + " (" + ($n | tostring) + ")\n\n"
+            + "_" + ($n | tostring) + " total, showing " + ($m | tostring)
+              + ", " + (($n - $m) | tostring) + " more._\n\n"
+            + (if $m == 0
+               then "_Nothing to review in this section._\n"
+               else ([ $shown[] | entry(.) ] | join("\n"))
+               end);
+
+        # The themed remainder (bucket 5): every leftover finding, grouped by
+        # `domain` (theme), each group a GitHub <details> block collapsed by
+        # default so the reviewer sees coverage without scrolling hundreds of
+        # lines. Groups are ordered count desc, then domain key asc for
+        # determinism; a null/empty domain normalizes to a single em-dash group
+        # (the grouping key is the normalized STRING, never JSON null, so it never
+        # leaks into the digest nor breaks the sort). Reuses entry() so each
+        # finding lists severity + lens + title + primary_location exactly like
+        # the top sections. remainder.cap is null, so nothing is sliced — every
+        # bucket-5 finding renders under exactly one group. Items arrive
+        # pre-sorted from the bucketizer (and group_by is stable), so within-group
+        # order needs no extra sort. The blank line after <summary> and before
+        # </details> is required for GitHub to render the Markdown body inside the
+        # collapsed block.
+        def remainder_section($rem):
+          "## Remainder (" + ($rem.count | tostring) + ")\n\n"
+          + "<a id=\"remainder\"></a>\n\n"
+          + (if ($rem.count == 0)
+             then "_No further findings._\n"
+             else
+               ( [ $rem.items[] | . + {"_gkey": ((.domain // "") | tostring)} ]
+                 | group_by(._gkey)
+                 | map({domain: .[0].domain, key: .[0]._gkey, items: ., count: length})
+                 | sort_by([(- .count), .key]) ) as $groups
+               | "_Other findings: " + ($rem.count | tostring)
+                   + " across " + ($groups | length | tostring) + " theme(s)._\n\n"
+               + ( [ $groups[]
+                     | "<details>\n<summary>" + disp(.domain) + " — "
+                         + (.count | tostring) + " finding(s)</summary>\n\n"
+                       + ([ .items[] | entry(.) ] | join("\n"))
+                       + "\n</details>\n" ]
+                   | join("\n") )
+             end);
+
+        ( [ .top_critical_high.count, .top_medium_security.count, .test_quality.count,
+            .not_actionable_without_scanner.count, .remainder.count ] | add ) as $total
+        | "# Human Review — " + $run_id + "\n\n"
+          + "Curated, prioritized digest of the finding registry — "
+          + ($total | tostring) + " finding(s) across 5 buckets.\n\n"
+          + (if $total == 0 then "_No findings to review._\n\n" else "" end)
+          + section(.top_critical_high; "Top Critical / High") + "\n"
+          + section(.top_medium_security; "Top Medium Security") + "\n"
+          + section(.test_quality; "Test & Quality") + "\n"
+          + section(.not_actionable_without_scanner; "Not Actionable Without a Scanner") + "\n"
+          + remainder_section(.remainder)
+      ' >"$tmp" 2>/dev/null; then
+    if mv -f -- "$tmp" "$out" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  rm -f -- "$tmp"
+  return 1
+}
+
+# human_review_heldback_summary <run_id>
+#   Prints (to stdout) the single-line finalize accounting message reconciling
+#   the curated digest against the full finding registry — e.g.
+#     Human review: 638 findings, 71 surfaced, 567 held back \
+#       (critical/high +12, medium-security +43, remainder collapsed across 14 theme(s))
+#
+#   The numbers are sourced from human_review_bucketize's FULL ordered lists (the
+#   bucketizer never truncates count/items to the cap), never re-derived from the
+#   rendered Markdown, so they are exact. Reconciliation identity (always holds):
+#     surfaced  = min(c1,cap1) + min(c2,cap2) + c3 + c4   (capped slices + the two
+#                                                          uncapped own-sections)
+#     held_back = (c1 - shown1) + (c2 - shown2) + c5        (cap surplus + the whole
+#                                                          collapsed remainder)
+#     surfaced + held_back == c1+c2+c3+c4+c5 == total       (shown_i + held_i == c_i)
+#   The collapsed remainder counts as held-back (it is de-emphasized in the
+#   digest), matching the issue's worked example. `themes` is the count of
+#   distinct remainder `domain` groups (null/empty domain normalized to one group,
+#   mirroring the renderer). When nothing is held back the line reports "0 held
+#   back" and "no remainder" truthfully (AC4).
+#
+#   PURE: returns the message string on stdout; does NOT call log_info itself, so
+#   it stays decoupled from lib/logging.sh and cannot trip the log_*-under-set -u
+#   crash trap. The orchestrator (repolens.sh) owns the actual emission via
+#   `log_info "$(human_review_heldback_summary ...)"`. Always returns 0; an empty /
+#   missing registry yields "0 findings, 0 surfaced, 0 held back".
+#
+#   PATH RESOLUTION: identical to render_human_review_digest (honors $LOG_BASE,
+#   else <repo_root>/logs/<run_id>), so finalize and tests address the same file.
+human_review_heldback_summary() {
+  local run_id="${1:-}"
+  local base findings msg
+
+  base="$(_human_review_log_base "$run_id")"
+  findings="$base/final/findings.jsonl"
+
+  msg="$(human_review_bucketize "$findings" | jq -r '
+      (.top_critical_high.count) as $c1
+      | (.top_medium_security.count) as $c2
+      | (.test_quality.count) as $c3
+      | (.not_actionable_without_scanner.count) as $c4
+      | (.remainder.count) as $c5
+      | (.top_critical_high.cap // $c1) as $cap1
+      | (.top_medium_security.cap // $c2) as $cap2
+      | (if $c1 < $cap1 then $c1 else $cap1 end) as $shown1
+      | (if $c2 < $cap2 then $c2 else $cap2 end) as $shown2
+      | ($c1 - $shown1) as $held1
+      | ($c2 - $shown2) as $held2
+      | ($shown1 + $shown2 + $c3 + $c4) as $surfaced
+      | ($held1 + $held2 + $c5) as $held_back
+      | ($c1 + $c2 + $c3 + $c4 + $c5) as $total
+      | ([ .remainder.items[]? | ((.domain // "") | tostring) ] | unique | length) as $themes
+      | "Human review: " + ($total | tostring) + " findings, "
+        + ($surfaced | tostring) + " surfaced, "
+        + ($held_back | tostring) + " held back"
+        + " (critical/high +" + ($held1 | tostring)
+        + ", medium-security +" + ($held2 | tostring)
+        + (if $c5 > 0
+           then ", remainder collapsed across " + ($themes | tostring) + " theme(s)"
+           else ", no remainder" end)
+        + ")"
+    ' 2>/dev/null)" || msg=""
+
+  # Defensive: if jq somehow yields nothing (it should not — bucketize is total),
+  # still print a truthful zero line so the orchestrator's log_info is never empty.
+  if [[ -z "$msg" ]]; then
+    msg="Human review: 0 findings, 0 surfaced, 0 held back (critical/high +0, medium-security +0, no remainder)"
+  fi
+
+  printf '%s\n' "$msg"
+  return 0
+}

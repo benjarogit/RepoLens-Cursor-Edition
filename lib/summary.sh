@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -120,23 +120,36 @@ _increment_summary_issues_created_locked() {
   return "$rc"
 }
 
-# record_lens <summary_file> <domain> <lens_id> <iterations> <status> [issues] [rate_limit_sleep_seconds]
+# record_lens <summary_file> <domain> <lens_id> <iterations> <status> \
+#             [issues] [rate_limit_sleep_seconds] \
+#             [started_at] [completed_at] [duration_seconds]
 #   Appends a lens result to the summary. The `round` field is sourced from
 #   the ambient CURRENT_ROUND_INDEX variable (set by `run_rounds` for
 #   multi-round runs), defaulting to 0 for non-rounded runs so that
 #   `(domain, lens)` no longer collides across rounds in `summary.json`.
+#   The trailing timing args are optional and additive: started_at/completed_at
+#   are ISO-8601 UTC strings (empty → JSON null), duration_seconds is a
+#   non-negative integer (non-numeric → 0). Legacy 7-arg callers keep working
+#   with timing defaulting to null/0.
 record_lens() {
   local file="$1" domain="$2" lens_id="$3" iterations="$4" status="$5"
   local issues="${6:-0}"
   local rate_limit_sleep_seconds="${7:-0}"
+  local started_at="${8:-}"
+  local completed_at="${9:-}"
+  local duration_seconds="${10:-0}"
   with_file_lock "${file}.lock" "${REPOLENS_SUMMARY_LOCK_TIMEOUT:-30}" \
-    _record_lens_locked "$file" "$domain" "$lens_id" "$iterations" "$status" "$issues" "$rate_limit_sleep_seconds"
+    _record_lens_locked "$file" "$domain" "$lens_id" "$iterations" "$status" "$issues" "$rate_limit_sleep_seconds" \
+      "$started_at" "$completed_at" "$duration_seconds"
 }
 
 _record_lens_locked() {
   local file="$1" domain="$2" lens_id="$3" iterations="$4" status="$5"
   local issues="${6:-0}"
   local rate_limit_sleep_seconds="${7:-0}"
+  local started_at="${8:-}"
+  local completed_at="${9:-}"
+  local duration_seconds="${10:-0}"
   local tmp
   local lenses_increment=1
   local round="${CURRENT_ROUND_INDEX:-0}"
@@ -150,10 +163,14 @@ _record_lens_locked() {
   if [[ ! "$rate_limit_sleep_seconds" =~ ^[0-9]+$ ]]; then
     rate_limit_sleep_seconds=0
   fi
+  if [[ ! "$duration_seconds" =~ ^[0-9]+$ ]]; then
+    duration_seconds=0
+  fi
   jq --arg d "$domain" --arg l "$lens_id" --argjson i "$iterations" --arg s "$status" \
      --argjson iss "$issues" --argjson rlss "$rate_limit_sleep_seconds" --argjson lr "$lenses_increment" \
      --argjson rnd "$round" \
-    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss, "round": $rnd}] |
+     --arg sa "$started_at" --arg ca "$completed_at" --argjson dur "$duration_seconds" \
+    '.lenses += [{"domain": $d, "lens": $l, "iterations": $i, "status": $s, "issues_created": $iss, "rate_limit_sleep_seconds": $rlss, "round": $rnd, "started_at": ($sa | if . == "" then null else . end), "completed_at": ($ca | if . == "" then null else . end), "duration_seconds": $dur}] |
      .totals.lenses_run += $lr |
      .totals.iterations_total += $i |
      .totals.issues_created += $iss' "$file" > "$tmp" && mv "$tmp" "$file"
@@ -278,6 +295,126 @@ _finalize_summary_locked() {
   return "$rc"
 }
 
+# _summary_fmt_duration <seconds>
+#   Human-format a duration. Reuses status_format_duration (lib/status.sh) when
+#   that library is loaded; otherwise degrades to raw seconds. Uses a runtime
+#   declare -F guard because lib/summary.sh is sourced before lib/status.sh, so
+#   the formatter is unavailable at source time but present at call time.
+_summary_fmt_duration() {
+  if declare -F status_format_duration >/dev/null 2>&1; then
+    status_format_duration "$1"
+  else
+    printf '%ss' "$1"
+  fi
+}
+
+# summary_time_breakdown <summary_file> [top_n]
+#   Prints a human-readable time breakdown to stdout: total wall time, total
+#   lens-seconds, the top-N slowest individual lens-runs (default 10), and
+#   per-domain summed duration_seconds (descending). Degrades gracefully: if jq
+#   is missing, the file is absent, or no lens has a positive duration_seconds
+#   (older/legacy summaries), it prints a single "Time breakdown: no timing
+#   data" line (or nothing for a missing file) and returns 0. Durations are
+#   formatted via _summary_fmt_duration. Read-only; no side effects.
+summary_time_breakdown() {
+  local file="${1:-}" top_n="${2:-10}"
+  [[ -n "$file" && -f "$file" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  [[ "$top_n" =~ ^[0-9]+$ ]] && (( top_n > 0 )) || top_n=10
+
+  local total_lens_seconds
+  total_lens_seconds="$(jq -r '[.lenses[]?.duration_seconds // 0] | add // 0' "$file" 2>/dev/null || printf '0')"
+  [[ "$total_lens_seconds" =~ ^[0-9]+$ ]] || total_lens_seconds=0
+  if (( total_lens_seconds == 0 )); then
+    printf 'Time breakdown: no timing data\n'
+    return 0
+  fi
+
+  local wall_seconds
+  wall_seconds="$(jq -r '
+    (.started_at // null) as $s | (.completed_at // null) as $c
+    | if ($s != null and $c != null and ($s|type)=="string" and ($c|type)=="string")
+      then (($c|fromdateiso8601?) // null) as $ce | (($s|fromdateiso8601?) // null) as $se
+        | if ($ce != null and $se != null) then (($ce - $se) | (if . < 0 then 0 else . end)) else empty end
+      else empty end
+  ' "$file" 2>/dev/null || true)"
+
+  printf 'Time breakdown\n'
+  if [[ "$wall_seconds" =~ ^[0-9]+$ ]]; then
+    printf '  wall time:    %s\n' "$(_summary_fmt_duration "$wall_seconds")"
+  fi
+  printf '  lens-seconds: %s\n' "$(_summary_fmt_duration "$total_lens_seconds")"
+
+  printf '  slowest lenses (top %d):\n' "$top_n"
+  while IFS=$'\t' read -r key dur; do
+    [[ -n "$key" ]] || continue
+    printf '    %-40s %s\n' "$key" "$(_summary_fmt_duration "$dur")"
+  done < <(jq -r --argjson n "$top_n" '
+    (.lenses // [])
+    | map(select((.duration_seconds // 0) > 0))
+    | sort_by([-(.duration_seconds // 0), .domain, .lens])
+    | .[0:$n][]
+    | [ (.domain + "/" + .lens), (.duration_seconds // 0) ] | @tsv
+  ' "$file" 2>/dev/null)
+
+  printf '  per-domain totals:\n'
+  while IFS=$'\t' read -r dom dur; do
+    [[ -n "$dom" ]] || continue
+    printf '    %-24s %s\n' "$dom" "$(_summary_fmt_duration "$dur")"
+  done < <(jq -r '
+    (.lenses // [])
+    | map(select((.duration_seconds // 0) > 0))
+    | group_by(.domain)
+    | map({domain: .[0].domain, total: (map(.duration_seconds // 0) | add)})
+    | sort_by([-.total, .domain])[]
+    | [ .domain, .total ] | @tsv
+  ' "$file" 2>/dev/null)
+}
+
+# estimate_run_wall_seconds <lens_count> <depth> <rounds> <max_parallel> [per_iter_secs]
+#   Pure planning estimate (integer seconds) for a full fan-out. NO I/O, no model
+#   calls — arithmetic only. Prints exactly one integer on stdout; the caller (a
+#   follow-up issue) formats human text. Read-only; no side effects.
+#
+#   Model: ceil(lens_count / max_parallel) * depth * rounds * per_iter_secs
+#   per_iter_secs defaults to 90s (a deliberately conservative single-iteration
+#   wall-clock guess: cold agent start + repo read + one analysis pass). Override
+#   precedence: explicit 5th arg > REPOLENS_EST_PER_ITER_SECS env > 90. Rough
+#   planning number, not a guarantee — real runs trend higher (non-convergence).
+#
+#   Guards: max_parallel < 1 (incl. 0/empty) is treated as 1 (no divide-by-zero);
+#   non-numeric/negative inputs fall back to safe defaults; zero-padded operands
+#   ("08") are parsed base-10 so they never crash as invalid octal. lens_count is
+#   intentionally NOT clamped to 1 — a genuine 0-lens run is ~0 seconds.
+estimate_run_wall_seconds() {
+  local lenses="${1:-0}" depth="${2:-1}" rounds="${3:-1}" max_parallel="${4:-1}"
+  local per_iter="${5:-}"
+
+  # per_iter precedence: explicit arg > env > default(90). ${VAR:-default} keeps
+  # the env read set -u-safe even when REPOLENS_EST_PER_ITER_SECS is unset.
+  if [[ ! "$per_iter" =~ ^[0-9]+$ ]]; then
+    per_iter="${REPOLENS_EST_PER_ITER_SECS:-90}"
+  fi
+  [[ "$per_iter" =~ ^[0-9]+$ ]] || per_iter=90
+
+  # Non-numeric (incl. empty and negatives — a leading '-' fails ^[0-9]+$) falls
+  # back to a safe default before any arithmetic touches the value.
+  [[ "$lenses"       =~ ^[0-9]+$ ]] || lenses=0
+  [[ "$depth"        =~ ^[0-9]+$ ]] || depth=1
+  [[ "$rounds"       =~ ^[0-9]+$ ]] || rounds=1
+  [[ "$max_parallel" =~ ^[0-9]+$ ]] || max_parallel=1
+
+  # Force base-10 FIRST so zero-padded operands ("08"/"09") never abort $(( )) as
+  # invalid octal. Clamp the multipliers to >=1 AFTER normalization (octal-safe);
+  # this also collapses max_parallel=0 into the divide-by-zero guard.
+  local n=$((10#$lenses)) d=$((10#$depth)) r=$((10#$rounds)) p=$((10#$max_parallel)) s=$((10#$per_iter))
+  (( d >= 1 )) || d=1
+  (( r >= 1 )) || r=1
+  (( p >= 1 )) || p=1
+
+  local waves=$(( (n + p - 1) / p ))   # integer ceil, valid for n>=0, p>=1
+  printf '%d\n' $(( waves * d * r * s ))
+}
 # append_repolens_error_event <log_base> <run_id> <domain> <lens_id> <iteration> <code> <message> <detail_file>
 #   Appends one NDJSON line for IDE/agent failures (review + automation).
 append_repolens_error_event() {

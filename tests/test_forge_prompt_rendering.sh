@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -148,29 +148,30 @@ echo ""
 echo "--- Group 2: provider-specific rendered audit prompt commands ---"
 gh_prompt="$(render_prompt gh audit owner/repo "$TMPDIR/local checkout")"
 assert_contains "gh issue create rendered" "gh issue create" "$gh_prompt"
-assert_contains "gh issue create targets repo slug" "-R owner/repo" "$gh_prompt"
-assert_contains "gh label create rendered" "gh label create audit:code-quality/naming --color ededed --force -R owner/repo" "$gh_prompt"
-assert_contains "gh issue list rendered" "gh issue list -R owner/repo --state open --limit 100" "$gh_prompt"
+assert_contains "gh issue create targets repo slug" "-R 'owner/repo'" "$gh_prompt"
+assert_contains "gh label create rendered" "gh label create 'audit:code-quality/naming' --color 'ededed' --force -R 'owner/repo'" "$gh_prompt"
+assert_contains "gh issue list rendered" "gh issue list -R 'owner/repo' --state 'open' --limit 100" "$gh_prompt"
 assert_not_contains "gh prompt has no raw forge placeholders" "{{FORGE_" "$gh_prompt"
 
 tea_prompt="$(render_prompt tea audit owner/repo "$TMPDIR/local checkout")"
 assert_contains "tea issue create rendered" "tea issues create" "$tea_prompt"
 assert_contains "tea issue create uses description flag" "--description" "$tea_prompt"
-assert_contains "tea issue create uses label flag" "--labels audit:code-quality/naming" "$tea_prompt"
+assert_contains "tea issue create uses label flag" "--labels 'audit:code-quality/naming'" "$tea_prompt"
 assert_contains "tea target stays bound to project path and remote" "--repo '$TMPDIR/local checkout' --remote origin" "$tea_prompt"
-assert_contains "tea label create rendered" "tea labels create --name audit:code-quality/naming --color ededed" "$tea_prompt"
-assert_contains "tea issue list rendered" "tea issues list --repo '$TMPDIR/local checkout' --remote origin --state open --limit 100" "$tea_prompt"
+assert_contains "tea label create rendered" "tea labels create --name 'audit:code-quality/naming' --color 'ededed'" "$tea_prompt"
+assert_contains "tea issue list rendered" "tea issues list --repo '$TMPDIR/local checkout' --remote origin --state 'open' --limit 100" "$tea_prompt"
 assert_not_contains "tea prompt has no gh issue command" "gh issue" "$tea_prompt"
 assert_not_contains "tea prompt has no gh label command" "gh label" "$tea_prompt"
 assert_not_contains "tea prompt has no raw forge placeholders" "{{FORGE_" "$tea_prompt"
 
 fj_prompt="$(render_prompt fj audit owner/repo "$TMPDIR/local checkout")"
-assert_contains "fj issue create rendered" "fj -H codeberg.org issue create --repo owner/repo" "$fj_prompt"
-assert_contains "fj label application rendered" 'fj -H codeberg.org issue edit "owner/repo#$issue_number" labels --add audit:code-quality/naming' "$fj_prompt"
+assert_contains "fj issue create rendered" "fj -H 'codeberg.org' issue create --repo 'owner/repo'" "$fj_prompt"
+assert_contains "fj label application rendered" "issue edit 'owner/repo'" "$fj_prompt"
+assert_contains "fj label add is shell-quoted" "labels --add 'audit:code-quality/naming'" "$fj_prompt"
 assert_contains "fj URL issue number extraction rendered" 'issue_number="${issue_output##*issues/}"' "$fj_prompt"
 assert_contains "fj hash issue number extraction rendered" 'issue_number="${issue_number:-${issue_output##*#}}"' "$fj_prompt"
-assert_contains "fj label create rendered with #RRGGBB" "fj -H codeberg.org repo labels owner/repo create audit:code-quality/naming #ededed" "$fj_prompt"
-assert_contains "fj issue list rendered" "fj -H codeberg.org --style minimal issue search --repo owner/repo --state open" "$fj_prompt"
+assert_contains "fj label create rendered with #RRGGBB" "fj -H 'codeberg.org' repo labels 'owner/repo' create 'audit:code-quality/naming' '#ededed'" "$fj_prompt"
+assert_contains "fj issue list rendered" "fj -H 'codeberg.org' --style minimal issue search --repo 'owner/repo' --state 'open'" "$fj_prompt"
 assert_not_contains "fj prompt has no gh issue command" "gh issue" "$fj_prompt"
 assert_not_contains "fj prompt has no gh label command" "gh label" "$fj_prompt"
 assert_not_contains "fj prompt has no non-executable prose" "then identify" "$fj_prompt"
@@ -186,14 +187,14 @@ for provider in gh tea fj; do
   prompt="$(render_prompt "$provider" discover owner/repo "$TMPDIR/local checkout")"
   case "$provider" in
     gh)
-      assert_contains "discover gh enhancement label command" "gh label create enhancement --color a2eeef --force -R owner/repo" "$prompt"
+      assert_contains "discover gh enhancement label command" "gh label create 'enhancement' --color 'a2eeef' --force -R 'owner/repo'" "$prompt"
       ;;
     tea)
-      assert_contains "discover tea enhancement label command" "tea labels create --name enhancement --color a2eeef --repo '$TMPDIR/local checkout' --remote origin" "$prompt"
+      assert_contains "discover tea enhancement label command" "tea labels create --name 'enhancement' --color 'a2eeef' --repo '$TMPDIR/local checkout' --remote origin" "$prompt"
       assert_not_contains "discover tea contains no gh commands" "gh label" "$prompt"
       ;;
     fj)
-      assert_contains "discover fj enhancement label command with #RRGGBB" "fj -H codeberg.org repo labels owner/repo create enhancement #a2eeef" "$prompt"
+      assert_contains "discover fj enhancement label command with #RRGGBB" "fj -H 'codeberg.org' repo labels 'owner/repo' create 'enhancement' '#a2eeef'" "$prompt"
       assert_not_contains "discover fj contains no gh commands" "gh label" "$prompt"
       ;;
   esac
@@ -207,12 +208,12 @@ mkdir -p "$renamed_project"
 remote_slug="$(forge_remote_repo_slug "https://github.com/acme/origin-repo.git")"
 
 gh_renamed_prompt="$(render_prompt gh audit "$remote_slug" "$renamed_project")"
-assert_contains "gh prompt uses origin repo slug when checkout name differs" "-R acme/origin-repo" "$gh_renamed_prompt"
-assert_not_contains "gh prompt does not target checkout basename" "-R acme/local-dir" "$gh_renamed_prompt"
+assert_contains "gh prompt uses origin repo slug when checkout name differs" "-R 'acme/origin-repo'" "$gh_renamed_prompt"
+assert_not_contains "gh prompt does not target checkout basename" "-R 'acme/local-dir'" "$gh_renamed_prompt"
 
 fj_renamed_prompt="$(render_prompt fj audit "$remote_slug" "$renamed_project")"
-assert_contains "fj prompt uses origin repo slug when checkout name differs" "--repo acme/origin-repo" "$fj_renamed_prompt"
-assert_not_contains "fj prompt does not target checkout basename" "--repo acme/local-dir" "$fj_renamed_prompt"
+assert_contains "fj prompt uses origin repo slug when checkout name differs" "--repo 'acme/origin-repo'" "$fj_renamed_prompt"
+assert_not_contains "fj prompt does not target checkout basename" "--repo 'acme/local-dir'" "$fj_renamed_prompt"
 
 tea_renamed_prompt="$(render_prompt tea audit "$remote_slug" "$renamed_project")"
 assert_contains "tea prompt remains project-path bound" "--repo '$renamed_project' --remote origin" "$tea_renamed_prompt"

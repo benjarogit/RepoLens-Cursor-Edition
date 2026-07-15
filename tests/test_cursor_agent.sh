@@ -84,7 +84,7 @@ assert_eq "strip --model= value form" $'cursor-agent\n--force' "$(cursor_runner_
 assert_ok "runner falls back to auto when named model rejected" bash -c '
   source "'"$SCRIPT_DIR"'/lib/core.sh"
   source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
-  out="$(CURSOR_AGENT_RUNNER_CMD="'"$SCRIPT_DIR"'/tests/fixtures/mock_cursor_runner.sh" CURSOR_AGENT_MODEL="gpt-5" run_cursor_agent "Antworte mit DONE" "'"$SCRIPT_DIR"'" 2>/dev/null)"
+  out="$(CURSOR_AGENT_RUNNER_ALLOW_UNSAFE=1 CURSOR_AGENT_RUNNER_CMD="'"$SCRIPT_DIR"'/tests/fixtures/mock_cursor_runner.sh" CURSOR_AGENT_MODEL="gpt-5" run_cursor_agent "Antworte mit DONE" "'"$SCRIPT_DIR"'" 2>/dev/null)"
   grep -q "DONE" <<< "$out"
 '
 

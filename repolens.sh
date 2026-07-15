@@ -58,9 +58,13 @@ source "$SCRIPT_DIR/lib/polish.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/verify.sh"
 # shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/validate.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/triage.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/synthesize.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/ledger.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/result_pointer.sh"
 # shellcheck source=/dev/null
@@ -73,6 +77,12 @@ source "$SCRIPT_DIR/lib/android.sh"
 source "$SCRIPT_DIR/lib/forge.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/human_review.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/artifacts.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/local-dedupe.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/attempts.sh"
 
 VERSION="0.2.0"
 
@@ -135,7 +145,7 @@ any git repository and creates remote issues for real findings.
 
 Required:
   --project <path|url>    Local path or remote Git URL (cloned read-only if URL)
-  --agent <agent>         claude | codex | spark | sparc | cursor | cursor-ide | opencode | opencode/<model>
+  --agent <agent>         claude | codex | spark | sparc | cursor | cursor-ide | opencode | opencode/<model> | antigravity | <agent>/<model>
 
 Commands:
   status [run-id]         Show a live run snapshot from logs/<run-id>/status.json
@@ -144,7 +154,7 @@ Commands:
                           hidden from status auto-select, eligible for clean
 
 Options:
-  --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content | greenfield | polish
+  --mode <mode>           audit (default) | feature | bugfix | bugreport | discover | deploy | custom | opensource | content | greenfield | polish | spec-change
   --change <statement>    Change impact analysis — propagates statement across all lenses (implies --mode custom)
   --bug-report <file|text>
                           Symptom report for --mode bugreport. Accepts a file path (read verbatim)
@@ -161,6 +171,14 @@ Options:
                           Intersects with the mode-filtered lens list. Bypassed
                           when --focus or --domain is set (those win).
                           Example: --relevant-domains concurrency,database
+  --agent-override <csv>  Route specific domains or lenses to a different agent
+                          than the global --agent (cost vs. logic optimization).
+                          Comma-separated key=agent pairs. Keys are a domain id
+                          or a fully-qualified domain/lens (lens ids are not
+                          globally unique, so lens scope requires domain/lens).
+                          Precedence: domain/lens > domain > global --agent.
+                          Example: --agent opencode \
+                                   --agent-override security=claude,architecture=claude,information-architecture/empty-states=claude
   --scope-by-keywords     Deterministic, LLM-free pruning: substring-match the
                           bug-report text against each domain's "keywords" field
                           in config/domains.json (case-insensitive). Domains
@@ -168,9 +186,24 @@ Options:
                           Only effective in --mode bugreport. Env var fallback:
                           REPOLENS_SCOPE_BY_KEYWORDS=1.
   --parallel              Run lenses in parallel (one agent process per lens)
-  --max-parallel <n>      Max concurrent agents in parallel mode (default: 8)
-  --resume <run-id>       Resume a previous interrupted run
-  --spec <file>           Spec/PRD/roadmap to guide analysis (required for --mode greenfield)
+  --max-parallel <n>      Max concurrent agents in parallel mode. When unset the
+                          default is nproc-aware: clamp(detected cores, 8, 32).
+                          An explicit value is always authoritative and is never
+                          re-clamped. Higher concurrency trips provider rate
+                          limits faster. See REPOLENS_NPROC to pin the count.
+  --resume [<run-id>]     Resume a previous interrupted run (reuses its dir,
+                          skips completed lenses; add --focus/--domain to
+                          narrow). With no id, picks the latest interrupted run.
+  --validate <file>       Post-audit validation: re-verify an existing findings
+                          artifact (findings.jsonl / manifest.json, produced by a
+                          cheap "Radar" agent) with the flagship --agent, drop the
+                          false positives, and write a cleaned findings file. Does
+                          not run the lens scan. Needs --agent and --project.
+  --spec <file>           Spec/PRD/roadmap to guide analysis (required for --mode greenfield / spec-change)
+  --spec-base <ref>       Git base ref/range to diff the --spec file against in
+                          --mode spec-change (default: HEAD — working-tree-vs-HEAD,
+                          i.e. the uncommitted edit). Accepts a ref (HEAD~1) or a
+                          range (HEAD~1..HEAD). Only valid with --mode spec-change.
   --max-issues <n>        Stop after creating n total issues (dry-run quality check)
   --min-severity <level>  Only file findings at or above level: critical|high|medium|low
   --depth <n>             DONE streak depth per lens. Defaults: 3 for audit/feature/bugfix,
@@ -211,6 +244,10 @@ Options:
   --build-android-apk     In deploy mode, explicitly allow building Android source with ./gradlew assembleDebug
   --yes, -y               Skip confirmation prompt (for CI/automation)
   --max-cost <amount>     Warn if min. cost estimate exceeds this dollar amount (real cost typically 2–5x higher)
+  --flat-rate             Flat-rate / subscription costing (or REPOLENS_FLAT_RATE=true):
+                          show $0.00 marginal cost and expected request/quota
+                          consumption instead of a per-token dollar estimate
+                          (Claude Pro / ChatGPT Plus / Gemini Advanced / free tiers)
   --i-know-this-is-expensive
                           Acknowledge high --rounds cost. Bypasses the
                           rounds>=4 abort gate (which otherwise demands
@@ -275,6 +312,10 @@ Environment:
   REPOLENS_AGENT_TIMEOUT_SPARC
                            SPARC alias timeout override; also applies to spark
                            when SPARK is unset.
+  REPOLENS_AGENT_TIMEOUT_ANTIGRAVITY
+                           Antigravity per-invocation timeout override; wins over
+                           REPOLENS_AGENT_TIMEOUT and the mode-specific timeouts
+                           when --agent antigravity is selected.
   REPOLENS_AGENT_TIMEOUT_AUDIT
                            Audit default: 1800.
   REPOLENS_AGENT_TIMEOUT_FEATURE
@@ -308,6 +349,15 @@ Environment:
                            Raw worst-case wall time is timeout * iterations:
                            with defaults, 30 min * 20 = 10 hours before this
                            wall budget is applied.
+  REPOLENS_EST_WARN_HOURS  Wall-clock estimate threshold in hours (default: 24).
+                           When the startup estimate exceeds this, a loud warning
+                           lists tuning levers (--max-parallel, --agent, --depth,
+                           --domain/--focus, --max-issues). Set 0 to disable the
+                           warning; a non-numeric value falls back to 24.
+  REPOLENS_EST_PER_ITER_SECS
+                           Per-iteration wall-clock guess in seconds used by the
+                           startup estimate (default: 90). Higher values raise the
+                           estimate; non-numeric values fall back to the default.
   REPOLENS_RATE_LIMIT_MAX_SLEEP
                            Maximum parsed agent rate-limit wait in seconds
                            before falling back to abort behavior (default: 21600).
@@ -364,6 +414,13 @@ Environment:
                            with the remaining children. Should be >=
                            the lens wall budget plus a buffer for rate-limit
                            sleep and non-agent I/O.
+  REPOLENS_NPROC           Override the detected CPU core count used to derive
+                           the nproc-aware --max-parallel default. When
+                           --max-parallel is unset, the default is
+                           clamp(REPOLENS_NPROC, 8, 32), parsed base-10. An
+                           explicit --max-parallel always wins. Primarily a
+                           determinism knob for tests; a non-numeric value falls
+                           back to nproc(1)/getconf, then a floor of 8.
   DONE_STREAK_REQUIRED     DEPRECATED alias for --depth. Used only when --depth
                            is unset; must be between 1 and 19.
   REPOLENS_ROUNDS          Fallback for --rounds when the CLI flag is unset.
@@ -403,6 +460,22 @@ Environment:
                            On Ctrl-C or TERM, tracked parallel workers receive
                            SIGTERM, are polled for this grace period, then any
                            remaining workers are SIGKILL'd before cleanup returns.
+  DEDUPE_TITLE_SIM_PRIMARY Near-duplicate title-similarity bar on the Jaccard
+                           x10000 integer scale (0..10000; default 8500 = 0.85).
+                           Shared knob: gates both validate_manifest's pairwise
+                           title check (strict >) and _dedupe_is_match's primary
+                           title signal (inclusive >=). Lower = more aggressive
+                           deduping. A value > 10000 effectively disables the
+                           bar (no pair can reach it). Non-numeric/negative input
+                           falls back to the default with a warning (never
+                           crashes). Breaks the REPOLENS_ prefix on purpose, to
+                           match the shipped dedupe match helper.
+  DEDUPE_TITLE_SIM_SECONDARY
+                           Lower secondary title-similarity bar (Jaccard x10000;
+                           default 6000 = 0.60) used by _dedupe_is_match only
+                           when two records share a non-empty location. Same
+                           scale, validation, and > 10000 = disabled semantics
+                           as DEDUPE_TITLE_SIM_PRIMARY.
 EOF
 
   # Dynamic section: list modes, domains, and lenses from config
@@ -437,13 +510,14 @@ EOF
   echo "  greenfield  Spec-to-backlog planning — creates one implementation issue per iteration (requires --spec)"
   echo "  polish      Polish — proposes small, additive craft refinements"
   echo "  bugreport   Symptom-driven investigation — runs lenses on a user bug report (requires --bug-report)"
+  echo "  spec-change Spec-diff impact — derives code changes from a tracked spec's git diff (requires --spec)"
 
   # Parse all domains in one jq call
   local domain_data
   domain_data="$(jq -r '.domains | sort_by(.order)[] | .id + "|" + .name + "|" + (.mode // "code") + "|" + ([.lenses[] | if type == "string" then . else .id end] | join(","))' "$domains_file")"
 
-  local code_total=0 discover_total=0 deploy_total=0 opensource_total=0 content_total=0 greenfield_total=0 polish_total=0
-  local code_output="" discover_output="" deploy_output="" opensource_output="" content_output="" greenfield_output="" polish_output=""
+  local code_total=0 discover_total=0 deploy_total=0 opensource_total=0 content_total=0 greenfield_total=0 polish_total=0 spec_change_total=0
+  local code_output="" discover_output="" deploy_output="" opensource_output="" content_output="" greenfield_output="" polish_output="" spec_change_output=""
 
   while IFS='|' read -r did dname dmode dlenses; do
     IFS=',' read -ra lens_arr <<< "$dlenses"
@@ -474,6 +548,9 @@ EOF
     elif [[ "$dmode" == "polish" ]]; then
       polish_total=$((polish_total + lcount))
       polish_output+="$section"$'\n'
+    elif [[ "$dmode" == "spec-change" ]]; then
+      spec_change_total=$((spec_change_total + lcount))
+      spec_change_output+="$section"$'\n'
     else
       code_total=$((code_total + lcount))
       code_output+="$section"$'\n'
@@ -502,6 +579,9 @@ EOF
   echo "Domains (polish mode — ${polish_total} lenses):"
   echo ""
   printf "%s" "$polish_output"
+  echo "Domains (spec-change mode — ${spec_change_total} lenses):"
+  echo ""
+  printf "%s" "$spec_change_output"
 }
 
 # Dispatch read-only subcommands before normal run validation.
@@ -530,6 +610,12 @@ fi
 # --- Argument parsing ---
 PROJECT_PATH=""
 AGENT=""
+# Issue #380: per-domain / per-lens agent routing. AGENT_OVERRIDE_CSV holds the
+# raw --agent-override CSV (accumulated across repeated flags); AGENT_OVERRIDES
+# is the validated key->agent map (domain or domain/lens key), populated by
+# validate_agent_overrides once domains.json is available.
+AGENT_OVERRIDE_CSV=""
+declare -A AGENT_OVERRIDES=()
 MODE="audit"
 FOCUS=""
 DOMAIN_FILTER=""
@@ -539,8 +625,13 @@ SCOPE_BY_KEYWORDS=false
 SCOPE_BY_KEYWORDS_SET=false
 PARALLEL=false
 MAX_PARALLEL=8
+MAX_PARALLEL_SET=false
 RESUME_RUN_ID=""
+VALIDATE_INPUT=""
+VALIDATE_MODE=false
 SPEC_FILE=""
+SPEC_BASE="HEAD"
+SPEC_BASE_SET=false
 MAX_ISSUES=""
 MIN_SEVERITY=""
 DEPTH=""
@@ -574,6 +665,14 @@ MAX_COST=""
 EXPENSIVE_ACK=false
 DRY_RUN=false
 LOCAL_MODE=false
+# Flat-rate / subscription costing (issue #384): marginal per-token cost is $0
+# for Claude Pro / ChatGPT Plus / Gemini Advanced / free-tier users, so the
+# estimator shows expected request/quota consumption instead of a dollar figure.
+# Seed from the env var (true/1/yes); the --flat-rate flag can also enable it.
+case "${REPOLENS_FLAT_RATE:-}" in
+  true|1|yes|TRUE|YES) FLAT_RATE=true ;;
+  *) FLAT_RATE=false ;;
+esac
 DEPLOY_TARGET="auto"
 DEPLOY_TARGET_SET=false
 BUILD_ANDROID_APK=false
@@ -595,6 +694,12 @@ while [[ $# -gt 0 ]]; do
     --agent)
       [[ $# -ge 2 ]] || die "Option --agent requires an argument."
       AGENT="$2"
+      shift 2
+      ;;
+    --agent-override)
+      [[ $# -ge 2 ]] || die "Option --agent-override requires a comma-separated key=agent argument."
+      # Accumulate across repeated flags; validated later in validate_agent_overrides.
+      AGENT_OVERRIDE_CSV="${AGENT_OVERRIDE_CSV:+$AGENT_OVERRIDE_CSV,}$2"
       shift 2
       ;;
     --mode)
@@ -630,16 +735,41 @@ while [[ $# -gt 0 ]]; do
     --max-parallel)
       [[ $# -ge 2 ]] || die "Option --max-parallel requires an argument."
       MAX_PARALLEL="$2"
+      MAX_PARALLEL_SET=true
       shift 2
       ;;
     --resume)
-      [[ $# -ge 2 ]] || die "Option --resume requires an argument."
-      RESUME_RUN_ID="$2"
+      # With an explicit run id (any non-flag token), resume that id. With no
+      # following token, or when the next token is itself a flag (e.g.
+      # `--resume --dry-run`), defer to auto-selecting the latest interrupted
+      # run. Run ids never start with `--`, so `--*` is a safe discriminator and
+      # this avoids swallowing a trailing flag as the run id.
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        RESUME_RUN_ID="$2"
+        shift 2
+      else
+        RESUME_RUN_ID="@latest"
+        shift
+      fi
+      ;;
+    --validate)
+      # Post-audit validation: re-verify an existing findings artifact with a
+      # flagship agent and drop the false positives, instead of running a scan.
+      [[ $# -ge 2 ]] || die "Option --validate requires a findings file/path argument."
+      # shellcheck disable=SC2034 # Read by run_validate_command in lib/validate.sh.
+      VALIDATE_INPUT="$2"
+      VALIDATE_MODE=true
       shift 2
       ;;
     --spec)
       [[ $# -ge 2 ]] || die "Option --spec requires a file path argument."
       SPEC_FILE="$2"
+      shift 2
+      ;;
+    --spec-base)
+      [[ $# -ge 2 ]] || die "Option --spec-base requires a git ref/range argument."
+      SPEC_BASE="$2"
+      SPEC_BASE_SET=true
       shift 2
       ;;
     --max-issues)
@@ -785,6 +915,10 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
+    --flat-rate)
+      FLAT_RATE=true
+      shift
+      ;;
     --max-cost)
       [[ $# -ge 2 ]] || die "Option --max-cost requires a dollar amount."
       MAX_COST="$2"
@@ -816,6 +950,16 @@ done
 [[ -n "$AGENT" ]] || { usage; die "Missing required argument: --agent"; }
 [[ -n "$PROJECT_PATH" ]] || { usage; die "Missing required argument: --project"; }
 
+# --- Post-audit validation short-circuit (--validate) ---
+# Operates on a pre-existing findings artifact plus the repo on disk; it does
+# NOT run the lens fan-out, DONE×3 streak, rounds, or synthesizer. Short-circuit
+# here (like clean/status/supersede) before any run-pipeline setup so the heavy
+# machinery never engages.
+if [[ "$VALIDATE_MODE" == "true" ]]; then
+  run_validate_command
+  exit "$?"
+fi
+
 # --- Validate --output requires --local ---
 if [[ -n "$OUTPUT_DIR" ]] && ! $LOCAL_MODE; then
   die "--output requires --local (use --local to write findings as local markdown files)"
@@ -836,8 +980,8 @@ fi
 
 # --- Validate mode ---
 case "$MODE" in
-  audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish) ;;
-  *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'bugreport', 'discover', 'deploy', 'custom', 'opensource', 'content', 'greenfield', or 'polish')" ;;
+  audit|feature|bugfix|bugreport|discover|deploy|custom|opensource|content|greenfield|polish|spec-change) ;;
+  *) die "Invalid mode: $MODE (expected 'audit', 'feature', 'bugfix', 'bugreport', 'discover', 'deploy', 'custom', 'opensource', 'content', 'greenfield', 'polish', or 'spec-change')" ;;
 esac
 
 # --- Resolve --strategy (CLI flag wins over REPOLENS_STRATEGY env) ---
@@ -1067,6 +1211,9 @@ EOF
 if $DEPLOY_TARGET_SET && [[ "$MODE" != "deploy" ]]; then
   die "--deploy-target requires --mode deploy"
 fi
+if $SPEC_BASE_SET && [[ "$MODE" != "spec-change" ]]; then
+  die "--spec-base requires --mode spec-change"
+fi
 if [[ -n "$REMOTE_TARGET" && "$MODE" != "deploy" ]]; then
   die "--remote requires --mode deploy"
 fi
@@ -1295,6 +1442,11 @@ if [[ "$MODE" == "greenfield" && -z "$SPEC_FILE" ]]; then
   die "Mode 'greenfield' requires --spec <file>"
 fi
 
+# --- Validate spec-change spec requirement ---
+if [[ "$MODE" == "spec-change" && -z "$SPEC_FILE" ]]; then
+  die "Mode 'spec-change' requires --spec <file>"
+fi
+
 # --- Handle remote repository URL ---
 CLONE_DIR=""
 
@@ -1433,6 +1585,76 @@ is_phase_rate_limit_stopped_reason() {
   esac
 }
 
+# resolve_run_exit_code — print the process exit code implied by the already-
+# resolved run state. PURE map (no side effects); it mirrors the exit-code
+# ladder at the end of main so the value recorded in attempts.json and the real
+# process exit can never drift. Must be called after REPOLENS_FINAL_STATE /
+# RUN_HEALTH / RUN_ROUNDS_RC are final. Keep the order identical to the ladder:
+# interrupted -> rate-limit-abort -> no-progress/systemic -> rounds-rc ->
+# broken-health -> 0.
+resolve_run_exit_code() {
+  if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
+    printf '%s' "${REPOLENS_INTERRUPT_EXIT_CODE:-130}"
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    if is_phase_rate_limit_stopped_reason "$(rate_limit_abort_stopped_reason)"; then
+      printf '1'
+    else
+      printf '3'
+    fi
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.agent-no-progress-abort" || -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+    printf '1'
+    return 0
+  fi
+  if [[ "${RUN_ROUNDS_RC:-0}" -ne 0 ]]; then
+    printf '%s' "${RUN_ROUNDS_RC:-0}"
+    return 0
+  fi
+  if [[ "${RUN_HEALTH:-ok}" == "broken" && "${REPOLENS_ALLOW_DEGENERATE:-false}" != "true" ]]; then
+    printf '2'
+    return 0
+  fi
+  printf '0'
+}
+
+# resolve_why_stopped — print the attempt's why_stopped string. Prefers
+# summary.json's stopped_reason; when that is empty (e.g. a summary-write race or
+# a sentinel dropped without a stop reason) it falls back to whichever abort
+# sentinel is present so the attempt entry is never blank while the run clearly
+# aborted. Reads SUMMARY_FILE + the LOG_BASE sentinels; no side effects.
+resolve_why_stopped() {
+  local reason
+  reason="$(jq -r '.stopped_reason // empty' "$SUMMARY_FILE" 2>/dev/null || printf '')"
+  if [[ -n "$reason" ]]; then
+    printf '%s' "$reason"
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
+    printf 'rate-limit'
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.agent-no-progress-abort" ]]; then
+    printf 'agent-no-progress'
+    return 0
+  fi
+  if [[ -f "$LOG_BASE/.systemic-failure-abort" ]]; then
+    printf 'systemic-failure'
+    return 0
+  fi
+  if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
+    case "${REPOLENS_INTERRUPT_EXIT_CODE:-130}" in
+      129) printf 'interrupted-sighup' ;;
+      143) printf 'interrupted-sigterm' ;;
+      *) printf 'interrupted-sigint' ;;
+    esac
+    return 0
+  fi
+  printf ''
+}
+
 apply_rate_limit_abort_final_state() {
   local marker key value exit_code="" stopped_reason="" existing_reason
 
@@ -1480,18 +1702,21 @@ apply_rate_limit_abort_final_state() {
 _handle_hangup() {
   REPOLENS_FINAL_STATE="interrupted"
   REPOLENS_INTERRUPT_EXIT_CODE=129
+  print_resume_hint
   exit 129
 }
 
 _handle_interrupt() {
   REPOLENS_FINAL_STATE="interrupted"
   REPOLENS_INTERRUPT_EXIT_CODE=130
+  print_resume_hint
   exit 130
 }
 
 _handle_termination() {
   REPOLENS_FINAL_STATE="interrupted"
   REPOLENS_INTERRUPT_EXIT_CODE=143
+  print_resume_hint
   exit 143
 }
 
@@ -1726,7 +1951,7 @@ if [[ -n "$MIN_SEVERITY" ]]; then
 fi
 MIN_SEVERITY_MODE_EXEMPT=""
 case "$MODE" in
-  discover|feature|custom|greenfield|polish)
+  discover|feature|custom|greenfield|polish|spec-change)
     if [[ -n "$MIN_SEVERITY" ]]; then
       MIN_SEVERITY_MODE_EXEMPT="$MODE"
       MIN_SEVERITY=""
@@ -1739,6 +1964,24 @@ export REPOLENS_MIN_SEVERITY
 # --- Validate max-cost ---
 if [[ -n "$MAX_COST" ]]; then
   [[ "$MAX_COST" =~ ^[0-9]+\.?[0-9]*$ ]] || die "--max-cost must be a numeric value, got: $MAX_COST"
+fi
+
+# --- Resolve max-parallel (issue #367) ---
+# An explicit --max-parallel is always authoritative: it is validated as a
+# positive integer but never re-clamped, so a user may deliberately run below
+# the auto-default floor or above its cap. When the flag is unset, the default
+# becomes nproc-aware: clamp(detect_nproc(), FLOOR=8, CAP=32). FLOOR=8 keeps
+# today's static default as a floor (no small-host regression); CAP=32 bounds
+# host-RAM blow-up and provider rate-limit exposure. detect_nproc honors the
+# REPOLENS_NPROC env override (parsed before the clamp) for deterministic tests.
+# Resolved here, upstream of every consumer (print_wall_estimate, init_parallel,
+# the status snapshot), so they all observe the same value — even in sequential
+# runs, where the wall-clock preview still divides by MAX_PARALLEL.
+if $MAX_PARALLEL_SET; then
+  [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]] \
+    || die "--max-parallel must be a positive integer, got: $MAX_PARALLEL"
+else
+  MAX_PARALLEL="$(repolens_auto_max_parallel "$(detect_nproc)")"
 fi
 
 # --- Derive DONE streak threshold ---
@@ -1825,11 +2068,9 @@ require_cmd jq
 require_cmd timeout
 
 case "$AGENT" in
-  claude) require_cmd claude ;;
-  codex|spark|sparc) require_cmd codex ;;
   cursor) require_cmd "$(cursor_runner_required_cmd)" ;;
   cursor-ide) ;; # Composer handoff — kein cursor-agent
-  opencode|opencode/*) require_cmd opencode ;;
+  *) require_agent_cmd "$AGENT" ;;
 esac
 
 # --- Resolve and validate forge provider ---
@@ -1860,6 +2101,14 @@ fi
 
 # --- Generate or resume run ID ---
 if [[ -n "$RESUME_RUN_ID" ]]; then
+  # `--resume` with no explicit id resolves to the newest interrupted run.
+  # Resolve here — before LOG_BASE/acquire_run_lock/mkdir below — so a
+  # no-candidate die leaks no fresh run dir.
+  if [[ "$RESUME_RUN_ID" == "@latest" ]]; then
+    RESUME_RUN_ID="$(_resolve_latest_incomplete_run)" \
+      || die "No interrupted run found to resume; pass an explicit run id or start a fresh run."
+    log_info "Auto-resuming latest interrupted run: $RESUME_RUN_ID"
+  fi
   if [[ "$RESUME_RUN_ID" == *"/"* || "$RESUME_RUN_ID" == "." || "$RESUME_RUN_ID" == ".." ]]; then
     die "Invalid run id '$(status_sanitize_display "$RESUME_RUN_ID")'. Run ids must be direct logs/ children."
   fi
@@ -1874,6 +2123,10 @@ export LOG_BASE
 acquire_run_lock
 HEARTBEAT_DIR="$LOG_BASE/.heartbeat"
 mkdir -p "$HEARTBEAT_DIR"
+# Record the start of THIS invocation for the per-attempt audit trail (#371).
+# Runs for every invocation incl. --dry-run and --resume; before .completed is
+# touched so a fresh-run baseline is correctly 0. Non-fatal.
+attempts_begin "$LOG_BASE"
 SUMMARY_FILE="$LOG_BASE/summary.json"
 if [[ -n "$RESUME_RUN_ID" && -f "$LOG_BASE/.agent-no-progress-abort" ]]; then
   rm -f "$LOG_BASE/.agent-no-progress-abort"
@@ -1914,6 +2167,32 @@ if [[ "$MODE" == "bugreport" ]]; then
     BUG_REPORT="$(cat "$BUG_REPORT_FILE")"
   fi
   [[ -n "$BUG_REPORT" ]] || die "Mode 'bugreport' could not resolve a bug report (and resume could not recover one from $BUG_REPORT_FILE)"
+fi
+
+# --- Compute / rehydrate the spec diff for spec-change mode ---
+# spec-change derives its work from the git diff of the tracked --spec file
+# against --spec-base (default HEAD = working-tree-vs-HEAD, i.e. the uncommitted
+# edit). The diff is the authoritative change signal: it is computed ONCE here,
+# persisted verbatim to logs/<run-id>/spec-diff.txt so every lens (and every
+# --resume) renders the identical diff, and passed into compose_prompt via the
+# SPEC_DIFF file-backed template var. The spec must be a file tracked by git
+# inside the repo so a diff baseline exists (mirrors the greenfield/custom
+# fail-fast guards). An empty diff is valid — it renders a "no changes" notice
+# and the wrapper terminates early without filing issues.
+SPEC_DIFF_FILE="$LOG_BASE/spec-diff.txt"
+if [[ "$MODE" == "spec-change" ]]; then
+  if [[ -n "$RESUME_RUN_ID" && -f "$SPEC_DIFF_FILE" ]]; then
+    : # Reuse the diff captured at the original run start for reproducibility.
+  else
+    git -C "$PROJECT_PATH" ls-files --error-unmatch -- "$SPEC_FILE" >/dev/null 2>&1 \
+      || die "Mode 'spec-change' requires --spec to be a file tracked by git inside $PROJECT_PATH (so a diff baseline exists): $SPEC_FILE"
+    if ! _spec_diff_output="$(git -C "$PROJECT_PATH" diff "$SPEC_BASE" -- "$SPEC_FILE" 2>/dev/null)"; then
+      die "Mode 'spec-change' could not compute the spec diff against base ref '$SPEC_BASE' — check that it is a valid git ref or range."
+    fi
+    printf '%s' "$_spec_diff_output" > "$SPEC_DIFF_FILE" \
+      || die "Unable to persist spec diff to $SPEC_DIFF_FILE"
+    unset _spec_diff_output
+  fi
 fi
 
 # Path to the round-0 triage context pack. Populated by run_triage when
@@ -1974,6 +2253,94 @@ fi
 # --- Validate config files exist ---
 [[ -f "$DOMAINS_FILE" ]] || die "Missing config: $DOMAINS_FILE"
 [[ -f "$COLORS_FILE" ]] || die "Missing config: $COLORS_FILE"
+
+# resolve_effective_agent <domain> <lens_id> — return the agent that should run
+# this lens. Precedence: fully-qualified lens key (domain/lens) > domain key >
+# global $AGENT. Reads the AGENT_OVERRIDES map populated by
+# validate_agent_overrides; with no overrides it always returns $AGENT, so the
+# no-override path is byte-for-byte unchanged (issue #380).
+resolve_effective_agent() {
+  local domain="$1" lens_id="$2"
+  local lens_key="$domain/$lens_id"
+  if [[ -n "${AGENT_OVERRIDES[$lens_key]:-}" ]]; then
+    printf '%s\n' "${AGENT_OVERRIDES[$lens_key]}"
+  elif [[ -n "${AGENT_OVERRIDES[$domain]:-}" ]]; then
+    printf '%s\n' "${AGENT_OVERRIDES[$domain]}"
+  else
+    printf '%s\n' "$AGENT"
+  fi
+}
+
+# overrides_active — true when at least one --agent-override pair is in effect.
+overrides_active() {
+  [[ "${#AGENT_OVERRIDES[@]}" -gt 0 ]]
+}
+
+# validate_agent_overrides — parse AGENT_OVERRIDE_CSV, validate every pair up
+# front (fail fast, before any lens runs), and populate AGENT_OVERRIDES. Each
+# pair is key=agent split on the FIRST '=' only so opencode/<model> values
+# survive. The agent value goes through the same validate_agent allow-list and
+# require_agent_cmd binary check as the global --agent. The key must be a known
+# domain id or a fully-qualified domain/lens tuple from domains.json; a bare
+# lens id (ambiguous — lens ids are not globally unique) or an unknown key is
+# rejected loudly so a typo never silently no-ops the routing the operator asked
+# for.
+validate_agent_overrides() {
+  [[ -n "$AGENT_OVERRIDE_CSV" ]] || return 0
+
+  local -A _known_domains=() _known_tuples=() _known_lens_ids=()
+  local _row
+  while IFS= read -r _row; do
+    [[ -n "$_row" ]] && _known_domains["$_row"]=1
+  done < <(jq -r '.domains[].id' "$DOMAINS_FILE")
+  while IFS= read -r _row; do
+    [[ -n "$_row" ]] && _known_tuples["$_row"]=1
+  done < <(jq -r '.domains[] | .id as $d | .lenses[]
+                  | (if type == "string" then . else .id end)
+                  | "\($d)/\(.)"' "$DOMAINS_FILE")
+  while IFS= read -r _row; do
+    [[ -n "$_row" ]] && _known_lens_ids["$_row"]=1
+  done < <(jq -r '.domains[].lenses[] | (if type == "string" then . else .id end)' "$DOMAINS_FILE")
+
+  local -a _pairs=()
+  IFS=',' read -ra _pairs <<< "$AGENT_OVERRIDE_CSV"
+  local _pair _key _val
+  for _pair in "${_pairs[@]}"; do
+    # Trim surrounding whitespace.
+    _pair="${_pair#"${_pair%%[![:space:]]*}"}"
+    _pair="${_pair%"${_pair##*[![:space:]]}"}"
+    [[ -z "$_pair" ]] && continue
+    [[ "$_pair" == *=* ]] || die "--agent-override: '$_pair' is not in key=agent form"
+    # Split on the FIRST '=' only so opencode/<model> values are preserved.
+    _key="${_pair%%=*}"
+    _val="${_pair#*=}"
+    _key="${_key#"${_key%%[![:space:]]*}"}"; _key="${_key%"${_key##*[![:space:]]}"}"
+    _val="${_val#"${_val%%[![:space:]]*}"}"; _val="${_val%"${_val##*[![:space:]]}"}"
+    [[ -n "$_key" ]] || die "--agent-override: empty override key in '$_pair'"
+    [[ -n "$_val" ]] || die "--agent-override: empty agent for override key '$_key'"
+
+    # Validate the agent value against the same allow-list + binary check the
+    # global --agent uses. validate_agent names the offending value on failure.
+    validate_agent "$_val"
+    require_agent_cmd "$_val"
+
+    # Validate the key. A '/' means a fully-qualified lens key.
+    if [[ "$_key" == */* ]]; then
+      [[ -n "${_known_tuples[$_key]:-}" ]] \
+        || die "--agent-override: unknown domain/lens key '$_key' (no such lens in $DOMAINS_FILE)"
+    elif [[ -n "${_known_domains[$_key]:-}" ]]; then
+      :
+    elif [[ -n "${_known_lens_ids[$_key]:-}" ]]; then
+      die "--agent-override: bare lens key '$_key' is ambiguous (lens ids are not unique across domains); use the fully-qualified domain/lens form"
+    else
+      die "--agent-override: unknown override key '$_key' (expected a domain id or domain/lens from $DOMAINS_FILE)"
+    fi
+
+    AGENT_OVERRIDES["$_key"]="$_val"
+  done
+}
+
+validate_agent_overrides
 # Resolve the base wrapper file once at startup. The pure resolver
 # returns the canonical mapping (deploy/android -> android.md, else
 # <MODE>.md); we then fall back to deploy.md when the canonical file is
@@ -2029,6 +2396,7 @@ run_remote_preflight() {
 [[ "$MODE" == "content" ]] && log_info "Content mode: content audit & creation (DONE streak: 1)"
 [[ "$MODE" == "greenfield" ]] && log_info "Greenfield mode: spec-to-backlog planning (DONE streak: 1)"
 [[ "$MODE" == "polish" ]] && log_info "Polish mode: single-pass polishing (DONE streak: 1)"
+[[ "$MODE" == "spec-change" ]] && log_info "Spec-change mode: spec-diff impact analysis vs base '$SPEC_BASE' (DONE streak: 1)"
 POLISH_SURFACE=""
 if [[ "$MODE" == "polish" ]]; then
   POLISH_SURFACE="$(detect_polish_surface "$PROJECT_PATH")"
@@ -2078,6 +2446,8 @@ resolve_lenses() {
             ($polish_surface == "")
             or ((.polish_surfaces // ["visual-ui", "cli-backend"]) | index($polish_surface))
           )
+      elif $mode == "spec-change" then
+        select(.mode == "spec-change")
       else
         select(
           .mode != "discover"
@@ -2086,6 +2456,7 @@ resolve_lenses() {
           and .mode != "content"
           and .mode != "greenfield"
           and .mode != "polish"
+          and .mode != "spec-change"
         )
       end;
   '
@@ -2558,19 +2929,47 @@ run_lens_heartbeat_exit_trap() {
 
 # --- Cost estimation (token-based, model-aware, repo-size-aware) ---
 # Resolve an --agent value to a model id in agent-pricing.json.
-# Handles: claude, codex, spark, sparc, opencode, opencode/<model>.
-# Unknown opencode/<model> falls back to "opencode-default".
+# Handles: claude, codex, spark, sparc, opencode, antigravity, and the
+# <agent>/<model> forms claude/, codex/, opencode/, antigravity/ (issue #384).
+# For a slashed agent: an explicit id in models{} is priced directly; otherwise
+# a keyword heuristic buckets the model name into a generic-{flash,pro,premium}
+# class so a brand-new model name is approximated instead of falling back to an
+# arbitrary high default. opencode/<model> keeps its historical opencode-default
+# fallback. Bare agents resolve via agent_default_model.
 resolve_agent_model() {
   local agent="$1" pricing_file="$2"
-  local default_model model_check
-  if [[ "$agent" == opencode/* ]]; then
-    local requested="${agent#opencode/}"
+  local default_model model_check requested req_lower
+  if [[ "$agent" == */* ]]; then
+    requested="${agent#*/}"
+    # Explicit id wins over the keyword heuristic, so a known model is priced
+    # exactly rather than mis-bucketed by an unlucky substring in its name.
     model_check="$(jq -r --arg m "$requested" '.models[$m] | .input_per_mtok // empty' "$pricing_file" 2>/dev/null)"
     if [[ -n "$model_check" ]]; then
       echo "$requested"
       return
     fi
-    echo "opencode-default"
+    # opencode retains its single documented fallback for unknown models.
+    if [[ "$agent" == opencode/* ]]; then
+      echo "opencode-default"
+      return
+    fi
+    # Keyword heuristic for the native agents. Cheap keywords are checked BEFORE
+    # premium so a name like *-flash-preview lands in the cheap bucket, not the
+    # premium one 'preview' would otherwise imply. Match case-insensitively.
+    # 'mini' is boundary-anchored (start-of-string or preceded by a delimiter) so
+    # the substring in "geMINI" no longer buckets every Gemini model as cheap,
+    # while o3-mini / gpt-4o-mini still match. A trailing-delimiter form (*mini-*)
+    # would NOT help: "gemini-3-pro" contains "mini-", so it must stay leading-only.
+    req_lower="$(printf '%s' "$requested" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$req_lower" == *flash* || "$req_lower" == *haiku* \
+          || "$req_lower" == mini* || "$req_lower" == *-mini* || "$req_lower" == *_mini* || "$req_lower" == *.mini* \
+          || "$req_lower" == *8b* || "$req_lower" == *lite* || "$req_lower" == *nano* ]]; then
+      echo "generic-flash-default"
+    elif [[ "$req_lower" == *opus* || "$req_lower" == *ultra* || "$req_lower" == *preview* ]]; then
+      echo "generic-premium-default"
+    else
+      echo "generic-pro-default"
+    fi
     return
   fi
   default_model="$(jq -r --arg a "$agent" '.agent_default_model[$a] // empty' "$pricing_file" 2>/dev/null)"
@@ -2668,6 +3067,99 @@ compute_cost_breakdown() {
       }'
 }
 
+# Cost breakdown for a routed run (issue #380). When --agent-override sends some
+# lenses to a pricier/cheaper model, a single-model estimate silently misprices
+# the exact budgeting use case this feature serves. Partition LENS_LIST by
+# effective agent, price each group with the shared compute_cost_breakdown, and
+# emit a combined total. Output shape matches compute_cost_breakdown: a first
+# MIN_COST=<total> line (callers extract it) followed by human-readable lines.
+compute_cost_breakdown_routed() {
+  local streak="$1" path="$2" pricing_file="$3" rounds="$4"
+
+  local -A _agent_counts=()
+  local _entry _dom _lid _eff
+  for _entry in "${LENS_LIST[@]}"; do
+    _dom="${_entry%%/*}"
+    _lid="${_entry#*/}"
+    _eff="$(resolve_effective_agent "$_dom" "$_lid")"
+    _agent_counts["$_eff"]=$(( ${_agent_counts["$_eff"]:-0} + 1 ))
+  done
+
+  local _total="0.00" _lines="" _a _cnt _sub _sub_min _sub_lines
+  for _a in "${!_agent_counts[@]}"; do
+    _cnt="${_agent_counts[$_a]}"
+    _sub="$(compute_cost_breakdown "$_a" "$_cnt" "$streak" "$path" "$pricing_file" "$rounds")"
+    _sub_min="$(printf '%s\n' "$_sub" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+    _sub_lines="$(printf '%s\n' "$_sub" | grep -v '^MIN_COST=')"
+    _total="$(awk -v a="$_total" -v b="${_sub_min:-0}" 'BEGIN { printf "%.2f", a + b }')"
+    _lines+="  agent '$_a' — ${_cnt} lens(es):"$'\n'"$_sub_lines"$'\n'
+  done
+
+  printf 'MIN_COST=%s\n' "$_total"
+  printf '%s' "$_lines"
+}
+
+# Flat-rate / subscription cost view (issue #384). For Claude Pro / ChatGPT Plus
+# / Gemini Advanced / free-tier users the marginal per-token cost is $0.00, so a
+# dollar estimate is misleading. This renders "$0.00" plus the expected request
+# count (the same lenses x avg_iters x rounds the token estimate uses) and the
+# quota/rate-limit consumption to weigh against a subscription cap or free-tier
+# budget. Reads TOTAL_LENSES, DONE_STREAK_REQUIRED, ROUNDS, PROJECT_PATH.
+print_flat_rate_cost() {
+  local pricing_file="$1"
+  local iter_factor base_prompt input_cap out_per bytes_per_tok
+  iter_factor="$(jq -r '.session_model.iteration_factor // 1.7' "$pricing_file" 2>/dev/null)"
+  base_prompt="$(jq -r '.session_model.base_prompt_tokens // 3000' "$pricing_file" 2>/dev/null)"
+  input_cap="$(jq -r '.session_model.per_session_input_cap_tokens // 200000' "$pricing_file" 2>/dev/null)"
+  out_per="$(jq -r '.session_model.per_session_output_tokens // 8000' "$pricing_file" 2>/dev/null)"
+  bytes_per_tok="$(jq -r '.session_model.bytes_per_token // 4' "$pricing_file" 2>/dev/null)"
+  # set -u-safe fallbacks: a malformed/absent value must not abort the estimate.
+  [[ "$iter_factor" =~ ^[0-9]+(\.[0-9]+)?$ ]] || iter_factor="1.7"
+  [[ "$base_prompt" =~ ^[0-9]+$ ]] || base_prompt=3000
+  [[ "$input_cap" =~ ^[0-9]+$ ]] || input_cap=200000
+  [[ "$out_per" =~ ^[0-9]+$ ]] || out_per=8000
+  [[ "$bytes_per_tok" =~ ^[1-9][0-9]*$ ]] || bytes_per_tok=4
+
+  local repo_bytes
+  repo_bytes="$(estimate_repo_bytes "$PROJECT_PATH")"
+
+  awk -v lenses="$TOTAL_LENSES" -v streak="$DONE_STREAK_REQUIRED" -v rounds="$ROUNDS" \
+      -v iter_factor="$iter_factor" -v base_prompt="$base_prompt" \
+      -v input_cap="$input_cap" -v out_per="$out_per" \
+      -v repo_bytes="$repo_bytes" -v bytes_per_tok="$bytes_per_tok" \
+      'BEGIN {
+        if (rounds < 1) rounds = 1
+        avg_iters = streak * iter_factor
+        requests = lenses * avg_iters * rounds
+        if (requests < 1) requests = 1
+        repo_tokens = int(repo_bytes / bytes_per_tok)
+        session_input = (repo_tokens < input_cap ? repo_tokens : input_cap) + base_prompt
+
+        printf "Estimated cost: ~$0.00 (Flat-Rate / Subscription / Free Tier)\n"
+        printf "  Total expected requests: ~%.0f LLM calls  (%d lenses x ~%.1f iterations x %d round(s))\n", requests, lenses, avg_iters, rounds
+        printf "  - Consumes your plan message/rate quota, not a per-token bill. Weigh ~%.0f calls against:\n", requests
+        printf "      a typical 3-hour subscription cap (e.g. Claude Pro / Gemini Advanced, ~45-50 messages), or\n"
+        printf "      a free-tier rate budget (e.g. Google AI Studio 15 RPM / 1500 RPD).\n"
+        printf "  - Pace or split large runs so you do not lock yourself out of your plan mid-audit.\n"
+        if (session_input >= 1000) {
+          printf "  Total expected tokens: ~%.0fk input + ~%d output per session\n", session_input/1000.0, out_per
+        } else {
+          printf "  Total expected tokens: ~%d input + ~%d output per session\n", session_input, out_per
+        }
+      }'
+}
+
+# Print the active --agent-override routing map (one 'key -> agent' per line),
+# sorted for stable output. No-op when no overrides are set.
+print_agent_override_map() {
+  overrides_active || return 0
+  local _k
+  echo "Agent overrides:"
+  while IFS= read -r _k; do
+    [[ -n "$_k" ]] && echo "  $_k -> ${AGENT_OVERRIDES[$_k]}"
+  done < <(printf '%s\n' "${!AGENT_OVERRIDES[@]}" | sort)
+}
+
 # --- Confirmation gate ---
 print_android_deploy_preview() {
   [[ "${TARGET_TYPE:-server}" == "android" ]] || return 0
@@ -2737,6 +3229,47 @@ check_pricing_freshness() {
   fi
 }
 
+# Print the estimated wall-clock line and, when the estimate exceeds the
+# REPOLENS_EST_WARN_HOURS threshold (default 24h; 0 disables), a loud warning
+# listing concrete tuning levers. Reads the resolved run globals
+# (TOTAL_LENSES / DONE_STREAK_REQUIRED / ROUNDS / MAX_PARALLEL). Pure
+# presentation — wired into both confirm_run() and the dry-run preview. The
+# line is omitted gracefully when the estimator helper is unavailable or
+# returns a non-numeric result; a non-numeric threshold falls back to 24h.
+print_wall_estimate() {
+  declare -F estimate_run_wall_seconds >/dev/null 2>&1 || return 0
+
+  local secs
+  secs="$(estimate_run_wall_seconds "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$ROUNDS" "$MAX_PARALLEL" 2>/dev/null)"
+  # Graceful omission (AC4): a missing/empty/non-numeric estimate prints nothing.
+  [[ "$secs" =~ ^[0-9]+$ ]] || return 0
+
+  local human="${secs}s"
+  if declare -F status_format_duration >/dev/null 2>&1; then
+    human="$(status_format_duration "$secs")"
+  fi
+  echo "Estimated wall-clock: ~${human} at --max-parallel ${MAX_PARALLEL}  (rough; faster/cheaper agents and scoping reduce this)."
+
+  # Over-threshold warning with concrete tuning levers. The threshold is
+  # REPOLENS_EST_WARN_HOURS (default 24h); a non-numeric value falls back to the
+  # default and 0 disables the warning entirely. ${VAR:-default} keeps the read
+  # set -u-safe even when the env var is unset.
+  local warn_hours="${REPOLENS_EST_WARN_HOURS:-24}"
+  [[ "$warn_hours" =~ ^[0-9]+$ ]] || warn_hours=24
+  # Force base-10 so a zero-padded value ("08"/"09"/"024") is not read as octal,
+  # which would abort the (( )) test or silently shift the threshold. Matches the
+  # 10#$ guard the sibling estimator already uses in lib/summary.sh.
+  warn_hours=$((10#$warn_hours))
+  if (( warn_hours > 0 )) && (( secs > warn_hours * 3600 )); then
+    log_warn "Estimated wall-clock ~${human} exceeds ${warn_hours}h. To cut it down:"
+    log_warn "  - raise --max-parallel so more lenses run concurrently"
+    log_warn "  - pick a faster/cheaper --agent"
+    log_warn "  - lower --depth (fewer DONE-streak iterations per lens)"
+    log_warn "  - scope the run with --domain / --focus"
+    log_warn "  - use --max-issues N for a spot check"
+  fi
+}
+
 confirm_run() {
   if $AUTO_YES; then
     return 0
@@ -2749,11 +3282,21 @@ confirm_run() {
 
   local pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
   check_pricing_freshness "$pricing_file"
-  local breakdown min_cost
-  breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
-  min_cost="$(printf "%s\n" "$breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
-  local breakdown_lines
-  breakdown_lines="$(printf "%s\n" "$breakdown" | grep -v '^MIN_COST=')"
+  local breakdown min_cost breakdown_lines
+  # Flat-rate mode ($0 marginal cost) skips the per-token breakdown entirely and
+  # renders the request/quota view instead. min_cost stays "0.00" so the
+  # --max-cost guardrail below is inert (0 never exceeds any threshold).
+  if ! $FLAT_RATE; then
+    if overrides_active; then
+      breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+    else
+      breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$pricing_file" "$ROUNDS")"
+    fi
+    min_cost="$(printf "%s\n" "$breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+    breakdown_lines="$(printf "%s\n" "$breakdown" | grep -v '^MIN_COST=')"
+  else
+    min_cost="0.00"
+  fi
 
   echo ""
   echo "=== RepoLens Confirmation ==="
@@ -2761,6 +3304,7 @@ confirm_run() {
   print_remote_confirmation_context
   echo "Mode:         $MODE"
   echo "Agent:        $AGENT"
+  print_agent_override_map
   echo "Lenses:       $TOTAL_LENSES"
   if [[ -n "$MAX_ISSUES" ]]; then
     echo "Max issues:   $MAX_ISSUES"
@@ -2768,11 +3312,16 @@ confirm_run() {
     echo "Max issues:   (unlimited)"
   fi
   echo ""
-  echo "Estimated cost: ~\$${min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
-  printf "%s\n" "$breakdown_lines"
-  echo "  Note: Estimator assumes one model per agent, 4 bytes/token, and a"
-  echo "  capped per-session input budget. Tool-call churn and iteration"
-  echo "  non-convergence push real cost higher. Budget accordingly."
+  if $FLAT_RATE; then
+    print_flat_rate_cost "$pricing_file"
+  else
+    echo "Estimated cost: ~\$${min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
+    printf "%s\n" "$breakdown_lines"
+    echo "  Note: Estimator assumes one model per agent, 4 bytes/token, and a"
+    echo "  capped per-session input budget. Tool-call churn and iteration"
+    echo "  non-convergence push real cost higher. Budget accordingly."
+  fi
+  print_wall_estimate
 
   # Threshold warning
   if [[ -n "$MAX_COST" ]]; then
@@ -2839,7 +3388,7 @@ confirm_deploy_authorization() {
 
 # --- Autonomous mode gate (claude-only) ---
 confirm_autonomous_mode() {
-  [[ "$AGENT" == "claude" ]] || return 0
+  [[ "$AGENT" == "claude" || "$AGENT" == claude/* ]] || return 0
 
   if $AUTO_YES; then
     return 0
@@ -2884,6 +3433,7 @@ if $DRY_RUN; then
   echo "=== Dry Run ==="
   echo "Mode:         $MODE"
   echo "Agent:        $AGENT"
+  print_agent_override_map
   echo "Project:      $PROJECT_PATH"
   echo "Rounds:      $ROUNDS"
   if [[ "$MODE" == "bugreport" ]]; then
@@ -2906,14 +3456,29 @@ if $DRY_RUN; then
     _dry_pricing_file="$SCRIPT_DIR/config/agent-pricing.json"
     if [[ -f "$_dry_pricing_file" ]]; then
       check_pricing_freshness "$_dry_pricing_file"
-      _dry_breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
-      _dry_min_cost="$(printf "%s\n" "$_dry_breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
-      _dry_breakdown_lines="$(printf "%s\n" "$_dry_breakdown" | grep -v '^MIN_COST=')"
-      echo "Estimated cost: ~\$${_dry_min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
-      printf "%s\n" "$_dry_breakdown_lines"
-      unset _dry_pricing_file _dry_breakdown _dry_min_cost _dry_breakdown_lines
-      echo ""
+      if $FLAT_RATE; then
+        # Flat-rate: $0 marginal cost + request/quota consumption (issue #384).
+        print_flat_rate_cost "$_dry_pricing_file"
+        unset _dry_pricing_file
+      else
+        if overrides_active; then
+          _dry_breakdown="$(compute_cost_breakdown_routed "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+        else
+          _dry_breakdown="$(compute_cost_breakdown "$AGENT" "$TOTAL_LENSES" "$DONE_STREAK_REQUIRED" "$PROJECT_PATH" "$_dry_pricing_file" "$ROUNDS")"
+        fi
+        _dry_min_cost="$(printf "%s\n" "$_dry_breakdown" | awk -F= '/^MIN_COST=/ {print $2; exit}')"
+        _dry_breakdown_lines="$(printf "%s\n" "$_dry_breakdown" | grep -v '^MIN_COST=')"
+        echo "Estimated cost: ~\$${_dry_min_cost}  (lens_count=${TOTAL_LENSES} x depth=${DONE_STREAK_REQUIRED} x rounds=${ROUNDS}, lower bound — real runs typically 2-5x higher)"
+        printf "%s\n" "$_dry_breakdown_lines"
+        unset _dry_pricing_file _dry_breakdown _dry_min_cost _dry_breakdown_lines
+      fi
     fi
+    # The wall-clock estimate needs no pricing data, so emit it whenever lenses
+    # are queued — even if config/agent-pricing.json is absent and the cost block
+    # above was skipped. With the pricing file present (the baseline-capture case)
+    # the line order is unchanged: cost block, then the estimate, then the blank.
+    print_wall_estimate
+    echo ""
   fi
   echo "Lenses that would run:"
   for lens_entry in "${LENS_LIST[@]}"; do
@@ -2921,6 +3486,12 @@ if $DRY_RUN; then
   done
   echo ""
   echo "Dry run complete — no agents were executed."
+  # Record this invocation before the dry-run exit (#371). --dry-run exits far
+  # before the main finalize block, so without this call a dry-run would leave
+  # no attempt entry. summary.json does not exist yet here, so why_stopped is
+  # empty and status defaults to "finished". The dry-run path always exits 0, so
+  # record exit_code 0 (#375). Non-fatal.
+  attempts_finalize "$LOG_BASE" "${REPOLENS_FINAL_STATE:-finished}" "" 0 || true
   exit 0
 fi
 
@@ -2956,6 +3527,7 @@ ensure_labels() {
     content)     label_prefix="content" ;;
     greenfield)  label_prefix="greenfield" ;;
     polish)      label_prefix="polish" ;;
+    spec-change) label_prefix="change" ;;
   esac
 
   local label_set_file
@@ -2975,6 +3547,22 @@ ensure_labels() {
   if [[ "$MODE" == "discover" || "$MODE" == "polish" ]]; then
     printf '%s=%s\n' "enhancement" "a2eeef" >> "$label_set_file"
   fi
+
+  # Pre-create the task-complexity routing labels (#385) only for the audit and
+  # bugreport modes that estimate implementation effort (1-5) — audit.md and
+  # synthesize.md are the sole prompts that instruct the agent to apply the
+  # `repolens/complexity/<n>` label. Idempotent: the agents only apply the
+  # labels, which already exist. green -> red gradient (trivial -> complex).
+  case "$MODE" in
+    audit|bugreport)
+      local -a complexity_colors=(c2e0c6 bfd4f2 fbca04 ff9800 d73a4a)
+      local cx
+      for cx in 1 2 3 4 5; do
+        printf '%s=%s\n' "repolens/complexity/${cx}" "${complexity_colors[cx-1]}" >> "$label_set_file"
+      done
+      ;;
+    *) ;;
+  esac
 
   if [[ -n "$SPEC_FILE" ]]; then
     local spec_basename
@@ -3073,6 +3661,21 @@ run_lens() {
     return 0
   fi
 
+  # Issue #380: resolve the effective agent for this lens (domain/lens > domain >
+  # global --agent) and its per-agent timeout. Different agents can carry
+  # different REPOLENS_AGENT_TIMEOUT_* budgets, so resolve the timeout for the
+  # agent that will actually run rather than reusing the global default.
+  local effective_agent effective_agent_timeout_secs
+  effective_agent="$(resolve_effective_agent "$domain" "$lens_id")"
+  effective_agent_timeout_secs="$(resolve_agent_timeout "$MODE" "$effective_agent")"
+  if [[ ! "$effective_agent_timeout_secs" =~ ^[1-9][0-9]*$ ]]; then
+    effective_agent_timeout_secs="$AGENT_TIMEOUT_SECS"
+  fi
+  effective_agent_timeout_secs=$((10#$effective_agent_timeout_secs))
+  if [[ "$effective_agent" != "$AGENT" ]]; then
+    log_info "[$domain/$lens_id] Routed to agent '$effective_agent' via --agent-override (global: $AGENT)"
+  fi
+
   # Read lens metadata
   local lens_name domain_name lens_label domain_color
   lens_name="$(read_frontmatter "$lens_file" "name")"
@@ -3095,6 +3698,7 @@ run_lens() {
     content)     label_prefix="content" ;;
     greenfield)  label_prefix="greenfield" ;;
     polish)      label_prefix="polish" ;;
+    spec-change) label_prefix="change" ;;
   esac
   lens_label="${label_prefix}:${domain}/${lens_id}"
 
@@ -3139,6 +3743,9 @@ run_lens() {
     fi
   fi
   [[ -n "$CHANGE_STATEMENT" ]] && vars+="|CHANGE_STATEMENT=${CHANGE_STATEMENT}"
+  if [[ "$MODE" == "spec-change" && -f "$SPEC_DIFF_FILE" ]]; then
+    vars+="|SPEC_DIFF=@${SPEC_DIFF_FILE}"
+  fi
   if [[ "$MODE" == "bugreport" && -f "$BUG_REPORT_FILE" ]]; then
     vars+="|BUG_REPORT=@${BUG_REPORT_FILE}"
   fi
@@ -3246,8 +3853,9 @@ run_lens() {
   local rate_limit_retry_attempted=false
   local rate_limit_sleep_seconds=0
   local no_progress_count=0
-  local lens_start_epoch
+  local lens_start_epoch lens_start_iso
   lens_start_epoch="$(date +%s)"
+  lens_start_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   while true; do
     local now_epoch elapsed_seconds remaining_wall_secs
@@ -3278,7 +3886,7 @@ run_lens() {
     export REPOLENS_CURSOR_IDE_ITERATION="$iteration"
 
     local agent_rc=0
-    local effective_timeout_secs="$AGENT_TIMEOUT_SECS"
+    local effective_timeout_secs="$effective_agent_timeout_secs"
     if (( remaining_wall_secs < effective_timeout_secs )); then
       effective_timeout_secs="$remaining_wall_secs"
     fi
@@ -3295,11 +3903,11 @@ run_lens() {
       fi
     fi
 
-    if [[ "$AGENT" == "cursor-ide" ]]; then
-      run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" 2>&1 | tee "$output_file"
+    if [[ "$effective_agent" == "cursor-ide" || "$AGENT" == "cursor-ide" ]]; then
+      run_agent "$effective_agent" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" 2>&1 | tee "$output_file"
       agent_rc=${PIPESTATUS[0]}
     else
-      run_agent "$AGENT" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" "$envelope_file" >"$output_file" 2>&1 || agent_rc=$?
+      run_agent "$effective_agent" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" "$envelope_file" >"$output_file" 2>&1 || agent_rc=$?
     fi
     if [[ -s "$envelope_file" && "$output_envelope_file" != "$envelope_file" ]]; then
       mkdir -p "$(dirname "$output_envelope_file")" 2>/dev/null || true
@@ -3314,7 +3922,7 @@ run_lens() {
     elif [[ "$agent_rc" -eq 137 ]]; then
       log_error "[$domain/$lens_id] agent timed out after ${effective_timeout_secs}s and was hard-killed after ${AGENT_KILL_GRACE_SECS}s grace on iteration $iteration"
     elif [[ "$agent_rc" -ne 0 ]]; then
-      if [[ "$AGENT" == "cursor-ide" ]]; then
+      if [[ "$effective_agent" == "cursor-ide" || "$AGENT" == "cursor-ide" ]]; then
         local ide_code="cursor_ide_failed"
         local ide_msg="cursor-ide iteration failed (see iteration log)"
         if grep -q "IDE_RESPONSE_REJECTED" "$output_file" 2>/dev/null; then
@@ -3344,7 +3952,7 @@ run_lens() {
         exit_status="agent-timeout"
         break
       fi
-      if [[ "$AGENT" == "cursor" ]] && grep -Eq "You've hit your usage limit|Named models unavailable|Switch to Auto or upgrade plans" "$output_file" 2>/dev/null; then
+      if [[ "$effective_agent" == "cursor" || "$AGENT" == "cursor" ]] && grep -Eq "You've hit your usage limit|Named models unavailable|Switch to Auto or upgrade plans" "$output_file" 2>/dev/null; then
         case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in
           true|1|yes)
             if [[ "$cursor_capacity_retries" -lt "$CURSOR_RATE_LIMIT_MAX_RETRIES" ]]; then
@@ -3362,7 +3970,7 @@ run_lens() {
     fi
 
     # Detect rate-limit / quota / auth-failure signatures in agent output.
-    # A match means retrying will not help (the agent is gated upstream) -
+    # A match means retrying will not help (the agent is gated upstream) —
     # abort the whole run instead of burning MAX_ITERATIONS_PER_LENS * lenses
     # worth of no-op invocations. Checked BEFORE check_done so a rate-limited
     # agent cannot accidentally trip the DONE path.
@@ -3393,13 +4001,14 @@ run_lens() {
       if [[ -n "$rl_hit" ]]; then
         rl_sig="${rl_hit%%|*}"
         rl_snip="${rl_hit#*|}"
-        if [[ "$AGENT" == "cursor" || "$AGENT" == "cursor-ide" ]]; then
+
+        if [[ "$effective_agent" == "cursor" || "$effective_agent" == "cursor-ide" || "$AGENT" == "cursor" || "$AGENT" == "cursor-ide" ]]; then
           case "${CURSOR_WAIT_ON_RATE_LIMIT,,}" in
             true|1|yes)
               if [[ "$cursor_rl_retries" -lt "$CURSOR_RATE_LIMIT_MAX_RETRIES" ]]; then
                 cursor_rl_retries=$((cursor_rl_retries + 1))
                 local sleep_sec="$CURSOR_RATE_LIMIT_SLEEP_SEC"
-                if [[ "$AGENT" == "cursor" ]] && declare -F cursor_rate_limit_hint_sleep_sec >/dev/null 2>&1; then
+                if [[ "$effective_agent" == "cursor" || "$AGENT" == "cursor" ]] && declare -F cursor_rate_limit_hint_sleep_sec >/dev/null 2>&1; then
                   local hint=""
                   hint="$(cursor_rate_limit_hint_sleep_sec "$output_file" 2>/dev/null || true)"
                   if [[ "$hint" =~ ^[1-9][0-9]*$ ]]; then
@@ -3414,7 +4023,7 @@ run_lens() {
                 fi
                 log_warn "[$domain/$lens_id] Cursor rate-limited (retry $cursor_rl_retries/$CURSOR_RATE_LIMIT_MAX_RETRIES). Sleeping ${sleep_sec}s before retry."
                 local _cr_handoff="${REPOLENS_CURSOR_RATE_LIMIT_HANDOFF:-}"
-                if [[ "$AGENT" == "cursor" ]] && [[ "${_cr_handoff,,}" =~ ^(1|true|yes)$ ]] && declare -F repolens_write_cursor_rate_limit_handoff >/dev/null 2>&1; then
+                if [[ "$effective_agent" == "cursor" || "$AGENT" == "cursor" ]] && [[ "${_cr_handoff,,}" =~ ^(1|true|yes)$ ]] && declare -F repolens_write_cursor_rate_limit_handoff >/dev/null 2>&1; then
                   if repolens_write_cursor_rate_limit_handoff "$LOG_BASE" "$RUN_ID" "$PROJECT_PATH" "$domain" "$lens_id" "$iteration" "$output_file" "$cursor_rl_retries"; then
                     if [[ "$cursor_rl_retries" -eq 1 ]]; then
                       log_info "[$domain/$lens_id] Manual handoff written: $LOG_BASE/MANUAL_HANDOFF.md (stderr: REPOLENS_MANUAL_HANDOFF when jq available)."
@@ -3429,49 +4038,57 @@ run_lens() {
           log_error "[$domain/$lens_id] Cursor remained rate-limited after $CURSOR_RATE_LIMIT_MAX_RETRIES retries. Marking lens as rate-limited."
           exit_status="rate-limited"
           break
-        else
-          local rl_resume_epoch="" rl_abort_resume_epoch="" rl_now_epoch="" wait_delta sleep_seconds resume_label
-          rl_resume_epoch="$(parse_rate_limit_resume_epoch "$output_file" || true)"
-          if [[ "$rl_resume_epoch" =~ ^[0-9]+$ ]]; then
-            rl_now_epoch="$(date +%s)"
-            if [[ "$rl_resume_epoch" -lt $((rl_now_epoch - 60)) ]]; then
-              rl_resume_epoch=""
-            else
-              rl_abort_resume_epoch="$rl_resume_epoch"
-              wait_delta=$((rl_resume_epoch - rl_now_epoch))
-              if [[ "$wait_delta" -lt 0 ]]; then
-                wait_delta=0
+        fi
+
+        local rl_resume_epoch="" rl_abort_resume_epoch="" rl_now_epoch="" wait_delta sleep_seconds resume_label
+        rl_resume_epoch="$(parse_rate_limit_resume_epoch "$output_file" || true)"
+        if [[ "$rl_resume_epoch" =~ ^[0-9]+$ ]]; then
+          rl_now_epoch="$(date +%s)"
+          if [[ "$rl_resume_epoch" -lt $((rl_now_epoch - 60)) ]]; then
+            rl_resume_epoch=""
+          else
+            rl_abort_resume_epoch="$rl_resume_epoch"
+            wait_delta=$((rl_resume_epoch - rl_now_epoch))
+            if [[ "$wait_delta" -lt 0 ]]; then
+              wait_delta=0
+            fi
+
+            if ! $rate_limit_retry_attempted && (( wait_delta <= RATE_LIMIT_MAX_SLEEP_SECS )); then
+              sleep_seconds=$((wait_delta + 60))
+              resume_label="$(date -u -d "@$rl_resume_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$rl_resume_epoch")"
+              log_warn "[$domain/$lens_id] Agent rate-limited. Resume at $resume_label (${sleep_seconds}s from now). Sleeping."
+              rate_limit_retry_attempted=true
+              rate_limit_sleep_seconds=$((rate_limit_sleep_seconds + sleep_seconds))
+              local sleep_rc sleep_signal sleep_stopped_reason
+              if env --help 2>&1 | grep -q -- '--default-signal'; then
+                env --default-signal=INT sleep "$sleep_seconds"
+                sleep_rc=$?
+              else
+                sleep "$sleep_seconds"
+                sleep_rc=$?
               fi
 
-              if ! $rate_limit_retry_attempted && (( wait_delta <= RATE_LIMIT_MAX_SLEEP_SECS )); then
-                sleep_seconds=$((wait_delta + 60))
-                resume_label="$(date -u -d "@$rl_resume_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$rl_resume_epoch")"
-                log_warn "[$domain/$lens_id] Agent rate-limited. Resume at $resume_label (${sleep_seconds}s from now). Sleeping."
-                rate_limit_retry_attempted=true
-                rate_limit_sleep_seconds=$((rate_limit_sleep_seconds + sleep_seconds))
-                local sleep_rc sleep_signal sleep_stopped_reason
-                if env --help 2>&1 | grep -q -- '--default-signal'; then
-                  env --default-signal=INT sleep "$sleep_seconds"
-                  sleep_rc=$?
-                else
-                  sleep "$sleep_seconds"
-                  sleep_rc=$?
+              if (( sleep_rc != 0 )); then
+                log_warn "[$domain/$lens_id] Rate-limit sleep interrupted."
+                write_rate_limit_abort_marker "$rl_abort_resume_epoch"
+                if sleep_stopped_reason="$(rate_limit_sleep_stopped_reason "$sleep_rc" 2>/dev/null)"; then
+                  sleep_signal="$(rate_limit_sleep_signal_name "$sleep_rc" 2>/dev/null || printf '%s\n' "UNKNOWN")"
+                  write_rate_limit_sleep_interrupt_marker "$sleep_rc" "$sleep_signal" "$sleep_stopped_reason"
+                  # In sequential mode run_lens executes inline in the main
+                  # process, so this exit terminates the run before the finalize
+                  # block — print the resume hint here. In parallel mode this is
+                  # a worker subshell; the main process prints it at the finalize
+                  # `interrupted` branch (via the sleep-interrupt marker), so
+                  # gating on sequential mode avoids a duplicate line.
+                  $PARALLEL || print_resume_hint
+                  exit "$sleep_rc"
                 fi
-                if (( sleep_rc != 0 )); then
-                  log_warn "[$domain/$lens_id] Rate-limit sleep interrupted."
-                  write_rate_limit_abort_marker "$rl_abort_resume_epoch"
-                  if sleep_stopped_reason="$(rate_limit_sleep_stopped_reason "$sleep_rc" 2>/dev/null)"; then
-                    sleep_signal="$(rate_limit_sleep_signal_name "$sleep_rc" 2>/dev/null || printf '%s\n' "UNKNOWN")"
-                    write_rate_limit_sleep_interrupt_marker "$sleep_rc" "$sleep_signal" "$sleep_stopped_reason"
-                    exit "$sleep_rc"
-                  fi
 
-                  log_warn "[$domain/$lens_id] Rate-limit sleep failed with exit $sleep_rc; leaving run pending for resume."
-                  exit_status="rate-limited"
-                  break
-                fi
-                continue
+                log_warn "[$domain/$lens_id] Rate-limit sleep failed with exit $sleep_rc; leaving run pending for resume."
+                exit_status="rate-limited"
+                break
               fi
+              continue
             fi
           fi
         fi
@@ -3587,7 +4204,16 @@ run_lens() {
 
   # Record result. Incomplete exit statuses are NOT marked completed so --resume
   # and repolens_agent_or_ide.sh will re-run them (Cursor Edition).
-  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds"
+  # Capture end-of-lens timing for summary.json analysis. duration is wall-clock
+  # for the whole lens loop (including any rate-limit sleeps); clamp negatives in
+  # case the clock stepped backward (NTP) mid-lens, mirroring the lens_issues clamp.
+  local lens_end_epoch lens_end_iso lens_duration_seconds
+  lens_end_epoch="$(date +%s)"
+  lens_end_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  lens_duration_seconds=$((lens_end_epoch - lens_start_epoch))
+  (( lens_duration_seconds < 0 )) && lens_duration_seconds=0
+  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds" \
+    "$lens_start_iso" "$lens_end_iso" "$lens_duration_seconds"
   if [[ "$exit_status" != "rate-limited" && "$exit_status" != "ide-handoff-failed" && \
         "$exit_status" != "max-iterations" && "$exit_status" != "agent-timeout" && \
         "$exit_status" != "agent-capacity" && "$exit_status" != "agent-no-progress" && \
@@ -3813,8 +4439,106 @@ if declare -p _FORGE_WARN_SEEN >/dev/null 2>&1 && (( ${#_FORGE_WARN_SEEN[@]} > 0
   unset _rollup_key
 fi
 
+# --- Finding registry (non-fatal) ---
+# Produce the canonical finding index (final/findings.jsonl + findings.csv) from
+# the synthesized manifest so the human-review digest and triage artifacts below
+# have a registry to render. Non-local path only — --local invokes the builder
+# separately (sibling issue). Non-fatal, mirroring the verifier/synthesizer/
+# triage precedent: the registry is a convenience index, not a gate, so a failure
+# warns and never flips the run's final state or return code.
+if ! $LOCAL_MODE && [[ -f "$LOG_BASE/final/manifest.json" ]]; then
+  if build_finding_registry "$RUN_ID"; then
+    log_info "Finding registry: findings.jsonl + findings.csv written"
+  else
+    log_warn "Finding registry: build failed (findings index not produced)"
+  fi
+fi
+
 finalize_summary "$SUMMARY_FILE"
 enhance_summary_with_run_outcome "$SUMMARY_FILE" "$LOG_BASE"
+
+# --- Local-mode deterministic dedupe (non-fatal) ---
+# In --local mode the NNN-<slug>.md tree under $OUTPUT_DIR is the deliverable.
+# Reconcile cross-lens/cross-domain duplicate findings into canonical + duplicate
+# using the SAME match + canonical-selection helpers as the manifest path,
+# marking files IN PLACE (never deleting). Deterministic, idempotent, model-free.
+# Non-fatal, mirroring the verifier / synthesizer / triage precedent: a failure
+# warns and NEVER touches REPOLENS_FINAL_STATE or RUN_ROUNDS_RC.
+if $LOCAL_MODE && [[ -n "$OUTPUT_DIR" && -d "$OUTPUT_DIR" ]]; then
+  if dedupe_local_markdown "$OUTPUT_DIR"; then
+    log_info "Local dedupe: reconciled duplicate markdown findings under $OUTPUT_DIR"
+  else
+    log_warn "Local dedupe: failed (findings left un-deduped)"
+  fi
+fi
+
+# --- Human review digest (non-fatal) ---
+# When --human-review is set and the finding registry exists, render the curated
+# final/HUMAN_REVIEW.md from the bucketed findings. Non-fatal, matching the
+# verifier precedent: a render failure logs a warning and NEVER touches
+# REPOLENS_FINAL_STATE or RUN_ROUNDS_RC. No HUMAN_REVIEW.md is written when the
+# flag is off or no findings.jsonl exists.
+if [[ "${HUMAN_REVIEW:-false}" == "true" && -f "$LOG_BASE/final/findings.jsonl" ]]; then
+  if render_human_review_digest "$RUN_ID"; then
+    log_info "Human review: HUMAN_REVIEW.md written"
+  else
+    log_warn "Human review: failed to render HUMAN_REVIEW.md"
+  fi
+  # No silent truncation: one structured line reconciling the curated digest
+  # against the full registry (total / surfaced / held-back per bucket). The
+  # helper is pure (returns the string); log_info owns the emission so the
+  # log_*-under-set -u trap stays out of the library. Gated by the same block,
+  # so it only fires when --human-review is active. Non-fatal.
+  log_info "$(human_review_heldback_summary "$RUN_ID")"
+fi
+
+# --- Human-triage artifacts (non-fatal) ---
+# Render the four post-run triage Markdown files (TODO / SUMMARY / NEEDS_REVIEW /
+# DUPLICATES) from the finding registry into final/. Clean no-op when the registry
+# is absent or empty (dry-run, single-round, or any run where the ledger did not
+# produce findings.jsonl): one info line, zero files written. Gating on `-s`
+# (exists AND non-empty) — not on generator return codes — keeps a present-but-empty
+# registry from leaking four placeholder files. Each generator failure is non-fatal
+# (warn + continue), matching the verifier/synthesizer/human-review precedent; none
+# of these touch REPOLENS_FINAL_STATE or RUN_ROUNDS_RC.
+TRIAGE_FINDINGS="$LOG_BASE/final/findings.jsonl"
+if [[ -s "$TRIAGE_FINDINGS" ]]; then
+  for _triage_spec in \
+    "generate_todo_md:TODO.md" \
+    "generate_summary_md:SUMMARY.md" \
+    "generate_needs_review_md:NEEDS_REVIEW.md" \
+    "generate_duplicates_md:DUPLICATES.md"; do
+    _triage_fn="${_triage_spec%%:*}"
+    _triage_out="$LOG_BASE/final/${_triage_spec##*:}"
+    if "$_triage_fn" "$TRIAGE_FINDINGS" "$_triage_out"; then
+      log_info "Triage artifact: $_triage_out"
+    else
+      log_warn "Triage artifact: failed to render $_triage_out ($_triage_fn, rc $?)"
+    fi
+  done
+  unset _triage_spec _triage_fn _triage_out
+else
+  log_info "Triage artifacts: no finding registry at $TRIAGE_FINDINGS; skipping"
+fi
+
+# --- Local-mode finding registry (non-fatal) ---
+# --local bypasses the synthesizer/manifest path, so the non-local registry hook
+# above ( ! $LOCAL_MODE) never fires. Build the canonical index directly from the
+# NNN-<slug>.md tree under $OUTPUT_DIR. The orchestrator writes only into
+# logs/<run-id>/final/ (resolved from LOG_BASE, NOT $OUTPUT_DIR), so the user's
+# output dir stays pure md. Placed after the triage block so triage/human-review
+# stay non-local-only (strict issue scope): the local change produces ONLY
+# findings.jsonl + findings.csv. Non-fatal, mirroring the verifier/synthesizer/
+# triage precedent: a failure warns and NEVER flips REPOLENS_FINAL_STATE or
+# RUN_ROUNDS_RC.
+if $LOCAL_MODE && [[ -n "$OUTPUT_DIR" && -d "$OUTPUT_DIR" ]]; then
+  if build_finding_registry "$RUN_ID" "$OUTPUT_DIR"; then
+    log_info "Finding registry: findings.jsonl + findings.csv written -> $LOG_BASE/final/ (index for $OUTPUT_DIR)"
+  else
+    log_warn "Finding registry: build failed (findings index not produced)"
+  fi
+fi
+
 apply_rate_limit_abort_final_state || true
 set_summary_health "$SUMMARY_FILE" "$REPOLENS_DEGENERATE_THRESHOLD"
 RUN_HEALTH="$(jq -r '.health // "ok"' "$SUMMARY_FILE" 2>/dev/null || printf 'ok')"
@@ -3844,6 +4568,23 @@ case "$RUN_HEALTH" in
     ;;
 esac
 
+# Resolve the process exit code ONCE, up front, from the now-final run state
+# (REPOLENS_FINAL_STATE / RUN_HEALTH / RUN_ROUNDS_RC). The exit-code ladder below
+# routes through this same value so the code recorded in attempts.json can never
+# drift from the real process exit (#375).
+RUN_EXIT_CODE="$(resolve_run_exit_code)"
+
+# Record this invocation in the per-attempt audit trail (#371), enriched for
+# triage (#375), now that REPOLENS_FINAL_STATE / RUN_HEALTH are resolved and
+# summary.json exists. why_stopped prefers summary.json's stopped_reason and
+# falls back to the present abort sentinel; exit_code is the resolved code above.
+# Non-fatal: a write failure logs a warning and never changes the exit code.
+attempts_finalize \
+  "$LOG_BASE" \
+  "${REPOLENS_FINAL_STATE:-finished}" \
+  "$(resolve_why_stopped)" \
+  "$RUN_EXIT_CODE" || true
+
 # Emit the canonical latest-result pointer at the top of the logs tree (#308).
 # Non-fatal: a pointer-write failure logs a warning and never changes exit code.
 write_latest_result_pointer \
@@ -3868,36 +4609,72 @@ if [[ "$FINAL_FINDINGS_FILTERED" =~ ^[0-9]+$ ]] && (( 10#$FINAL_FINDINGS_FILTERE
   echo "Findings filtered by --min-severity: $FINAL_FINDINGS_FILTERED"
 fi
 
+# Print time breakdown (no-op on older summaries without duration data).
+echo ""
+summary_time_breakdown "$SUMMARY_FILE" 10
+
+# Local-mode end-of-run output pointers: the md deliverable plus, when produced,
+_ro_outcome="$(jq -r '.run_outcome // "unknown"' "$SUMMARY_FILE" 2>/dev/null || printf 'unknown')"
+printf '\nREPOLENS_RUN_OUTCOME %s run_id=%s summary=%s errors=%s/repolens-errors.ndjson\n' \
+  "$_ro_outcome" "$RUN_ID" "$SUMMARY_FILE" "$LOG_BASE"
+
+# the machine-readable finding index (findings.jsonl + findings.csv under final/).
+if $LOCAL_MODE; then
+  echo ""
+  echo "Output:       local markdown ($OUTPUT_DIR)"
+  if [[ -f "$LOG_BASE/final/findings.jsonl" ]]; then
+    echo "Finding index: $LOG_BASE/final/findings.jsonl (+ findings.csv)"
+  fi
+fi
+
 # Print summary to stdout
 echo ""
 echo "=== RepoLens Run Summary ==="
 jq '.' "$SUMMARY_FILE"
 
-_ro_outcome="$(jq -r '.run_outcome // "unknown"' "$SUMMARY_FILE" 2>/dev/null || printf 'unknown')"
-printf '\nREPOLENS_RUN_OUTCOME %s run_id=%s summary=%s errors=%s/repolens-errors.ndjson\n' \
-  "$_ro_outcome" "$RUN_ID" "$SUMMARY_FILE" "$LOG_BASE"
+# Surface the parent-run + attempts model (#377): when this run dir represents
+# one parent that took more than one attempt (a fresh start plus one or more
+# --resume invocations), print a single legible note pointing at the full
+# continuation history. attempts_finalize (above) has already appended the
+# current attempt, so the count includes it. Single-attempt runs print nothing.
+# Non-fatal: jq-guarded and tolerant of an absent/corrupt attempts.json.
+if command -v jq >/dev/null 2>&1 && [[ -f "$LOG_BASE/attempts.json" ]]; then
+  _attempts_n="$(jq -r 'if type == "array" then length else 0 end' "$LOG_BASE/attempts.json" 2>/dev/null || printf '0')"
+  [[ "$_attempts_n" =~ ^[0-9]+$ ]] || _attempts_n=0
+  if (( _attempts_n > 1 )); then
+    _attempts_latest="$(jq -r 'if type == "array" then (last.status // "") else "" end' "$LOG_BASE/attempts.json" 2>/dev/null || printf '')"
+    echo "This run took ${_attempts_n} attempts (latest: ${_attempts_latest}). Full continuation history: logs/${RUN_ID}/attempts.json"
+  fi
+  unset _attempts_n _attempts_latest
+fi
 
+# Exit-code ladder. The numeric code comes from RUN_EXIT_CODE (resolved above by
+# resolve_run_exit_code) so it can never drift from the attempts.json record;
+# each branch below only decides WHICH side effects (resume hints) to emit. Keep
+# the branch order identical to resolve_run_exit_code.
 if [[ "${REPOLENS_FINAL_STATE:-finished}" == "interrupted" ]]; then
-  exit "${REPOLENS_INTERRUPT_EXIT_CODE:-130}"
+  print_resume_hint
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ -f "$LOG_BASE/.rate-limit-abort" ]]; then
-  if is_phase_rate_limit_stopped_reason "$(rate_limit_abort_stopped_reason)"; then
-    exit 1
-  fi
-  exit 3
+  # Both the phase rate-limit (exit 1) and rate-limit-pending (exit 3) outcomes
+  # are resumable; RUN_EXIT_CODE already carries the right one.
+  print_resume_hint
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ -f "$LOG_BASE/.agent-no-progress-abort" || -f "$LOG_BASE/.systemic-failure-abort" ]]; then
-  exit 1
+  print_resume_hint
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ "$RUN_ROUNDS_RC" -ne 0 ]]; then
-  exit "$RUN_ROUNDS_RC"
+  exit "$RUN_EXIT_CODE"
 fi
 
 if [[ "$RUN_HEALTH" == "broken" && "${REPOLENS_ALLOW_DEGENERATE:-false}" != "true" ]]; then
-  exit 2
+  exit "$RUN_EXIT_CODE"
 fi
 
 exit 0

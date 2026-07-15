@@ -111,6 +111,9 @@ if ! declare -F build_android_apk >/dev/null 2>&1; then
     project_path="$(cd "$project_path" 2>/dev/null && pwd)" || return 1
 
     (
+      # Force C locale in this subshell before exec so bash's own ENOENT/EACCES
+      # messages stay English (stable under de_DE and similar operator locales).
+      export LC_ALL=C LANG=C
       cd "$project_path" || exit 1
       ./gradlew assembleDebug 1>&2
     ) || return $?

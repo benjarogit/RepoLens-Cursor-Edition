@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -163,8 +163,9 @@ summary_path_for_run() {
 # from independent runs of the same configuration can be compared.
 sanitize_summary() {
   local file="$1"
+  # errors_log (and similar) embed the run-id path; drop them with other volatiles.
   jq '
-    del(.run_id, .project, .started_at, .completed_at, .output_dir)
+    del(.run_id, .project, .started_at, .completed_at, .output_dir, .errors_log)
     | .lenses = (.lenses // [] | map(del(.rate_limit_sleep_seconds)))
   ' "$file"
 }

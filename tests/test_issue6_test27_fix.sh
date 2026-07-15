@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -258,24 +258,59 @@ else
   echo "  FAIL: Makefile must have a 'check' target"
 fi
 
+# Exercise the real Makefile against a fast fixture that mirrors every current
+# test-suite name. The surrounding make-check invocation already runs the real
+# suites; re-running the full corpus twice here made this meta-test exceed the
+# recursion guard's timeout. No-op fixture suites retain the complete discovery
+# surface while isolating the Makefile's success, failure, aggregation, and
+# recursion-guard contracts.
+MAKE_CHECK_FIXTURE="$TMPDIR/make-check"
+mkdir -p "$MAKE_CHECK_FIXTURE/tests"
+cp "$SCRIPT_DIR/Makefile" "$MAKE_CHECK_FIXTURE/Makefile"
+for source_test in "$SCRIPT_DIR"/tests/test_*.sh; do
+  fixture_test="$MAKE_CHECK_FIXTURE/tests/$(basename "$source_test")"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    if grep -q '&& make check' "$source_test" 2>/dev/null; then
+      printf '%s\n' '# Recursion-guard marker: && make check'
+    fi
+    printf '%s\n' 'echo "Results: 1/1 passed, 0 failed"' 'exit 0'
+  } > "$fixture_test"
+  chmod +x "$fixture_test"
+done
+
+# Cache `make check` output/rc once for the successful fixture. The explicit
+# environment value activates the parse-time recursion guard under test.
+_MAKE_OK_OUT=""
+_MAKE_OK_RC=0
+if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
+  # set -e is not active (script uses set -uo pipefail), so a non-zero
+  # exit from the command substitution won't abort — $? correctly
+  # captures make's rc.
+  _MAKE_OK_OUT="$(cd "$MAKE_CHECK_FIXTURE" && REPOLENS_MAKE_CHECK=1 make check 2>&1)"
+  _MAKE_OK_RC=$?
+fi
+
 echo ""
 echo "Test 15: 'make check' discovers all test suites"
-# Count test scripts in tests/ directory
 test_script_count="$(find "$SCRIPT_DIR/tests" -maxdepth 1 -name 'test_*.sh' -type f | wc -l)"
+guarded_script_count=0
+for test_script in "$SCRIPT_DIR"/tests/test_*.sh; do
+  if grep -q '&& make check' "$test_script" 2>/dev/null; then
+    guarded_script_count=$((guarded_script_count + 1))
+  fi
+done
+expected_results_count=$((test_script_count - guarded_script_count))
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]]; then
-  make_output="$(cd "$SCRIPT_DIR" && make check 2>&1 || true)"
-  # Each test suite should produce a "Results:" line when run
-  results_count="$(echo "$make_output" | grep -c 'Results:' || true)"
-  # The make check output should reference at least as many suites as exist
-  # (minus 1 to account for this test file itself potentially not being counted)
-  if [[ "$results_count" -ge "$((test_script_count - 1))" ]] && [[ "$results_count" -gt 0 ]]; then
+if [[ -n "$_MAKE_OK_OUT" ]]; then
+  results_count="$(echo "$_MAKE_OK_OUT" | grep -c 'Results:' || true)"
+  if [[ "$results_count" -ge "$expected_results_count" ]] && [[ "$results_count" -gt 0 ]]; then
     PASS=$((PASS + 1))
-    echo "  PASS: make check discovers $results_count test suites (of $test_script_count scripts)"
+    echo "  PASS: make check discovers $results_count runnable test suites (of $test_script_count scripts)"
   else
     FAIL=$((FAIL + 1))
     echo "  FAIL: make check must discover all test suites"
-    echo "    Found $results_count Results lines for $test_script_count test scripts"
+    echo "    Found $results_count Results lines; expected at least $expected_results_count after $guarded_script_count recursion-guard skips"
   fi
 else
   FAIL=$((FAIL + 1))
@@ -286,12 +321,12 @@ echo ""
 echo "Test 16: 'make check' exits successfully"
 TOTAL=$((TOTAL + 1))
 if [[ -f "$SCRIPT_DIR/Makefile" ]]; then
-  if (cd "$SCRIPT_DIR" && make check >/dev/null 2>&1); then
+  if [[ "$_MAKE_OK_RC" -eq 0 ]]; then
     PASS=$((PASS + 1))
     echo "  PASS: make check exits 0"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: make check must exit 0 when all tests pass"
+    echo "  FAIL: make check must exit 0 when all tests pass (got rc=$_MAKE_OK_RC)"
   fi
 else
   FAIL=$((FAIL + 1))
@@ -301,10 +336,8 @@ fi
 echo ""
 echo "Test 17: 'make check' reports aggregate pass/fail counts"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]]; then
-  make_output="$(cd "$SCRIPT_DIR" && make check 2>&1 || true)"
-  # The make check should have some kind of aggregate summary
-  if grep -qiE '(passed|failed|total|suites|results)' <<< "$make_output"; then
+if [[ -n "$_MAKE_OK_OUT" ]]; then
+  if grep -qiE '(passed|failed|total|suites|results)' <<< "$_MAKE_OK_OUT"; then
     PASS=$((PASS + 1))
     echo "  PASS: make check reports aggregate results"
   else
@@ -319,16 +352,15 @@ fi
 # =====================================================================
 # Contract 5: Makefile failure handling
 # =====================================================================
-# All tests below use REPOLENS_MAKE_CHECK=1 to activate the recursion
-# guard, preventing this file from being re-executed by make check and
-# avoiding infinite recursion.
+# Run make check once with a planted failing fixture suite, then assert shape.
+# All invocations set REPOLENS_MAKE_CHECK=1 to activate the recursion
+# guard, preventing this file from being re-executed and avoiding
+# infinite recursion.
 
-echo ""
-echo "Test 18: 'make check' exits non-zero when a suite fails"
-TOTAL=$((TOTAL + 1))
+_FAIL_MAKE_OUT=""
+_FAIL_MAKE_RC=0
 if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  # Create a minimal failing test script
-  _fail_script="$SCRIPT_DIR/tests/test_zzz_tempfail.sh"
+  _fail_script="$MAKE_CHECK_FIXTURE/tests/test_zzz_tempfail.sh"
   cat > "$_fail_script" <<'FAILEOF'
 #!/usr/bin/env bash
 echo "  FAIL: intentional failure"
@@ -336,14 +368,21 @@ echo "Results: 0/1 passed, 1 failed"
 exit 1
 FAILEOF
   chmod +x "$_fail_script"
-  (cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check >/dev/null 2>&1); _rc=$?
+  _FAIL_MAKE_OUT="$(cd "$MAKE_CHECK_FIXTURE" && REPOLENS_MAKE_CHECK=1 make check 2>&1)"
+  _FAIL_MAKE_RC=$?
   rm -f "$_fail_script"
-  if [[ "$_rc" -ne 0 ]]; then
+fi
+
+echo ""
+echo "Test 18: 'make check' exits non-zero when a suite fails"
+TOTAL=$((TOTAL + 1))
+if [[ -n "$_FAIL_MAKE_OUT" ]]; then
+  if [[ "$_FAIL_MAKE_RC" -ne 0 ]]; then
     PASS=$((PASS + 1))
     echo "  PASS: make check exits non-zero on suite failure"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: make check must exit non-zero when a suite fails (got rc=$_rc)"
+    echo "  FAIL: make check must exit non-zero when a suite fails (got rc=$_FAIL_MAKE_RC)"
   fi
 else
   FAIL=$((FAIL + 1))
@@ -353,24 +392,14 @@ fi
 echo ""
 echo "Test 19: 'make check' output shows FAILED for failing suites"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  _fail_script="$SCRIPT_DIR/tests/test_zzz_tempfail.sh"
-  cat > "$_fail_script" <<'FAILEOF'
-#!/usr/bin/env bash
-echo "  FAIL: intentional failure"
-echo "Results: 0/1 passed, 1 failed"
-exit 1
-FAILEOF
-  chmod +x "$_fail_script"
-  _make_out="$(cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check 2>&1 || true)"
-  rm -f "$_fail_script"
-  if grep -q 'FAILED: tests/test_zzz_tempfail.sh' <<< "$_make_out"; then
+if [[ -n "$_FAIL_MAKE_OUT" ]]; then
+  if grep -q 'FAILED: tests/test_zzz_tempfail.sh' <<< "$_FAIL_MAKE_OUT"; then
     PASS=$((PASS + 1))
     echo "  PASS: make check output shows FAILED for failing suite"
   else
     FAIL=$((FAIL + 1))
     echo "  FAIL: make check must show FAILED for failing suites"
-    echo "    Output: $(echo "$_make_out" | grep -iE '(FAIL|test_zzz)' | head -3)"
+    echo "    Output: $(echo "$_FAIL_MAKE_OUT" | grep -iE '(FAIL|test_zzz)' | head -3)"
   fi
 else
   FAIL=$((FAIL + 1))
@@ -380,19 +409,8 @@ fi
 echo ""
 echo "Test 20: 'make check' reports failed count > 0 for failing suites"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  _fail_script="$SCRIPT_DIR/tests/test_zzz_tempfail.sh"
-  cat > "$_fail_script" <<'FAILEOF'
-#!/usr/bin/env bash
-echo "  FAIL: intentional failure"
-echo "Results: 0/1 passed, 1 failed"
-exit 1
-FAILEOF
-  chmod +x "$_fail_script"
-  _make_out="$(cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check 2>&1 || true)"
-  rm -f "$_fail_script"
-  # Find the aggregate results line (not make's own error message)
-  _agg_line="$(echo "$_make_out" | grep -E '^Results:.*suites' | tail -1)"
+if [[ -n "$_FAIL_MAKE_OUT" ]]; then
+  _agg_line="$(echo "$_FAIL_MAKE_OUT" | grep -E '^Results:.*suites' | tail -1)"
   if grep -qE 'Results: [0-9]+ suites run, [1-9]' <<< "$_agg_line"; then
     PASS=$((PASS + 1))
     echo "  PASS: aggregate reports non-zero failed count"
@@ -416,11 +434,10 @@ fi
 echo ""
 echo "Test 21: recursion guard skips meta-test files when REPOLENS_MAKE_CHECK=1"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  _make_out="$(cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check 2>&1 || true)"
+if [[ -n "$_MAKE_OK_OUT" ]]; then
   # This test file (test_issue6_test27_fix.sh) contains '&& make check',
   # so the recursion guard should skip it when REPOLENS_MAKE_CHECK=1 is set.
-  if grep -qE '(PASSED|FAILED): tests/test_issue6_test27_fix.sh' <<< "$_make_out"; then
+  if grep -qE '(PASSED|FAILED): tests/test_issue6_test27_fix.sh' <<< "$_MAKE_OK_OUT"; then
     FAIL=$((FAIL + 1))
     echo "  FAIL: recursion guard should skip this meta-test when REPOLENS_MAKE_CHECK=1"
   else
@@ -435,17 +452,14 @@ fi
 echo ""
 echo "Test 22: recursion guard runs all non-meta test suites"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  _make_out="$(cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check 2>&1 || true)"
-  # Count test files that do NOT contain '&& make check' (non-meta suites)
+if [[ -n "$_MAKE_OK_OUT" ]]; then
   _non_meta=0
   for _f in "$SCRIPT_DIR"/tests/test_*.sh; do
     if ! grep -q '&& make check' "$_f" 2>/dev/null; then
       _non_meta=$((_non_meta + 1))
     fi
   done
-  # Count PASSED/FAILED lines in make check output (one per suite run)
-  _run_count="$(echo "$_make_out" | grep -cE '^(PASSED|FAILED):' || true)"
+  _run_count="$(echo "$_MAKE_OK_OUT" | grep -cE '^(PASSED|FAILED):' || true)"
   if [[ "$_run_count" -eq "$_non_meta" ]]; then
     PASS=$((PASS + 1))
     echo "  PASS: make check runs all $_non_meta non-meta suites"
@@ -465,9 +479,8 @@ fi
 echo ""
 echo "Test 23: aggregate results line follows 'Results: N suites run, M failed' format"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  _make_out="$(cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check 2>&1 || true)"
-  _agg_line="$(echo "$_make_out" | grep -E '^Results:.*suites' | tail -1)"
+if [[ -n "$_MAKE_OK_OUT" ]]; then
+  _agg_line="$(echo "$_MAKE_OK_OUT" | grep -E '^Results:.*suites' | tail -1)"
   if grep -qE '^Results: [0-9]+ suites run, [0-9]+ failed$' <<< "$_agg_line"; then
     PASS=$((PASS + 1))
     echo "  PASS: aggregate line matches expected format"
@@ -484,12 +497,9 @@ fi
 echo ""
 echo "Test 24: aggregate suite count matches actual suites run"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/Makefile" ]] && command -v make >/dev/null 2>&1; then
-  _make_out="$(cd "$SCRIPT_DIR" && REPOLENS_MAKE_CHECK=1 make check 2>&1 || true)"
-  # Count PASSED/FAILED lines
-  _run_count="$(echo "$_make_out" | grep -cE '^(PASSED|FAILED):' || true)"
-  # Parse the reported count from aggregate line
-  _agg_line="$(echo "$_make_out" | grep -E '^Results:.*suites' | tail -1)"
+if [[ -n "$_MAKE_OK_OUT" ]]; then
+  _run_count="$(echo "$_MAKE_OK_OUT" | grep -cE '^(PASSED|FAILED):' || true)"
+  _agg_line="$(echo "$_MAKE_OK_OUT" | grep -E '^Results:.*suites' | tail -1)"
   _reported="$(echo "$_agg_line" | grep -oE '[0-9]+ suites' | grep -oE '[0-9]+')"
   if [[ -n "$_reported" ]] && [[ "$_run_count" -eq "$_reported" ]]; then
     PASS=$((PASS + 1))

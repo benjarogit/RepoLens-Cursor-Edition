@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -143,6 +143,20 @@ extra_args_for_mode() {
   esac
 }
 
+# Dry-run still calls require_cmd for the selected agent. Operators without a
+# real Codex CLI need a stub so baseline capture does not collapse to
+# "ERROR: Missing required command: codex".
+FAKE_BIN="$TMPDIR_RUN/fake-bin"
+make_fake_codex() {
+  mkdir -p "$FAKE_BIN"
+  cat > "$FAKE_BIN/codex" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+printf 'DONE\n'
+EOF
+  chmod +x "$FAKE_BIN/codex"
+}
+
 # Make a deterministic empty project. The test asserts on dry-run output only,
 # so no real source is needed — the cost-banner token estimate is dominated by
 # the fixed agent-pricing constants.
@@ -196,7 +210,7 @@ capture_mode() {
   done < <(extra_args_for_mode "$mode")
 
   local raw_output
-  raw_output="$(bash "$SCRIPT_DIR/repolens.sh" "${argv[@]}" 2>&1)" || true
+  raw_output="$(env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT_DIR/repolens.sh" "${argv[@]}" 2>&1)" || true
 
   # Harvest the run-id so we can clean up logs/<run-id>/.
   local rid
@@ -212,6 +226,8 @@ capture_mode() {
 echo ""
 echo "=== Test Suite: rounds default no regression (issue #177) ==="
 echo ""
+
+make_fake_codex
 
 MODES=(audit feature bugfix custom discover deploy opensource content)
 
@@ -272,7 +288,7 @@ echo "Test: audit-mode dry-run creates round-1 but never round-2"
 audit_project="$TMPDIR_RUN/fs-audit-project"
 make_project "$audit_project"
 audit_out="$TMPDIR_RUN/fs-audit.out"
-bash "$SCRIPT_DIR/repolens.sh" \
+env PATH="$FAKE_BIN:$PATH" bash "$SCRIPT_DIR/repolens.sh" \
   --project "$audit_project" \
   --agent codex \
   --mode audit \

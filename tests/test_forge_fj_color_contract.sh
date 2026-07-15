@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy
+# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -201,14 +201,14 @@ echo "Test 5: rendered fj prompt command uses #RRGGBB for bare-hex input"
 fj_prompt="$(FORGE_PROVIDER=fj FORGE_HOST=codeberg.org \
   bash -c "source '$SCRIPT_DIR/lib/forge.sh'; forge_prompt_label_create 'audit:demo' 'abcdef' 'owner/repo' ''")"
 assert_contains "fj prompt renders #-prefixed color for bare hex" \
-  "fj -H codeberg.org repo labels owner/repo create audit:demo #abcdef" "$fj_prompt"
+  "fj -H 'codeberg.org' repo labels 'owner/repo' create 'audit:demo' '#abcdef'" "$fj_prompt"
 
 echo ""
 echo "Test 6: rendered fj prompt command is idempotent when color already has #"
 fj_prompt_prefixed="$(FORGE_PROVIDER=fj FORGE_HOST=codeberg.org \
   bash -c "source '$SCRIPT_DIR/lib/forge.sh'; forge_prompt_label_create 'audit:demo' '#abcdef' 'owner/repo' ''")"
 assert_contains "fj prompt preserves caller-supplied # prefix" \
-  "fj -H codeberg.org repo labels owner/repo create audit:demo #abcdef" "$fj_prompt_prefixed"
+  "fj -H 'codeberg.org' repo labels 'owner/repo' create 'audit:demo' '#abcdef'" "$fj_prompt_prefixed"
 assert_not_contains "fj prompt does not double-prefix #" "##abcdef" "$fj_prompt_prefixed"
 
 echo ""
@@ -216,14 +216,14 @@ echo "Test 7: gh and tea rendered commands keep bare hex (no contract change)"
 gh_prompt="$(FORGE_PROVIDER=gh \
   bash -c "source '$SCRIPT_DIR/lib/forge.sh'; forge_prompt_label_create 'audit:demo' 'abcdef' 'owner/repo' ''")"
 assert_contains "gh prompt keeps bare hex (no # prefix added)" \
-  "gh label create audit:demo --color abcdef --force -R owner/repo" "$gh_prompt"
-assert_not_contains "gh prompt does not introduce a # prefix" "--color #abcdef" "$gh_prompt"
+  "gh label create 'audit:demo' --color 'abcdef' --force -R 'owner/repo'" "$gh_prompt"
+assert_not_contains "gh prompt does not introduce a # prefix" "--color '#abcdef'" "$gh_prompt"
 
 tea_prompt="$(FORGE_PROVIDER=tea FORGE_PROJECT_PATH=/tmp/x FORGE_REMOTE_NAME=origin \
   bash -c "source '$SCRIPT_DIR/lib/forge.sh'; forge_prompt_label_create 'audit:demo' 'abcdef' 'owner/repo' ''")"
 assert_contains "tea prompt keeps bare hex (no # prefix added)" \
-  "--color abcdef" "$tea_prompt"
-assert_not_contains "tea prompt does not introduce a # prefix" "--color #abcdef" "$tea_prompt"
+  "--color 'abcdef'" "$tea_prompt"
+assert_not_contains "tea prompt does not introduce a # prefix" "--color '#abcdef'" "$tea_prompt"
 
 echo ""
 echo "================================"

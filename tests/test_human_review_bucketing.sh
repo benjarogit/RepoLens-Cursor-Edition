@@ -22,7 +22,7 @@
 #
 #   human_review_bucketize <findings_jsonl_path>
 #     Reads the finding registry (JSON Lines, schema in
-#     docs/finding-registry-schema.md) and prints to stdout a SINGLE deterministic
+#     docs/en/finding-registry-schema.md) and prints to stdout a SINGLE deterministic
 #     JSON object that partitions EVERY finding into 5 priority-ordered buckets,
 #     first-match-wins, no double-counting. It WRITES NOTHING and never invokes a
 #     model. On an empty / missing / unreadable registry it prints all-empty

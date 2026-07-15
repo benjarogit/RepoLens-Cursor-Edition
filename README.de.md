@@ -13,10 +13,13 @@
 </p>
 
 <p align="center">
+  <a href="https://benjarogit.github.io/RepoLens-Cursor-Edition/de/"><img src="https://img.shields.io/badge/Dokumentation-Docs%20lesen-0B3D91?style=for-the-badge" alt="Dokumentation" /></a>
+</p>
+
+<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Lizenz" /></a>
   <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest Release" /></a>
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
-  <a href="UPSTREAM_REVISION"><img src="https://img.shields.io/badge/sync-tracked-brightgreen" alt="Upstream-Sync" /></a>
   <a href="https://cursor.com/referral?code=UW6WJZLB8ECL"><img src="https://img.shields.io/badge/Cursor-starten-black" alt="Cursor starten" /></a>
 </p>
 
@@ -28,20 +31,29 @@
 
 ---
 
+## Dokumentation
+
+**Alle Guides stehen auf der Docs-Site** (Sidebar, Suche, English / Deutsch):
+
+### → [RepoLens Cursor Edition Doku](https://benjarogit.github.io/RepoLens-Cursor-Edition/de/)
+
+Dort: Operator-Guide, IDE-Handoff, Toolgate-Tool-Liste und CLI-Referenz.  
+Markdown-Quellen im Repo: [`docs/de/`](docs/de/) und [`docs/en/`](docs/en/).
+
+---
+
 ## Was das ist
 
-Fork von [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens), ausgelegt auf **[Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL) Composer/Agent**. Jede *Lens* ist ein gezielter Prüfdurchlauf; zusammen decken sie Security, Qualität und mehr ab.
+Fork von [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) für **[Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL) Composer/Agent**. Jede *Lens* ist ein gezielter Prüfdurchlauf.
 
 | | |
 |---|---|
-| **Agent** | `--agent cursor-ide` (empfohlen) |
-| **Output** | Markdown unter `logs/<run-id>/` (`--local`) |
-| **Schleife** | IDE-Handoff über `REPOLENS_CTL` → Prompt → Antwort → Done |
-
-Upstream unterstützt weiterhin Claude, Codex und ähnliche Backends. Diese Edition nutzt sie nicht als Standard.
+| **Agent** | `--agent cursor-ide` |
+| **Output** | `logs/<run-id>/` mit `--local` |
+| **Schleife** | `REPOLENS_CTL` → Prompt → Antwort → Done |
 
 > [!IMPORTANT]
-> Agenten können Shell-Befehle in deinem Projekt ausführen. Starte mit einer Domain (z. B. `--domain security`), bevor du einen vollen Audit startest. Immer `--local` setzen.
+> Agenten können Shell-Befehle ausführen. Starte mit einer Domain (z. B. `--domain security`). Immer `--local`.
 
 ## Schnellstart
 
@@ -53,63 +65,12 @@ chmod +x repolens.sh
 export REPOLENS_IDE_AUTONOMOUS=1
 ./repolens.sh \
   --project /pfad/zum/projekt \
-  --agent cursor-ide \
-  --local \
-  --domain security \
-  --yes
+  --agent cursor-ide --local --domain security --yes
 ```
 
-Brauchst du noch [Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL)? Zuerst installieren, dann den Chat auf diesem Repo offen lassen. Wenn das Terminal `REPOLENS_CTL` ausgibt:
+Brauchst du [Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL)? Installieren, Chat auf diesem Repo öffnen, bei `REPOLENS_CTL` dem [IDE-Handoff](https://benjarogit.github.io/RepoLens-Cursor-Edition/de/handoff/) folgen.
 
-1. `files.prompt` lesen
-2. die volle Antwort nach `files.response` schreiben
-3. `files.done` mit `touch` anlegen
-
-Details: [docs/de/handoff.md](docs/de/handoff.md)
-
-## Zusammenspiel
-
-```
-repolens.sh ──► ide-prompt ──► Cursor Agent ──► ide-response ──► touch done
-                    ▲                                    │
-                    └──────── REPOLENS_CTL (stderr) ─────┘
-```
-
-Mitgelieferte Cursor-Hilfen:
-
-- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc) — welcher Agent
-- [`.cursor/rules/repolens-ide-handoff.mdc`](.cursor/rules/repolens-ide-handoff.mdc) — Handoff-Ablauf
-- [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) — Strukturprüfung, dann RepoLens
-
-## Resume
-
-```bash
-./repolens.sh --resume <run-id> \
-  --project /pfad/zum/projekt \
-  --agent cursor-ide --local --yes
-
-# letzter unterbrochener Run:
-./repolens.sh --resume \
-  --project /pfad/zum/projekt \
-  --agent cursor-ide --local --yes
-```
-
-Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
-
-## Dokumentation
-
-| | |
-|---|---|
-| [Docs-Index](docs/de/README.md) | Empfohlene Lesereihenfolge |
-| [Operator-Guide](docs/de/operator.md) | Erste Läufe, Domains, Resume, Toolgate |
-| [Toolgate-Tools](docs/de/toolgate-tools.md) | Echte Scanner/Linter, die Toolgate starten kann |
-| [IDE-Handoff](docs/de/handoff.md) | Prompt → Antwort → Done |
-| [CLI- & Modes-Referenz](docs/en/full-reference.md) | Längere Flag- und Mode-Referenz (EN) |
-| [Upstream-Sync](UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
-| [Changelog](CHANGELOG.md) | Cursor Edition und Upstream |
-| [Methodik](METHODOLOGY.md) | Wie Lenses aufgebaut sind (EN) |
-
-English: [docs/README.md](docs/README.md).
+Mehr: [Docs-Site](https://benjarogit.github.io/RepoLens-Cursor-Edition/de/) · [Upstream-Sync](UPSTREAM.md) · [Changelog](CHANGELOG.md)
 
 ## Lizenz
 

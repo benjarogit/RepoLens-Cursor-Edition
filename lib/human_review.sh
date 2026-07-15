@@ -15,7 +15,7 @@
 
 # RepoLens — Human Mode bucketing helper
 # Classifies the finding registry (final/findings.jsonl, schema:
-# docs/finding-registry-schema.md) into the 5 noise-budget buckets that the
+# docs/en/finding-registry-schema.md) into the 5 noise-budget buckets that the
 # --human-review digest renders. This file ONLY classifies + selects the
 # ranking key; it renders no Markdown, groups no themes, and does no held-back
 # accounting (those are separate issues). Sourced, never executed directly.

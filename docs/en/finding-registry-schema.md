@@ -1,8 +1,8 @@
 # Finding Registry Schema (`findings.jsonl` + `findings.csv`)
 
 <p align="right">
-  <a href="README.md">Docs index</a> ·
-  <a href="en/operator.md">Operator</a>
+  <a href="index.md">Docs index</a> ·
+  <a href="operator.md">Operator</a>
 </p>
 
 ## In plain terms

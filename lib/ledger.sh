@@ -23,7 +23,7 @@
 # registry lands and where to find a local `--local` md tree.
 #
 # The finding registry (`logs/<run-id>/final/findings.jsonl`, schema in
-# docs/finding-registry-schema.md) needs a STABLE `id` so the same finding
+# docs/en/finding-registry-schema.md) needs a STABLE `id` so the same finding
 # earns the same id across runs and across both source paths (manifest
 # clusters and `--local` markdown frontmatter). This module owns that id.
 #
@@ -246,7 +246,7 @@ _ledger_resolve_finding_type() {
 #   Reads a validated synthesizer manifest (logs/<run-id>/final/manifest.json:
 #   a JSON array of cluster objects) and writes the canonical finding registry
 #   as JSON Lines — one record per cluster, mapped onto the 12-field schema in
-#   docs/finding-registry-schema.md plus a source_finding_paths passthrough.
+#   docs/en/finding-registry-schema.md plus a source_finding_paths passthrough.
 #
 #   Pure: reads the manifest, writes the out file. No required globals;
 #   severity_normalize (lib/core.sh) is used when present, else an inline
@@ -399,7 +399,7 @@ _ledger_frontmatter_scalar() {
 #   <output_dir>, parses each file's leading YAML frontmatter
 #   (title/severity/domain/lens) and emits one registry record per file that
 #   carries a valid frontmatter block, mapped onto the 12-field schema in
-#   docs/finding-registry-schema.md.
+#   docs/en/finding-registry-schema.md.
 #
 #   Sibling of build_findings_jsonl_from_manifest (#314): same null-slot
 #   conventions and the same atomic-write + jq-owns-escaping discipline, with
@@ -502,7 +502,7 @@ build_findings_jsonl_from_local() {
 
 # build_findings_csv <findings_jsonl_path> <out_csv_path>
 #   Projects the canonical finding registry (findings.jsonl, schema in
-#   docs/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
+#   docs/en/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
 #   row, then one row per JSONL line, preserving JSONL line order
 #   (deterministic). Spreadsheet/grep users get a flat view without a second
 #   source of truth — findings.jsonl stays the full-fidelity registry.
@@ -555,7 +555,7 @@ build_findings_csv() {
 
 # validate_findings_jsonl <findings_jsonl_path>
 #   Validates the JSON-Lines finding registry (schema:
-#   docs/finding-registry-schema.md) PER LINE. This is the last line of defense
+#   docs/en/finding-registry-schema.md) PER LINE. This is the last line of defense
 #   so siblings (dedupe/validation/triage/html/csv) can trust the structure even
 #   if a builder regresses or a future producer writes the file. It mirrors
 #   validate_manifest's reporting discipline (every message to stderr, prefixed

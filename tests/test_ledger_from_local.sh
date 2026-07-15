@@ -16,7 +16,7 @@
 # Tests for issue #319: lib/ledger.sh — build_findings_jsonl_from_local.
 # Ingests --local NNN-*.md YAML frontmatter (title/severity/domain/lens) into
 # the canonical finding registry (findings.jsonl, schema in
-# docs/finding-registry-schema.md). Pure filesystem-to-JSON transformation;
+# docs/en/finding-registry-schema.md). Pure filesystem-to-JSON transformation;
 # NO AI models are invoked. Sibling of build_findings_jsonl_from_manifest
 # (#314) — same null-slot conventions, but markdown_path is POPULATED with the
 # .md file's path (the whole point of the issue) and no source_finding_paths.

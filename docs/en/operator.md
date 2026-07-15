@@ -2,7 +2,7 @@
 
 <p align="right">
   <strong>English</strong> · <a href="../de/operator.md">Deutsch</a>
-  · <a href="../README.md">Docs index</a>
+  · <a href="index.md">Docs index</a>
   · <a href="../../README.md">README</a>
 </p>
 
@@ -90,4 +90,4 @@ Full multi-lens runs against **vendored library or interpreter mirrors** (for ex
 - [Toolgate tools](toolgate-tools.md)
 - [IDE handoff](handoff.md)
 - [CLI & modes reference](full-reference.md)
-- [Audit-pipeline skill](../../.cursor/skills/audit-pipeline/SKILL.md)
+- [Audit-pipeline skill](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/.cursor/skills/audit-pipeline/SKILL.md)

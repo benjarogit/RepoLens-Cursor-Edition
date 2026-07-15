@@ -22,7 +22,7 @@
 #
 #   generate_todo_md <findings_jsonl> <out_file>
 #     Reads the finding registry (JSON Lines, schema in
-#     docs/finding-registry-schema.md), selects the actionable subset, and
+#     docs/en/finding-registry-schema.md), selects the actionable subset, and
 #     writes a Markdown file at <out_file>. One entry per finding showing
 #     severity, type, primary_location and a link to its markdown_path.
 #

@@ -25,7 +25,7 @@
 #
 #   generate_duplicates_md <findings_jsonl> <out_file>
 #     Reads the finding registry (JSON Lines, schema in
-#     docs/finding-registry-schema.md) and writes a Markdown file at <out_file>.
+#     docs/en/finding-registry-schema.md) and writes a Markdown file at <out_file>.
 #     One section per MERGED GROUP: the canonical finding (severity, type,
 #     primary_location, link to its markdown_path) followed by the other lenses
 #     that also reported it (its `also_reported_by` list).

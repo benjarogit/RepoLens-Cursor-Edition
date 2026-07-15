@@ -15,7 +15,7 @@
 
 # Tests for issue #324: lib/ledger.sh — build_findings_csv.
 # Projects the canonical finding registry (findings.jsonl, schema in
-# docs/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
+# docs/en/finding-registry-schema.md) onto a flat CSV: a fixed 12-column header
 # row, then one row per JSONL line, preserving JSONL line order. The nested
 # `validation` object and the `source_finding_paths` array are OMITTED — they
 # don't flatten to a single cell — and findings.jsonl stays the full-fidelity

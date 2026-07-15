@@ -23,7 +23,7 @@
 #
 #   generate_needs_review_md <findings_jsonl> <out_file>
 #     Reads the finding registry (JSON Lines, schema in
-#     docs/finding-registry-schema.md), selects the UNCERTAIN subset, and writes
+#     docs/en/finding-registry-schema.md), selects the UNCERTAIN subset, and writes
 #     a Markdown file at <out_file>. One entry per finding showing severity,
 #     type, primary_location, a link to its markdown_path, AND a short reason it
 #     needs review (which predicate matched).

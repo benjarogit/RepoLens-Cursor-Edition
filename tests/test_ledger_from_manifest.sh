@@ -15,7 +15,7 @@
 
 # Tests for issue #314: lib/ledger.sh — build_findings_jsonl_from_manifest.
 # Maps validated synthesizer manifest clusters onto the canonical finding
-# registry (findings.jsonl, schema in docs/finding-registry-schema.md).
+# registry (findings.jsonl, schema in docs/en/finding-registry-schema.md).
 # Pure JSON-to-JSON transformation; NO AI models are invoked.
 # shellcheck disable=SC2329
 

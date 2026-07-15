@@ -23,7 +23,7 @@
 #
 #   generate_summary_md <findings_jsonl> <out_file>
 #     Reads the finding registry (JSON Lines, schema in
-#     docs/finding-registry-schema.md), ranks every eligible record by
+#     docs/en/finding-registry-schema.md), ranks every eligible record by
 #     RISK = severity_rank x confidence (descending), takes the TOP 20, and
 #     writes a Markdown file at <out_file> with one ranked entry per finding
 #     showing severity, type, primary_location and a link to markdown_path.

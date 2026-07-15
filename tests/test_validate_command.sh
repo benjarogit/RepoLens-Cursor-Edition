@@ -182,7 +182,7 @@ git -C "$PROJECT" -c user.email=t@t.t -c user.name=t commit -qm init >/dev/null 
 FINDING_ID="aaaaaaaaaaaaaaaa"
 
 # A valid single-record findings.jsonl (the documented ingest contract —
-# docs/finding-registry-schema.md, all 12 fields populated).
+# docs/en/finding-registry-schema.md, all 12 fields populated).
 FINDINGS_FILE="$TMPDIR/findings.jsonl"
 cat > "$FINDINGS_FILE" <<JSON
 {"id":"$FINDING_ID","title":"[HIGH] Unvalidated input concatenated into SQL query","severity":"high","type":"security-vulnerability","domain":"security","lens":"injection","status":"new","primary_location":"src.py:1","confidence":0.8,"duplicate_group":null,"markdown_path":"","validation":{}}

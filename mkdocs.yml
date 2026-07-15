@@ -1,0 +1,126 @@
+site_name: RepoLens Cursor Edition
+site_description: Documentation — operator guide, IDE handoff, toolgate tools, and CLI reference for RepoLens Cursor Edition
+site_url: https://benjarogit.github.io/RepoLens-Cursor-Edition/
+site_author: benjarogit
+
+repo_url: https://github.com/benjarogit/RepoLens-Cursor-Edition
+repo_name: benjarogit/RepoLens-Cursor-Edition
+edit_uri: edit/master/docs/
+
+copyright: Apache-2.0 · Upstream TheMorpheus407/RepoLens · Cursor Edition documentation
+
+docs_dir: docs
+site_dir: site
+
+# GitHub folder pointer only — not part of the published nav
+exclude_docs: |
+  README.md
+
+validation:
+  links:
+    # full-reference.md still points at many repo-root files; those live on GitHub, not in docs/
+    absolute_links: ignore
+    unrecognized_links: ignore
+    not_found: ignore
+
+theme:
+  name: material
+  language: en
+  logo: assets/logo-light.png
+  favicon: assets/logo-light.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      reconfigure_material: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+          site_name: RepoLens Cursor Edition Docs
+        - locale: de
+          name: Deutsch
+          build: true
+          site_name: RepoLens Cursor Edition Doku
+          nav_translations:
+            Home: Start
+            Guides: Anleitungen
+            Reference: Referenz
+            Project: Projekt
+            Operator guide: Operator-Guide
+            IDE handoff: IDE-Handoff
+            Toolgate tools: Toolgate-Tools
+            CLI & modes: CLI & Modes
+            Finding registry: Finding-Registry
+            Upstream sync: Upstream-Sync
+            Changelog: Changelog
+            Methodology: Methodik
+            Contributing: Mitwirken
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Operator guide: operator.md
+      - IDE handoff: handoff.md
+      - Toolgate tools: toolgate-tools.md
+  - Reference:
+      - CLI & modes: full-reference.md
+      - Finding registry: finding-registry-schema.md
+  - Project:
+      - Upstream sync: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/UPSTREAM.md
+      - Changelog: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md
+      - Methodology: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/METHODOLOGY.md
+      - Contributing: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CONTRIBUTING.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/benjarogit/RepoLens-Cursor-Edition
+      name: GitHub repository

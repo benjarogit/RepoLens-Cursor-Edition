@@ -1,6 +1,6 @@
 # Lens-Based Auditing: The RepoLens Methodology
 
-> **Operators of Cursor Edition:** start with [README](README.md) / [docs](docs/README.md). This file explains *why* lenses exist; it is not a how-to.
+> **Operators of Cursor Edition:** start with [README](README.md) / [docs site](https://benjarogit.github.io/RepoLens-Cursor-Edition/). This file explains *why* lenses exist; it is not a how-to.
 
 > **Version:** draft. Lens/domain counts below may lag — live numbers live in `config/domains.json` (on the order of 35+ domains / ~350 lenses).
 

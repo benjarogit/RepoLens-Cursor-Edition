@@ -2,7 +2,7 @@
 
 <p align="right">
   <strong>English</strong> · <a href="../de/handoff.md">Deutsch</a>
-  · <a href="../README.md">Docs index</a>
+  · <a href="index.md">Docs index</a>
   · <a href="../../README.md">README</a>
 </p>
 
@@ -57,4 +57,4 @@ Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
      --agent cursor-ide --local --yes
    ```
 
-See also: [Operator guide](operator.md) · [Cursor rules](../../.cursor/rules/repolens-ide-handoff.mdc)
+See also: [Operator guide](operator.md) · [Cursor rules](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/.cursor/rules/repolens-ide-handoff.mdc)

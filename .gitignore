@@ -25,3 +25,7 @@ credentials.json
 secrets.yaml
 secrets.yml
 /.idea
+
+# Local docs build
+.venv-docs/
+site/

@@ -16,7 +16,7 @@
 # Tests for issue #329: lib/ledger.sh — validate_findings_jsonl.
 #
 # A deterministic, last-line-of-defense validator for the canonical finding
-# registry (findings.jsonl, schema in docs/finding-registry-schema.md). It
+# registry (findings.jsonl, schema in docs/en/finding-registry-schema.md). It
 # checks each NON-empty line independently (JSON Lines, NOT a top-level array),
 # so one malformed line cannot abort validation of the rest, and reports each
 # violation to stderr prefixed with the 1-based line number — mirroring

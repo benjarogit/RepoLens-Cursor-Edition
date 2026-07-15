@@ -2,7 +2,7 @@
 
 <p align="right">
   <a href="../en/toolgate-tools.md">English</a> · <strong>Deutsch</strong>
-  · <a href="README.md">Docs-Index</a>
+  · <a href="index.md">Docs-Index</a>
   · <a href="../../README.de.md">README</a>
 </p>
 
@@ -15,7 +15,7 @@ Die Domain **`toolgate`** ist anders: Lenses versuchen, **echte Tools** auf dein
   --domain toolgate --yes
 ```
 
-Quelle pro Lens: [`prompts/lenses/toolgate/`](../../prompts/lenses/toolgate/).
+Quelle pro Lens: [`prompts/lenses/toolgate/`](https://github.com/benjarogit/RepoLens-Cursor-Edition/tree/master/prompts/lenses/toolgate/).
 
 ## Statische Analyse & Qualität
 

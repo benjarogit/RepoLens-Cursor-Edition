@@ -15,7 +15,7 @@
 
 # RepoLens — Human-facing triage artifact generators
 # Renders the post-run Markdown artifacts under logs/<run-id>/final/ from the
-# finding registry final/findings.jsonl (schema: docs/finding-registry-schema.md).
+# finding registry final/findings.jsonl (schema: docs/en/finding-registry-schema.md).
 # This file only RENDERS; it never builds or mutates the registry. Sourced,
 # never executed directly. Pure: function-only, no top-level side effects, no
 # global mutation, safe under `set -uo pipefail`.

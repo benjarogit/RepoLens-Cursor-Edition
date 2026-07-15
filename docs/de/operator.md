@@ -2,7 +2,7 @@
 
 <p align="right">
   <a href="../en/operator.md">English</a> · <strong>Deutsch</strong>
-  · <a href="README.md">Docs-Index</a>
+  · <a href="index.md">Docs-Index</a>
   · <a href="../../README.de.md">README</a>
 </p>
 
@@ -90,4 +90,4 @@ Volle Multi-Lens-Läufe gegen **Vendor- oder Interpreter-Spiegel** (z. B. `php
 - [Toolgate-Tools](toolgate-tools.md)
 - [IDE-Handoff](handoff.md)
 - [CLI- & Modes-Referenz](../en/full-reference.md) (EN)
-- [Audit-Pipeline-Skill](../../.cursor/skills/audit-pipeline/SKILL.md)
+- [Audit-Pipeline-Skill](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/.cursor/skills/audit-pipeline/SKILL.md)

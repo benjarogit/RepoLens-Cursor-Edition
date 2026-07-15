@@ -7,27 +7,27 @@
 
 ## In dieser Reihenfolge lesen
 
-1. **[README](../README.de.md)** — was dieser Fork ist, Schnellstart
+1. **[README](../README.de.md)** — was dieser Fork ist und wie du schnell startest
 2. **[Operator-Guide](operator.md)** — erste Läufe, Findings, Resume, sinnvolle Domains
-3. **[IDE-Handoff](handoff.md)** — wie Cursor jede Lens bedient (Prompt → Antwort → Done)
+3. **[IDE-Handoff](handoff.md)** — wie Cursor jede Lens abschließt (Prompt → Antwort → Done)
 
 ## Wenn du mehr brauchst
 
 | Doc | Wann |
 |-----|------|
-| [CLI- & Modes-Referenz](../en/full-reference.md) | Flags, Modes, lange Upstream-Referenz (EN) |
-| [Finding-Registry-Schema](../finding-registry-schema.md) | Form von `findings.jsonl` / CSV (EN) |
+| [CLI- & Modes-Referenz](../en/full-reference.md) | Flags, Modes, längere Upstream-Referenz (EN) |
+| [Finding-Registry-Schema](../finding-registry-schema.md) | Aufbau von `findings.jsonl` / CSV (EN) |
 | [Upstream-Sync](../UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
-| [Changelog](../CHANGELOG.md) | Änderungen Cursor Edition / Upstream |
+| [Changelog](../CHANGELOG.md) | Änderungen in Cursor Edition / Upstream |
 | [Methodik](../METHODOLOGY.md) | Lens-Design (fortgeschritten, EN) |
-| [Contributing](../CONTRIBUTING.md) | Lenses / PRs (EN) |
+| [Contributing](../CONTRIBUTING.md) | Lenses / Pull Requests (EN) |
 
 ## Cursor-Dateien in diesem Repo
 
 | Pfad | Rolle |
 |------|--------|
-| [`.cursor/rules/`](../.cursor/rules/) | Agent-Policy + Handoff |
-| [`.cursor/skills/audit-pipeline/`](../.cursor/skills/audit-pipeline/) | Struktur-Audit → RepoLens aus dem Chat |
+| [`.cursor/rules/`](../.cursor/rules/) | Agent-Policy und Handoff-Hinweise |
+| [`.cursor/skills/audit-pipeline/`](../.cursor/skills/audit-pipeline/) | Strukturprüfung, dann RepoLens aus dem Chat |
 
 ## Ein Befehl zum Merken
 

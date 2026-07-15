@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>Cursor Edition</strong><br/>
-  Multi-Lens-Audits in der <strong>Cursor IDE</strong> — lokale Findings, ohne fremde Agent-CLIs.
+  Multi-Lens-Audits in der <strong>Cursor IDE</strong> — Findings als lokale Dateien, ohne separate Agent-CLI.
 </p>
 
 <p align="center">
@@ -29,18 +29,18 @@
 
 ## Was das ist
 
-Fork von [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens), verdrahtet für **Cursor Composer/Agent**:
+Fork von [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens), ausgelegt auf **Cursor Composer/Agent**. Jede *Lens* ist ein gezielter Prüfdurchlauf; zusammen decken sie Security, Qualität und mehr ab.
 
 | | |
 |---|---|
-| **Agent** | nur `--agent cursor-ide` (vorgesehener Pfad) |
+| **Agent** | `--agent cursor-ide` (empfohlen) |
 | **Output** | Markdown unter `logs/<run-id>/` (`--local`) |
 | **Schleife** | IDE-Handoff über `REPOLENS_CTL` → Prompt → Antwort → Done |
 
-Upstream kennt weiterhin Claude, Codex & Co. Diese Edition nutzt die nicht als Default.
+Upstream unterstützt weiterhin Claude, Codex und ähnliche Backends. Diese Edition nutzt sie nicht als Standard.
 
 > [!IMPORTANT]
-> Agenten bekommen Shell-Zugriff auf dein Projekt. Zuerst eine Domain (`--domain security`), nicht gleich den vollen Audit. Immer `--local`.
+> Agenten können Shell-Befehle in deinem Projekt ausführen. Starte mit einer Domain (z. B. `--domain security`), bevor du einen vollen Audit startest. Immer `--local` setzen.
 
 ## Schnellstart
 
@@ -58,11 +58,11 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --yes
 ```
 
-Cursor-Chat auf diesem Repo offen lassen. Bei `REPOLENS_CTL` im Terminal:
+Cursor-Chat auf diesem Repo offen lassen. Wenn das Terminal `REPOLENS_CTL` ausgibt:
 
 1. `files.prompt` lesen
-2. volle Antwort nach `files.response` schreiben
-3. `files.done` per `touch` setzen
+2. die volle Antwort nach `files.response` schreiben
+3. `files.done` mit `touch` anlegen
 
 Details: [docs/de/handoff.md](docs/de/handoff.md)
 
@@ -76,9 +76,9 @@ repolens.sh ──► ide-prompt ──► Cursor Agent ──► ide-response �
 
 Mitgelieferte Cursor-Hilfen:
 
-- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc) — Agent-Policy
-- [`.cursor/rules/repolens-ide-handoff.mdc`](.cursor/rules/repolens-ide-handoff.mdc) — Handoff-Schleife
-- [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) — Struktur-Audit → RepoLens
+- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc) — welcher Agent
+- [`.cursor/rules/repolens-ide-handoff.mdc`](.cursor/rules/repolens-ide-handoff.mdc) — Handoff-Ablauf
+- [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) — Strukturprüfung, dann RepoLens
 
 ## Resume
 
@@ -99,15 +99,15 @@ Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 
 | | |
 |---|---|
-| [Docs-Index](docs/de/README.md) | Lesereihenfolge (hier starten) |
+| [Docs-Index](docs/de/README.md) | Empfohlene Lesereihenfolge |
 | [Operator-Guide](docs/de/operator.md) | Erste Läufe, Domains, Resume, Toolgate |
 | [IDE-Handoff](docs/de/handoff.md) | Prompt → Antwort → Done |
-| [CLI- & Modes-Referenz](docs/en/full-reference.md) | Lange Flag-/Mode-Referenz (EN) |
+| [CLI- & Modes-Referenz](docs/en/full-reference.md) | Längere Flag- und Mode-Referenz (EN) |
 | [Upstream-Sync](UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
-| [Changelog](CHANGELOG.md) | Cursor Edition + Upstream |
-| [Methodik](METHODOLOGY.md) | Lens-Design (EN) |
+| [Changelog](CHANGELOG.md) | Cursor Edition und Upstream |
+| [Methodik](METHODOLOGY.md) | Wie Lenses aufgebaut sind (EN) |
 
-English index: [docs/README.md](docs/README.md).
+English: [docs/README.md](docs/README.md).
 
 ## Lizenz
 

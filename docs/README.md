@@ -7,27 +7,27 @@
 
 ## Read in this order
 
-1. **[README](../README.md)** — what this fork is, 30-second start
+1. **[README](../README.md)** — what this fork is and how to start quickly
 2. **[Operator guide](en/operator.md)** — first runs, findings, resume, useful domains
-3. **[IDE handoff](en/handoff.md)** — how Cursor fills in each lens (prompt → response → done)
+3. **[IDE handoff](en/handoff.md)** — how Cursor completes each lens (prompt → response → done)
 
 ## When you need more
 
 | Doc | Use when |
 |-----|----------|
-| [CLI & modes reference](en/full-reference.md) | Flags, modes, long upstream-style reference |
-| [Finding registry schema](finding-registry-schema.md) | `findings.jsonl` / CSV shape |
+| [CLI & modes reference](en/full-reference.md) | Flags, modes, longer upstream-style reference |
+| [Finding registry schema](finding-registry-schema.md) | Shape of `findings.jsonl` / CSV |
 | [Upstream sync](../UPSTREAM.md) | Merging TheMorpheus407/RepoLens into this fork |
 | [Changelog](../CHANGELOG.md) | What changed in Cursor Edition / upstream |
 | [Methodology](../METHODOLOGY.md) | How lenses are designed (advanced) |
-| [Contributing](../CONTRIBUTING.md) | Adding lenses / PRs |
+| [Contributing](../CONTRIBUTING.md) | Adding lenses / pull requests |
 
 ## Cursor files in this repo
 
 | Path | Role |
 |------|------|
-| [`.cursor/rules/`](../.cursor/rules/) | Always-on agent policy + handoff |
-| [`.cursor/skills/audit-pipeline/`](../.cursor/skills/audit-pipeline/) | Struktur-Audit → RepoLens from chat |
+| [`.cursor/rules/`](../.cursor/rules/) | Agent policy and handoff instructions |
+| [`.cursor/skills/audit-pipeline/`](../.cursor/skills/audit-pipeline/) | Structure review, then RepoLens from chat |
 
 ## One command to remember
 

@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>Cursor Edition</strong><br/>
-  Multi-lens code audits inside <strong>Cursor IDE</strong> — local findings, no external agent CLI.
+  Multi-lens code audits in <strong>Cursor IDE</strong> — findings as local files, without a separate agent CLI.
 </p>
 
 <p align="center">
@@ -29,18 +29,18 @@
 
 ## What this is
 
-A fork of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) wired for **Cursor Composer/Agent**:
+A fork of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) set up for **Cursor Composer/Agent**. Each *lens* is a focused review pass; together they cover security, quality, and more.
 
 | | |
 |---|---|
-| **Agent** | `--agent cursor-ide` only (recommended path) |
+| **Agent** | `--agent cursor-ide` (recommended) |
 | **Output** | Markdown under `logs/<run-id>/` (`--local`) |
 | **Loop** | IDE handoff via `REPOLENS_CTL` → prompt → response → done |
 
-Upstream still supports Claude, Codex, and others. This edition does not use those by default.
+Upstream still supports Claude, Codex, and similar backends. This edition does not use them by default.
 
 > [!IMPORTANT]
-> Agents get shell access to your project. Prefer a single domain (`--domain security`) before a full audit. Always pass `--local`.
+> Agents can run shell commands in your project. Start with one domain (for example `--domain security`) before a full audit. Always pass `--local`.
 
 ## Quick start
 
@@ -58,11 +58,11 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --yes
 ```
 
-Keep the Cursor chat on this repo open. When the terminal emits `REPOLENS_CTL`, the agent:
+Keep the Cursor chat open on this repo. When the terminal prints `REPOLENS_CTL`, the agent:
 
 1. reads `files.prompt`
 2. writes the full answer to `files.response`
-3. `touch`es `files.done`
+3. creates `files.done` with `touch`
 
 Details: [docs/en/handoff.md](docs/en/handoff.md)
 
@@ -74,11 +74,11 @@ repolens.sh ──► ide-prompt ──► Cursor Agent ──► ide-response �
                     └──────── REPOLENS_CTL (stderr) ─────┘
 ```
 
-Shipped Cursor guidance:
+Included Cursor guidance:
 
-- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc) — agent policy
+- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc) — which agent to use
 - [`.cursor/rules/repolens-ide-handoff.mdc`](.cursor/rules/repolens-ide-handoff.mdc) — handoff loop
-- [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) — structure audit → RepoLens
+- [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) — structure review, then RepoLens
 
 ## Resume
 
@@ -99,15 +99,15 @@ Helpers: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 
 | | |
 |---|---|
-| [Docs index](docs/README.md) | Reading order (start here for docs) |
+| [Docs index](docs/README.md) | Suggested reading order |
 | [Operator guide](docs/en/operator.md) | First runs, domains, resume, toolgate |
 | [IDE handoff](docs/en/handoff.md) | Prompt → response → done |
-| [CLI & modes reference](docs/en/full-reference.md) | Long flag/mode reference |
+| [CLI & modes reference](docs/en/full-reference.md) | Longer flag and mode reference |
 | [Upstream sync](UPSTREAM.md) | Merging TheMorpheus407/RepoLens |
-| [Changelog](CHANGELOG.md) | Cursor Edition + upstream history |
+| [Changelog](CHANGELOG.md) | Cursor Edition and upstream history |
 | [Methodology](METHODOLOGY.md) | How lenses are designed |
 
-Deutsch: [docs/de/](docs/de/) (Index, Operator, Handoff).
+German: [docs/de/](docs/de/) (index, operator, handoff).
 
 ## License
 

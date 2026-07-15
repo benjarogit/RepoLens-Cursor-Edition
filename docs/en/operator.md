@@ -7,11 +7,11 @@
 </p>
 
 Practical notes for running **RepoLens Cursor Edition**.  
-Default path: `--agent cursor-ide --local`.
+Recommended path: `--agent cursor-ide --local`.
 
 ## First run (keep it small)
 
-1. Start with one domain, e.g. security:
+1. Start with one domain — a topic area such as security:
 
    ```bash
    export REPOLENS_IDE_AUTONOMOUS=1
@@ -23,29 +23,29 @@ Default path: `--agent cursor-ide --local`.
      --yes
    ```
 
-2. Leave the Cursor chat open on **this** RepoLens repo so handoffs can complete ([handoff](handoff.md)).
-3. Open findings under `logs/<run-id>/issues/`.
-4. Fix issues in the **target** repo, then re-run the same domain.
-5. Only then add more domains or a full `--mode audit` (long and heavy).
+2. Leave the Cursor chat open on **this** RepoLens repo so handoffs can finish ([handoff](handoff.md)).
+3. Open findings (reported issues) under `logs/<run-id>/issues/`.
+4. Fix them in the **target** repo, then run the same domain again.
+5. Only then add more domains or a full `--mode audit` (long and demanding).
 
 ## Useful domains
 
 | Domain | Good for |
 |--------|----------|
 | `security` | Auth, injection, secrets, common app risks |
-| `toolgate` | Run real linters/SAST if installed (Biome, PHPStan, ruff, …) |
+| `toolgate` | Real linters / SAST (static security scanners) if installed — e.g. Biome, PHPStan, ruff |
 | `architecture` | Boundaries, coupling, structure |
 | `code-quality` | Complexity, smells, consistency |
-| `llm-security` | Prompt injection / agent tool risks |
+| `llm-security` | Prompt injection and agent-tool risks |
 | `devops` / `iac` | CI and infrastructure-as-code |
 
-Single lens: `--domain security --focus injection` (example).
+Single lens (one focused pass): `--domain security --focus injection` (example).
 
 ## Where results live
 
 | Path | What it is |
 |------|------------|
-| `logs/<run-id>/issues/` | Markdown findings (main output in `--local`) |
+| `logs/<run-id>/issues/` | Markdown findings (main output with `--local`) |
 | `logs/<run-id>/summary.json` | Status, outcomes, timing |
 | `logs/<run-id>/final/` | Machine index / triage when produced (`findings.jsonl`, optional human-review) |
 | `logs/<run-id>/attempts.json` | History if the run was resumed |
@@ -54,7 +54,7 @@ Handy flags: `--yes`, `--human-review`, `--resume`.
 
 ## If a run stops
 
-Cursor quota or a failed handoff can pause a lens. **Resume the same run** — do not invent a new id unless you mean to start over:
+Cursor usage limits or a failed handoff can pause a lens. **Resume the same run** — do not invent a new id unless you intend to start over:
 
 ```bash
 ./repolens.sh --resume <run-id> \
@@ -71,8 +71,8 @@ Helpers: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`.
 
 ## Toolgate (real scanners)
 
-`toolgate` lenses try to **run tools on your machine** (ESLint/Biome, PHPCS, PHPStan/Psalm, ruff, …).  
-If a tool is missing, you usually get a `[SETUP]` finding instead of silent success.
+`toolgate` lenses try to **run tools on your machine** (ESLint/Biome, PHPCS, PHPStan/Psalm, ruff, and similar).  
+If a tool is missing, you usually get a `[SETUP]` finding instead of a silent “all clear”.
 
 ```bash
 ./repolens.sh ... --domain toolgate --yes
@@ -81,7 +81,7 @@ If a tool is missing, you usually get a `[SETUP]` finding instead of silent succ
 
 ## What not to audit by default
 
-Full multi-lens runs against **vendored library/interpreter mirrors** (e.g. `php-src`, random dependency forks) are usually poor ROI. Prefer the **application** that uses them, or a narrow diff against the upstream parent.
+Full multi-lens runs against **vendored library or interpreter mirrors** (for example `php-src`, random dependency forks) rarely pay off. Prefer the **application** that uses them, or a narrow diff against the upstream parent.
 
 ## More detail
 

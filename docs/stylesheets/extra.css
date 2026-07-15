@@ -49,22 +49,22 @@
   content: unset;
 }
 
+/* Landing: hide edit chrome — it sits on the hero and looks like stray UI */
+.md-content:has(.rl-hero) > article > .md-content__button,
+.md-content:has(.rl-hero) .md-typeset > .md-content__button {
+  display: none;
+}
+
 /* Home hero */
 .md-typeset .rl-hero {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 1.5rem 2rem;
-  margin: 0.5rem 0 1.75rem;
-  padding: 1.25rem 1.35rem;
-  border: 1px solid color-mix(in srgb, var(--rl-teal) 28%, transparent);
-  border-radius: 0.4rem;
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--rl-teal) 8%, transparent),
-      transparent 55%
-    );
+  margin: 0.25rem 0 2rem;
+  padding: 0;
+  border: none;
+  background: none;
 }
 
 .md-typeset .rl-hero__mark {

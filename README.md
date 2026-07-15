@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/assets/logo.png" alt="RepoLens Cursor Edition" width="160" />
+</p>
+
+<p align="center">
   <strong>RepoLens</strong><br/>
   <sub>Cursor Edition</sub>
 </p>

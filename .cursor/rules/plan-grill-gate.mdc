@@ -1,0 +1,27 @@
+---
+description: >-
+  Offer a grilling session before locking non-trivial plans (multi-module,
+  irreversible trade-offs, new abstractions). Skip for obvious single-file fixes.
+alwaysApply: false
+---
+
+# Plan → Grill gate
+
+When designing a plan (Plan mode or an explicit planning request):
+
+## Offer grilling when ANY of these hold
+
+- Multiple modules / libraries / workflows change
+- Irreversible choice (public API, data format, agent policy, release channel)
+- New abstraction or process that will outlive this chat
+- User is unsure between two+ approaches
+
+Then: say you recommend `/grill-me` (or the `grilling` skill), ask one clarifying question if needed, and wait. Do not implement until they confirm the plan or decline grilling.
+
+## Skip grilling when
+
+- Single-file / obvious bugfix
+- CI green-up, typo, or mechanical retarget
+- User already gave a locked decision and said to execute
+
+Do **not** auto-start a full grill on every plan — offer it, then proceed only after confirmation or an explicit “skip grill / just plan”.

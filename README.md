@@ -1,13 +1,14 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="RepoLens Cursor Edition" width="160" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png" />
+    <img src="docs/assets/logo-light.png" alt="RepoLens Cursor Edition" width="88" height="88" />
+  </picture>
 </p>
 
-<p align="center">
-  <strong>RepoLens</strong><br/>
-  <sub>Cursor Edition</sub>
-</p>
+<h1 align="center">RepoLens</h1>
 
 <p align="center">
+  <strong>Cursor Edition</strong><br/>
   Multi-lens code audits inside <strong>Cursor IDE</strong> — local findings, no external agent CLI.
 </p>
 

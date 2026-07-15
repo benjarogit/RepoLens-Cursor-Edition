@@ -159,14 +159,18 @@ summary_path_for_run() {
   printf '%s/logs/%s/summary.json' "$SCRIPT_DIR" "$1"
 }
 
-# Strip volatile fields (run_id, project path, timestamps) so two summaries
-# from independent runs of the same configuration can be compared.
+# Strip volatile fields (run_id, project path, timestamps, durations) so two
+# summaries from independent runs of the same configuration can be compared.
+# Per-lens started_at/completed_at/duration_seconds also vary by wall clock
+# (default vs --rounds 1 often differ by 0–1s on CI).
 sanitize_summary() {
   local file="$1"
   # errors_log (and similar) embed the run-id path; drop them with other volatiles.
   jq '
     del(.run_id, .project, .started_at, .completed_at, .output_dir, .errors_log)
-    | .lenses = (.lenses // [] | map(del(.rate_limit_sleep_seconds)))
+    | .lenses = (.lenses // [] | map(
+        del(.rate_limit_sleep_seconds, .started_at, .completed_at, .duration_seconds)
+      ))
   ' "$file"
 }
 

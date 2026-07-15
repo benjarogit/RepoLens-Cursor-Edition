@@ -14,16 +14,18 @@
 
 <p align="center">
   <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml"><img src="https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache-2.0-blue.svg" alt="License: Apache-2.0" /></a>
-  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest release" /></a>
-  <a href="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition"><img src="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social" alt="Stars" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0" /></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=version" alt="Version" /></a>
+  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition"><img src="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social" alt="GitHub Stars" /></a>
 </p>
 
-<!-- Contract badges (markdown form for upstream-style CI checks) -->
+<!-- Contract badges (markdown form for CI; hidden duplicate of the row above) -->
+<!--
 [![CI](https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml/badge.svg)](https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache-2.0-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=version)](CHANGELOG.md)
 [![GitHub Stars](https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social)](https://github.com/benjarogit/RepoLens-Cursor-Edition)
+-->
 
 <p align="center">
   <a href="https://benjarogit.github.io/RepoLens-Cursor-Edition/"><img src="https://img.shields.io/badge/Documentation-read%20the%20docs-0B3D91?style=for-the-badge" alt="Documentation" /></a>

@@ -1,5 +1,7 @@
 site_name: RepoLens Cursor Edition
-site_description: Documentation — operator guide, IDE handoff, toolgate tools, and CLI reference for RepoLens Cursor Edition
+site_description: >-
+  Operator guide, IDE handoff, toolgate tools, and CLI reference for
+  RepoLens Cursor Edition — multi-lens audits in Cursor IDE.
 site_url: https://benjarogit.github.io/RepoLens-Cursor-Edition/
 site_author: benjarogit
 
@@ -7,18 +9,19 @@ repo_url: https://github.com/benjarogit/RepoLens-Cursor-Edition
 repo_name: benjarogit/RepoLens-Cursor-Edition
 edit_uri: edit/master/docs/
 
-copyright: Apache-2.0 · Upstream TheMorpheus407/RepoLens · Cursor Edition documentation
+copyright: >-
+  Apache-2.0 ·
+  <a href="https://github.com/TheMorpheus407/RepoLens">Upstream RepoLens</a> ·
+  Cursor Edition docs
 
 docs_dir: docs
 site_dir: site
 
-# GitHub folder pointer only — not part of the published nav
 exclude_docs: |
   README.md
 
 validation:
   links:
-    # full-reference.md still points at many repo-root files; those live on GitHub, not in docs/
     absolute_links: ignore
     unrecognized_links: ignore
     not_found: ignore
@@ -26,37 +29,57 @@ validation:
 theme:
   name: material
   language: en
-  logo: assets/logo-light.png
+  # Light mark for teal/navy header (logo-dark = pale aperture)
+  logo: assets/logo-dark.png
   favicon: assets/logo-light.png
+  font:
+    text: Inter
+    code: JetBrains Mono
   palette:
+    # Auto → light → dark (same pattern as Material docs)
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: blue grey
-      accent: blue
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: blue grey
-      accent: light blue
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
-        name: Switch to light mode
+        name: Switch to system preference
   features:
-    - navigation.tabs
-    - navigation.sections
-    - navigation.expand
-    - navigation.top
-    - navigation.indexes
-    - search.suggest
-    - search.highlight
-    - content.code.copy
+    - announce.dismiss
     - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
     - toc.follow
 
+extra_css:
+  - stylesheets/extra.css
+
 plugins:
-  - search
+  - search:
+      separator: '[\s\u200b\-_,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
   - i18n:
       docs_structure: folder
       fallback_to_default: true
@@ -66,14 +89,14 @@ plugins:
           default: true
           name: English
           build: true
-          site_name: RepoLens Cursor Edition Docs
+          site_name: RepoLens Cursor Edition
         - locale: de
           name: Deutsch
           build: true
-          site_name: RepoLens Cursor Edition Doku
+          site_name: RepoLens Cursor Edition
           nav_translations:
             Home: Start
-            Guides: Anleitungen
+            Getting started: Einstieg
             Reference: Referenz
             Project: Projekt
             Operator guide: Operator-Guide
@@ -89,7 +112,7 @@ plugins:
 
 nav:
   - Home: index.md
-  - Guides:
+  - Getting started:
       - Operator guide: operator.md
       - IDE handoff: handoff.md
       - Toolgate tools: toolgate-tools.md
@@ -104,6 +127,7 @@ nav:
       - Contributing: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CONTRIBUTING.md
 
 markdown_extensions:
+  - abbr
   - admonition
   - attr_list
   - def_list
@@ -112,17 +136,39 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
   - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
+      combine_header_slug: true
   - pymdownx.tasklist:
       custom_checkbox: true
+  - pymdownx.tilde
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/benjarogit/RepoLens-Cursor-Edition
-      name: GitHub repository
+      name: GitHub
+    - icon: fontawesome/brands/markdown
+      link: https://benjarogit.github.io/RepoLens-Cursor-Edition/
+      name: Documentation
+  generator: false

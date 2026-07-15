@@ -1,42 +1,85 @@
-# Documentation
+---
+title: Home
+description: RepoLens Cursor Edition documentation — operator guide, IDE handoff, and CLI reference
+hide:
+  - navigation
+  - toc
+---
 
-Welcome to **RepoLens Cursor Edition** docs. Use the sidebar for navigation; switch language in the header.
+<div class="rl-hero" markdown>
 
-## Read in this order
+<div class="rl-hero__mark" markdown>
+![RepoLens](assets/logo-light.png){ width="88" }
+</div>
 
-1. **[Operator guide](operator.md)** — first runs, findings, resume, useful domains  
-2. **[IDE handoff](handoff.md)** — how Cursor completes each lens (prompt → response → done)  
-3. **[Toolgate tools](toolgate-tools.md)** — which real scanners/linters may run  
+<div class="rl-hero__copy" markdown>
 
-## Reference
+# RepoLens Cursor Edition
 
-| Doc | Use when |
-|-----|----------|
-| [CLI & modes](full-reference.md) | Flags, modes, longer upstream-style reference |
-| [Finding registry](finding-registry-schema.md) | Shape of `findings.jsonl` / CSV |
+Multi-lens code audits **inside Cursor IDE** — findings as local files, without a separate agent CLI.
 
-## Project
+</div>
 
-| Doc | Use when |
-|-----|----------|
-| [Upstream sync](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/UPSTREAM.md) | Merging TheMorpheus407/RepoLens into this fork |
-| [Releasing](releasing.md) | Cut a Cursor Edition GitHub Release from CHANGELOG |
-| [Changelog](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md) | What changed in Cursor Edition / upstream |
-| [Methodology](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/METHODOLOGY.md) | How lenses are designed (advanced) |
-| [Contributing](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CONTRIBUTING.md) | Adding lenses / pull requests |
+</div>
 
-## Cursor files in this repo
+Start here, then dig into reference when you need flags and schemas.
 
-| Path | Role |
-|------|------|
-| [`.cursor/rules/`](https://github.com/benjarogit/RepoLens-Cursor-Edition/tree/master/.cursor/rules) | Agent policy and handoff instructions |
-| [`.cursor/skills/audit-pipeline/`](https://github.com/benjarogit/RepoLens-Cursor-Edition/tree/master/.cursor/skills/audit-pipeline) | Structure review, then RepoLens from chat |
+<div class="grid cards" markdown>
 
-## One command to remember
+-   :material-rocket-launch: __Operator guide__
+
+    ---
+
+    First runs, findings layout, resume, and useful domains.
+
+    [:octicons-arrow-right-24: Open guide](operator.md)
+
+-   :material-transit-connection-variant: __IDE handoff__
+
+    ---
+
+    How Cursor finishes each lens: prompt → response → done.
+
+    [:octicons-arrow-right-24: Handoff protocol](handoff.md)
+
+-   :material-shield-search: __Toolgate tools__
+
+    ---
+
+    Real scanners and linters that may run under the toolgate domain.
+
+    [:octicons-arrow-right-24: Tool inventory](toolgate-tools.md)
+
+-   :material-console: __CLI & modes__
+
+    ---
+
+    Flags, modes, environment variables, and longer reference.
+
+    [:octicons-arrow-right-24: Full reference](full-reference.md)
+
+</div>
+
+## One command
 
 ```bash
 export REPOLENS_IDE_AUTONOMOUS=1
-./repolens.sh --project /path/to/repo --agent cursor-ide --local --domain security --yes
+./repolens.sh \
+  --project /path/to/repo \
+  --agent cursor-ide --local --domain security --yes
 ```
+
+!!! tip "Always `--local`"
+    Cursor Edition is built around local markdown findings and IDE handoff. Prefer `--agent cursor-ide --local`.
+
+## Also useful
+
+| Doc | When |
+|-----|------|
+| [Finding registry](finding-registry-schema.md) | Shape of `findings.jsonl` / CSV |
+| [Releasing](releasing.md) | Cut a Cursor Edition GitHub Release |
+| [Upstream sync](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/UPSTREAM.md) | Merge from TheMorpheus407/RepoLens |
+| [Changelog](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md) | What changed |
+| [Contributing](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CONTRIBUTING.md) | Lenses and pull requests |
 
 Repository README: [English](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/README.md) · [Deutsch](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/README.de.md)

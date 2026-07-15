@@ -1,0 +1,117 @@
+/* RepoLens Cursor Edition — brand tokens from docs/assets logos
+ * Teal aperture ≈ #2a8c88 · Navy field ≈ #101020
+ */
+
+:root {
+  --rl-teal: #2a8c88;
+  --rl-teal-light: #3aada8;
+  --rl-teal-dark: #1e6b68;
+  --rl-navy: #101020;
+  --rl-mist: #e0e0f0;
+}
+
+/* Primary / accent (theme.palette primary/accent: custom) */
+:root > * {
+  --md-primary-fg-color: var(--rl-teal);
+  --md-primary-fg-color--light: var(--rl-teal-light);
+  --md-primary-fg-color--dark: var(--rl-teal-dark);
+  --md-accent-fg-color: var(--rl-teal-light);
+  --md-accent-fg-color--transparent: color-mix(in srgb, var(--rl-teal) 12%, transparent);
+  --md-typeset-a-color: var(--rl-teal-dark);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 185;
+  --md-default-fg-color: hsla(200, 15%, 92%, 0.92);
+  --md-default-fg-color--light: hsla(200, 12%, 80%, 0.72);
+  --md-typeset-a-color: var(--rl-teal-light);
+}
+
+/* Header: navy bar, teal underline feel via primary buttons */
+.md-header {
+  background-color: var(--rl-navy);
+}
+
+.md-tabs {
+  background-color: color-mix(in srgb, var(--rl-navy) 92%, var(--rl-teal));
+}
+
+/* Logo sizing in header / drawer */
+.md-header__button.md-logo img,
+.md-nav__title .md-nav__button.md-logo img {
+  height: 1.9rem;
+  width: auto;
+}
+
+/* Light scheme: pale logo on navy header is correct (logo-dark.png).
+ * Slate: same — keep pale mark; swap only if we ever use a dark mark. */
+[data-md-color-scheme="default"] .md-header__button.md-logo img {
+  content: unset;
+}
+
+/* Home hero */
+.md-typeset .rl-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem 2rem;
+  margin: 0.5rem 0 1.75rem;
+  padding: 1.25rem 1.35rem;
+  border: 1px solid color-mix(in srgb, var(--rl-teal) 28%, transparent);
+  border-radius: 0.4rem;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--rl-teal) 8%, transparent),
+      transparent 55%
+    );
+}
+
+.md-typeset .rl-hero__mark {
+  flex: 0 0 auto;
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--rl-teal) 45%, transparent);
+}
+
+.md-typeset .rl-hero__mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.md-typeset .rl-hero__copy {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.md-typeset .rl-hero__copy h1 {
+  margin: 0 0 0.35em;
+}
+
+.md-typeset .rl-hero__copy > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Grid cards: slightly tighter, teal hover border */
+.md-typeset .grid.cards > ul > li {
+  border-color: color-mix(in srgb, var(--rl-teal) 22%, var(--md-default-fg-color--lightest));
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--rl-teal);
+}
+
+/* Footer social icons sit on navy-ish footer in slate */
+.md-footer {
+  background-color: var(--rl-navy);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .grid.cards > ul > li {
+    transition: none;
+  }
+}

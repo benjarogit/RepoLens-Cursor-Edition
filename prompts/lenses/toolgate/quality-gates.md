@@ -14,8 +14,10 @@ You are a **meta-lens** — you discover quality checks the project already defi
 **Discovery Sources — Read These Files to Find Check Commands**
 - `.github/workflows/*.yml` — extract `run:` steps that look like checks (lint, test, typecheck, audit, scan)
 - `Makefile` / `Justfile` — find targets like `lint`, `check`, `test`, `audit`, `format`, `verify`
-- `package.json` `scripts` section — find `lint`, `test`, `typecheck`, `check`, `format`, `audit`
+- `package.json` `scripts` section — find `lint`, `test`, `typecheck`, `check`, `format`, `audit`, `biome`
+- `biome.json` / `biome.jsonc` — Biome check/lint/format tasks
 - `pyproject.toml` `[tool.*]` sections — detect configured tools (ruff, mypy, pytest, black, isort)
+- `composer.json` scripts / `phpstan.neon*` / `psalm.xml*` / `phpcs.xml*` — PHP analyzers and sniffs
 - `.pre-commit-config.yaml` — find hook commands and their associated tool invocations
 - `Taskfile.yml` — find check, lint, and test tasks
 - `.autodev.yml` — find `quality_gate:` commands

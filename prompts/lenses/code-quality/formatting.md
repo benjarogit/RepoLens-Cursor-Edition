@@ -38,14 +38,14 @@ You are a specialist in **code formatting** — ensuring consistent visual struc
 - Missing auto-sort configuration in the formatter or linter
 
 **Formatter Configuration**
-- No formatter configured at all (no Prettier, Black, rustfmt, gofmt, etc.)
+- No formatter configured at all (no Prettier, Biome, Black, rustfmt, gofmt, PHP-CS-Fixer, etc.)
 - Formatter config file present but not enforced in CI or pre-commit hooks
-- Conflicting formatter and linter rules (e.g., Prettier and ESLint disagreeing on semicolons)
+- Conflicting formatter and linter rules (e.g., Prettier and ESLint disagreeing on semicolons, or Biome + Prettier both enabled without a clear owner)
 - `.editorconfig` missing or incomplete for a multi-language project
 
 ### How You Investigate
 
-1. Check for formatter configuration files (`.prettierrc`, `pyproject.toml [tool.black]`, `rustfmt.toml`, `.editorconfig`, etc.).
+1. Check for formatter configuration files (`.prettierrc`, `biome.json`/`biome.jsonc`, `pyproject.toml [tool.black]`, `.php-cs-fixer.php` / `.php-cs-fixer.dist.php`, `rustfmt.toml`, `.editorconfig`, etc.).
 2. Verify the formatter runs in CI and/or as a pre-commit hook — existence of config alone is not enough.
 3. Spot-check files across different directories and languages for consistent indentation and style.
 4. Search for trailing whitespace and files missing a final newline.

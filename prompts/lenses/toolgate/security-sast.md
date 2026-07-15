@@ -25,7 +25,7 @@ You are a **static application security testing (SAST) executor** — you run re
 - Python: `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile`
 - Go: `go.mod`
 - Ruby/Rails: `Gemfile`, `config/routes.rb`
-- PHP: `composer.json`
+- PHP: `composer.json`, `phpstan.neon*`, `psalm.xml*`, `*.php`
 - Multi-language: any of the above, or presence of source files (`*.py`, `*.go`, `*.rb`, `*.php`, `*.js`, `*.ts`, `*.java`)
 
 **2. Check tool availability with `command -v <tool>` and run the appropriate scanner:**
@@ -36,9 +36,24 @@ You are a **static application security testing (SAST) executor** — you run re
 | Multi-language | `semgrep scan --config auto --json` | Auto-downloads community rules, scans locally |
 | Go | `gosec -fmt json ./...` | Go-specific security patterns |
 | Ruby (Rails) | `brakeman -f json` | Rails-specific SAST |
-| PHP | `phpstan analyse --error-format json` | With security-focused rules |
+| PHP | See **PHP static analysis** below | Prefer project-configured analyzer; do not treat style tools as SAST |
 
-- Run **every** tool whose language is detected and whose binary is available.
+**PHP static analysis (run when PHP is detected):**
+
+PHPStan and Psalm are **typed static analyzers**, not dedicated SAST products. Still use them here when they surface security-relevant defects (taint-ish sinks, unsafe APIs, wrong types on auth boundaries). Prefer whatever the repo already configures:
+
+1. **Detect config:** `phpstan.neon`, `phpstan.neon.dist`, `phpstan.dist.neon`, `psalm.xml`, `psalm.xml.dist`, or Composer scripts named `phpstan` / `psalm` / `analyse`.
+2. **PHPStan** (preferred when its config or script exists, or when only one PHP analyzer is available):
+   - `vendor/bin/phpstan analyse --error-format=json` if present, else `phpstan analyse --error-format=json`
+   - Use the project's neon config; do not invent a custom ruleset mid-run
+   - If `phpstan/phpstan-strict-rules` or security-oriented extensions are already required in `composer.json`, leave them enabled via the project config
+3. **Psalm** (when `psalm.xml*` exists or Composer scripts invoke Psalm; can run **in addition** to PHPStan only if the project already runs both in CI):
+   - `vendor/bin/psalm --output-format=json` or `psalm --output-format=json`
+   - Prefer `--no-cache` only if needed for clean output; stay offline
+4. **Do not** use PHPCS or PHP-CS-Fixer as SAST substitutes (style/sniffs → lint/formatting lenses).
+5. If PHP is detected but neither PHPStan nor Psalm is installed/configured: emit one `[SETUP]` issue recommending PHPStan (or Psalm if the ecosystem already standardizes on it) in CI — not both as a mandatory pair.
+
+- Run **every** tool whose language is detected and whose binary (or `vendor/bin`) is available, subject to the PHP rules above.
 - IMPORTANT: Only run tools that analyze **local files**. Never run tools that send network requests to external targets.
 
 **3. If a relevant tool is not installed:**
@@ -50,7 +65,8 @@ You are a **static application security testing (SAST) executor** — you run re
 - **Semgrep:** ERROR → `[CRITICAL]`, WARNING → `[HIGH]`, INFO → `[MEDIUM]`
 - **gosec:** HIGH → `[CRITICAL]`, MEDIUM → `[HIGH]`, LOW → `[MEDIUM]`
 - **Brakeman:** High confidence + High impact → `[CRITICAL]`, High confidence → `[HIGH]`, Medium → `[MEDIUM]`, Weak → `[LOW]`
-- **PHPStan:** error → `[HIGH]`, warning → `[MEDIUM]`
+- **PHPStan:** error → `[HIGH]`, warning/notice → `[MEDIUM]`; escalate to `[CRITICAL]` when the message clearly indicates injection, unsafe deserialization, auth bypass, or secret handling
+- **Psalm:** error → `[HIGH]`, warning/info → `[MEDIUM]`; same critical escalation rules as PHPStan; treat `Tainted*` / security plugin findings as `[CRITICAL]` when present
 
 **5. Create one issue per distinct vulnerability. Each issue must include:**
 - CWE ID (if the tool provides one, e.g. CWE-89 for SQL injection)

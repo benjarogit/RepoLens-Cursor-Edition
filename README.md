@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>Cursor Edition</strong><br/>
-  Multi-lens code audits in <strong>Cursor IDE</strong> — findings as local files, without a separate agent CLI.
+  Multi-lens code audits in <strong><a href="https://cursor.com/referral?code=UW6WJZLB8ECL">Cursor</a> IDE</strong> — findings as local files, without a separate agent CLI.
 </p>
 
 <p align="center">
@@ -17,6 +17,7 @@
   <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest release" /></a>
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
   <a href="UPSTREAM_REVISION"><img src="https://img.shields.io/badge/sync-tracked-brightgreen" alt="Upstream sync" /></a>
+  <a href="https://cursor.com/referral?code=UW6WJZLB8ECL"><img src="https://img.shields.io/badge/Cursor-get%20started-black" alt="Get Cursor" /></a>
 </p>
 
 <!-- README-I18N:START -->
@@ -29,7 +30,7 @@
 
 ## What this is
 
-A fork of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) set up for **Cursor Composer/Agent**. Each *lens* is a focused review pass; together they cover security, quality, and more.
+A fork of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) set up for **[Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL) Composer/Agent**. Each *lens* is a focused review pass; together they cover security, quality, and more.
 
 | | |
 |---|---|
@@ -58,7 +59,7 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --yes
 ```
 
-Keep the Cursor chat open on this repo. When the terminal prints `REPOLENS_CTL`, the agent:
+Need [Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL)? Install it first, then keep the chat open on this repo. When the terminal prints `REPOLENS_CTL`, the agent:
 
 1. reads `files.prompt`
 2. writes the full answer to `files.response`

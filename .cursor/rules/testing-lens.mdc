@@ -1,0 +1,18 @@
+---
+description: Testing lens — coverage gaps, flaky tests, missing edge/error-path tests
+globs: "**/*.{test,spec}.{ts,tsx,js,jsx}"
+alwaysApply: false
+---
+
+# Testing lens
+
+Act as a test design reviewer. Focus on **test quality and gaps**, not product features.
+
+Check:
+
+- Missing tests for critical paths, error branches, and concurrency/races where relevant
+- Brittle tests (timing, global state, order dependence)
+- Fixtures/mocks that hide real integration failures
+- Assertion quality (what broke when a test fails?)
+
+Output: prioritized list of **what to add or change**, with file references. Skip cosmetic style.

@@ -1,0 +1,1171 @@
+> **Note:** Landing docs are [README.md](../../README.md) / [README.de.md](../../README.de.md). This file keeps the long CLI/modes/domains reference from before the Cursor Edition doc split.
+
+# RepoLens
+
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Version: v0.2.0](https://img.shields.io/badge/version-v0.2.0-brightgreen.svg)](CHANGELOG.md)
+[![CI](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml/badge.svg)](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml)
+[![GitHub Stars](https://img.shields.io/github/stars/TheMorpheus407/RepoLens?style=social)](https://github.com/TheMorpheus407/RepoLens)
+[![Fork: RepoLens Cursor Edition](https://img.shields.io/badge/Fork-RepoLens--Cursor--Edition-blue)](https://github.com/benjarogit/RepoLens-Cursor-Edition)
+
+**Multi-lens code audit tool.** Runs 337 specialist lenses across 34 domains against any git repository, live server, Android APK, or product specification and creates remote issues for real findings, backlog work, or polishing shortlists. The polish pass also writes ranked suggestion artifacts for review. Think automated code review, agent-driven pentesting, tool-driven static/dynamic analysis, infrastructure auditing, Android auditing, spec-to-backlog planning, and polishing — all with deep specialization.
+
+> [!IMPORTANT]
+> **RepoLens runs AI agents with shell access against your repository, and a full audit can cost hundreds of dollars in API charges.** It is NOT a sandboxed security tool, comes with NO warranty, and you use it entirely at your own risk. **Read [Warnings & Limits](#warnings--limits) before your first run** — especially the cost and security sections.
+
+## Getting Started
+
+### Cursor Local Edition (this fork)
+
+This fork is tailored for running RepoLens **in the Cursor IDE** without the separate `cursor-agent` CLI: use **`--agent cursor-ide --local`** (recommended). RepoLens writes each lens prompt under `logs/<run-id>/…`; you run Composer in Cursor, save the reply to the indicated file, then `touch` the done marker so the shell script continues.
+
+Optional: **`--agent cursor`** still uses the Cursor Agent **CLI** (`cursor-agent`) if you want headless automation and accept its separate quota.
+
+> [!IMPORTANT]
+> In this fork, **`cursor` and `cursor-ide`** are intentionally limited to local output mode in Phase 1.
+> Always pass `--local` so findings are written to markdown files instead of opening GitHub issues.
+
+#### Fork vs upstream (csretro)
+
+This tree is **vendored inside the CSRetro monorepo**, not a separate clone. **Upstream project:** [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens). Maintainer sync (fetch, diff, fork-specific files, pin): **[`UPSTREAM.md`](UPSTREAM.md)** and **[`UPSTREAM_REVISION`](UPSTREAM_REVISION)**.
+
+#### Fast Start (Cursor IDE — `cursor-ide`, no CLI agent)
+
+```bash
+cd /path/to/RepoLens-Cursor-Edition
+chmod +x repolens.sh
+./repolens.sh --project /path/to/your/repo --agent cursor-ide --local --domain security --yes
+```
+
+Per iteration, under **`maintainers/RepoLens/logs/<run-id>/<domain>/<lens-id>/`**: open `ide-prompt-iter-N.md` in Composer, save the **full** assistant reply to `ide-response-iter-N.txt` (default **≥ 400 bytes**, no stub boilerplate — otherwise the run emits `IDE_RESPONSE_REJECTED` and you retry), then `touch ide-done-iter-N` in that same directory. For quick pipeline demos only, set **`REPOLENS_IDE_ALLOW_STUB=1`**.
+
+**Machine protocol (IDE „Run Everything“ / Agent):** RepoLens prints **`REPOLENS_PHASE …`**, **`REPOLENS_AWAIT …`**, **`REPOLENS_ERROR …`**, and **`REPOLENS_CTL {…json…}`** on stderr and appends JSON lines to **`logs/<run-id>/repolens-ctl.ndjson`**. The JSON event **`kind: "ide_handoff"`** lists `files.prompt`, `files.response`, and `files.done` — an autonomous agent should perform those three steps without asking you each time. Set **`REPOLENS_IDE_AUTONOMOUS=1`** if you want `autonomous_env_hint: true` regardless of terminal detection. In **csretro**, the Cursor rule **`.cursor/rules/repolens-ide-handoff.mdc`** is **`alwaysApply: true`** so the Agent gets these instructions in every chat.
+
+#### Happy path — fully automatic in Cursor (csretro)
+
+1. Open the **csretro** workspace in Cursor and switch **Composer/Agent** to autonomous mode (auto-run terminal + file edits as your policy allows).
+2. From the repo root, start a local IDE run (defaults to `cursor-ide`):
+
+   ```bash
+   ./tools.sh repolens --domain security
+   ```
+
+   For a full audit (long-running): `./tools.sh repolens --mode audit` or `./tools.sh repolens:complete --mode audit` if you want the resume wrapper between quota windows.
+3. Leave the **integrated terminal** visible: the Agent should react to **`REPOLENS_CTL`** lines, write each **`files.response`**, and **`touch`** each **`files.done`** until the run finishes.
+
+If the Agent does not pick up terminal output, paste the latest **`REPOLENS_CTL`** JSON from **`maintainers/RepoLens/logs/<run-id>/repolens-ctl.ndjson`** into the chat once to prime it.
+
+#### CSRetro operator runbook (`cursor-ide`)
+
+- **`REPOLENS_IDE_AUTONOMOUS=1`:** RepoLens can mark handoffs for a fully autonomous agent (no per-step questions). The VS Code/Cursor tasks in **[`.vscode/tasks.json`](../../.vscode/tasks.json)** set this for **RepoLens: security** and **RepoLens: complete — security (auto-resume)**.
+- **Typical starts:** `./tools.sh repolens --domain security` from the CSRetro root; for long runs that may hit Cursor quota, prefer **`./tools.sh repolens:complete --domain security`** (wrapper sleeps and **`--resume`** the same `run-id`). If a run stops mid-way, continue with `./tools.sh repolens --resume <run-id> …`.
+- **When lenses stall:** Check `maintainers/RepoLens/logs/<run-id>/summary.json` for `rate-limited`, `agent-capacity`, or `agent-timeout`. Fix quota/wait, then **`--resume`** or **`repolens:complete`** — do not start a fresh run-id unless you intend to abandon the old one.
+- **Logs / disk:** By default **`REPOLENS_LOGS_AUTO_PRUNE`** runs before each `repolens` / `repolens:cli` / `repolens:complete` and deletes whole old run directories, keeping **`REPOLENS_LOGS_KEEP`** (default **3**). Opt out: `REPOLENS_LOGS_AUTO_PRUNE=0`. Roots with **`AUDIT.md`** and the active **`--resume`** target are never removed. To **keep evidence** but free space, run **`./tools.sh repolens:logs-archive [N] [--dry-run]`** — packs removed runs into **`maintainers/RepoLens/logs/archive/*.tar.gz`**. **Do not** delete `ide-response-*` / `iteration-*` inside an active run manually if you still need to debug or resume.
+
+#### Resolved findings & log retention (csretro)
+
+- **Closed audit items:** Local findings stay in `maintainers/RepoLens/logs/<run-id>/issues/…` (or manual audit trees like `…/full-security-audit/issues/`). Update the **Status** section in each markdown file when fixed; do not delete the file — it preserves evidence and rationale.
+- **Pruning agent run folders:** Each RepoLens run creates a large directory under `maintainers/RepoLens/logs/<run-id>/`. From the CSRetro repo root:
+  - `./tools.sh repolens:logs-prune` — delete old runs, keep the **3** newest (override count: `repolens:logs-prune 5`; preview: `repolens:logs-prune --dry-run`).
+  - `./tools.sh repolens:logs-archive` — same keep rules, but write removed runs to **`logs/archive/<run-id>.tar.gz`** before deleting the directory (preview: `--dry-run`).
+  - Environment: `REPOLENS_LOGS_KEEP` (default `3`). **Auto-prune is on by default** before `./tools.sh repolens`, `repolens:cli`, or `repolens:complete`; set `REPOLENS_LOGS_AUTO_PRUNE=0` to skip. A `--resume <run-id>` target is always kept even if it is not among the newest runs. Any run directory that contains **`AUDIT.md`** at its top level (manual or curated audits) is **never** deleted by pruning.
+
+#### Fast Start (Cursor Agent CLI — `cursor`)
+
+**1) Install the official Cursor Agent CLI** ([installer](https://cursor.com/install)):
+
+```bash
+curl https://cursor.com/install -fsSL | bash
+```
+
+The binary is placed under **`~/.local/bin`**. Put that on your `PATH` for every terminal session (add to `~/.bashrc`, `~/.zshrc`, etc.):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**2) Sign in** (browser opens unless you set `NO_OPEN_BROWSER=1`):
+
+```bash
+cursor-agent login
+cursor-agent status
+```
+
+Alternatively set **`CURSOR_API_KEY`** if you use key-based auth. The installer may note that the command **`agent`** is an alias for **`cursor-agent`** — either name works in `CURSOR_AGENT_RUNNER_CMD` below.
+
+**3) Clone this fork and run RepoLens** (always pass **`--local`** with `--agent cursor` in Phase 1):
+
+```bash
+git clone https://github.com/benjarogit/RepoLens-Cursor-Edition.git
+cd RepoLens-Cursor-Edition
+chmod +x repolens.sh
+
+# RepoLens → Cursor CLI wiring (defaults shown; tune timeouts if needed)
+export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
+export CURSOR_AGENT_MODEL="auto"
+export CURSOR_AGENT_TIMEOUT_SEC=600
+
+./repolens.sh --project /path/to/your/repo --agent cursor --local --domain security --yes
+```
+
+Result files are written to:
+
+- `logs/<run-id>/issues/<domain>/<lens-id>/NNN-*.md`
+- `logs/<run-id>/summary.json`
+
+#### Recommended workflow for this fork
+
+1. Start with one domain (`--domain security`) in `--local` mode.
+2. Review markdown findings under `logs/<run-id>/issues/` (or the path printed as «Local mode» in the run header).
+3. Apply fixes in your target repo.
+4. Re-run the same domain to verify.
+5. Scale to parallel/domain-wide runs only after a stable baseline.
+
+#### Cursor quota-safe mode (default in this fork)
+
+For `--agent cursor`, RepoLens now defaults to a quota-safe strategy:
+
+- Force sequential execution when `--parallel` is requested.
+- On Cursor rate-limit responses, wait and retry the same lens automatically.
+
+Environment knobs:
+
+```bash
+export REPOLENS_CURSOR_SERIAL=true                    # default
+export REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT=true        # default
+export REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC=120       # default (fallback if no parseable hint)
+export REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES=120     # default
+export REPOLENS_CURSOR_RATE_LIMIT_HINT_MIN_SEC=30    # clamp parsed "try again in …" (default)
+export REPOLENS_CURSOR_RATE_LIMIT_HINT_MAX_SEC=7200  # upper clamp (default)
+export REPOLENS_CURSOR_RATE_LIMIT_HANDOFF=true       # optional: write MANUAL_HANDOFF.md + stderr JSON
+```
+
+When the CLI is **rate-limited**, RepoLens **parses “try again in/at …”** from the captured agent output when possible and sleeps that long (within the hint min/max). Set **`REPOLENS_CURSOR_RATE_LIMIT_HANDOFF=true`** to emit **`logs/<run-id>/MANUAL_HANDOFF.md`**, append one **`cursor_cli_rate_limited`** line to **`repolens-ctl.ndjson`**, and print **`REPOLENS_MANUAL_HANDOFF …`** on stderr so you (or an IDE agent) know exactly **which run / lens / log file** to continue with **`--resume`** or by switching to **`--agent cursor-ide`**.
+
+For unattended completion across quota windows, use **`./repolens_until_done.sh`** (same flags as `repolens.sh`; optional leading `--resume <run-id>`).
+
+For **one lens at a time** on the same run — **try `cursor` (CLI) first, then `cursor-ide` only if that lens is still missing from `logs/<run-id>/.completed`**, use **`./repolens_agent_or_ide.sh --resume <run-id>`** with the same flags as `repolens.sh` except **`--agent`**, **`--focus`**, and **`repolens --dry-run`**. Optional **`--dry-run`** on the orchestrator only prints the pending queue. Omit **`--domain`** to walk **all** audit lenses in order (after security comes code quality, architecture, …); pass **`--domain security`** (for example) to stay within one domain. Duplicate lens ids across domains (e.g. `dependency-management`) are pinned with **`--domain <id> --focus <lens>`** together. **Note:** the orchestrator only mirrors **`.completed`**; for a strict “green” run also check **`run_outcome`** in **`summary.json`** (and `repolens.sh` exit code). Lenses that ended with **`max-iterations`**, **`agent-timeout`**, or **`agent-capacity`** are not added to **`.completed`**, so they stay **pending** for resume/orchestrator until they finish with **`completed`** (or **`skipped`** where applicable).
+
+If you explicitly want parallel cursor execution anyway:
+
+```bash
+export REPOLENS_CURSOR_SERIAL=false
+```
+
+### Prerequisites
+
+| Tool                        | Required               | Purpose                                                                                | Install                                                                                                                                                                               |
+| --------------------------- | ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash`                      | Yes (4.0+)             | Shell runtime — associative arrays, `read -ra`, other 4.x features are used throughout | Linux distributions ship 4.0+ already. macOS ships 3.2 by default (GPLv3 avoidance) — upgrade via `brew install bash`. RepoLens aborts at startup on older bash with an upgrade hint. |
+| `git`                       | Yes                    | Repo validation, cloning                                                               | OS package manager (`apt install git`, `brew install git`, `nix-env -i git`)                                                                                                          |
+| `jq`                        | Yes                    | JSON config parsing                                                                    | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`)                                                                                                             |
+| `timeout` (coreutils)       | Yes                    | Per-invocation agent timeout watchdog with SIGKILL escalation grace (see `REPOLENS_AGENT_TIMEOUT*` and `REPOLENS_AGENT_KILL_GRACE` below) | Ships in GNU coreutils. Pre-installed on Linux/NixOS. On macOS: `brew install coreutils`.                                                                                             |
+| `gh`, `tea`, or `fj`        | Yes (unless `--local`) | Remote forge operations for labels and issue queries                                   | See [Supported forges](#supported-forges) for detection, install links, and auth commands                                                                                             |
+| Agent CLI                   | Yes (at least one)     | Run analysis agents                                                                    | See [Supported Agent CLIs](#supported-agent-clis) below for install + auth per CLI                                                                                                    |
+| `docker` + `docker compose` | Only for `--hosted`    | DAST scanning environment                                                              | OS package manager                                                                                                                                                                    |
+
+### Supported forges
+
+Supported forges are GitHub (`gh`), Gitea (`tea`), and Codeberg/Forgejo (`fj`). RepoLens reads `git remote get-url origin` from the target project and uses the origin host to choose the forge backend. Pass `--forge <gh|tea|fj>` to override auto-detection. Use `--local` to write local output files without any remote forge CLI.
+
+| Forge              | Provider | CLI           | Auto-detection               | Install / auth                                                                                                                   |
+| ------------------ | -------- | ------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub             | `gh`     | GitHub CLI    | `github.com` origins         | Install from [cli.github.com](https://cli.github.com), then run `gh auth login`                                                  |
+| Gitea              | `tea`    | Gitea Tea CLI | Hostnames containing `gitea` | Install from [gitea.com/gitea/tea](https://gitea.com/gitea/tea), then run `tea login add`                                        |
+| Codeberg / Forgejo | `fj`     | Forgejo CLI   | `codeberg.org` origins       | Install from [forgejo-contrib/forgejo-cli](https://codeberg.org/forgejo-contrib/forgejo-cli), then run `fj -H <host> auth login` |
+
+Self-hosted instances whose hostnames do not match the auto-detect heuristics require `--forge <gh|tea|fj>`. Self-hosted Forgejo targets also need an HTTPS or SSH `origin` remote so RepoLens can pass a secure `fj -H <host>` binding; insecure HTTP origins are not used for authenticated `fj` commands.
+
+### Supported Agent CLIs
+
+| `--agent` value    | CLI required | Notes                                   |
+| ------------------ | ------------ | --------------------------------------- |
+| `claude`           | `claude`     | Anthropic Claude Code                   |
+| `codex`            | `codex`      | OpenAI Codex CLI                        |
+| `spark` / `sparc`  | `codex`      | Codex CLI with spark model              |
+| `cursor`           | `cursor-agent` (via `CURSOR_AGENT_RUNNER_CMD`) | **RepoLens Cursor Edition:** CLI agent; Phase 1 requires `--local`. |
+| `cursor-ide`       | *(none)*    | **RepoLens Cursor Edition:** IDE handoff — prompts under `logs/…`; you run Composer and write `ide-response-*` / `touch ide-done-*`. Phase 1: `--local` only. |
+| `opencode`         | `opencode`   | Open-source agent CLI (75+ providers)   |
+| `opencode/<model> | antigravity` | `opencode`   | opencode with a specific provider/model |
+
+You need **at least one** backend configured before running RepoLens.
+
+For `--agent cursor`, set a runner command via `CURSOR_AGENT_RUNNER_CMD` that points to the Cursor Agent CLI binary.
+Model selection is controlled via `CURSOR_AGENT_MODEL` (default: `auto`), unless you already set `--model ...` directly in `CURSOR_AGENT_RUNNER_CMD`.
+RepoLens invokes it as:
+
+- `--print`
+- `--workspace <path>`
+- `<composed-lens-prompt>`
+
+Example:
+
+```bash
+export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
+export CURSOR_AGENT_MODEL="auto"   # default, safe for free plans
+export CURSOR_AGENT_TIMEOUT_SEC=600
+./repolens.sh --project ~/my-app --agent cursor --local --domain security
+```
+
+If you're on a Cursor Free plan, keep `CURSOR_AGENT_MODEL=auto` (named models are unavailable).
+If you want manual model control on paid plans, set for example `export CURSOR_AGENT_MODEL="gpt-5"`.
+If a named model is rejected by Cursor, RepoLens automatically retries once with `--model auto` so runs can continue without manual intervention.
+If Cursor returns usage-capacity errors (for example `You've hit your usage limit`), RepoLens now stops the affected lens early with status `agent-capacity` instead of burning through all 20 safety-cap iterations.
+
+### Cursor-specific run examples (local mode)
+
+```bash
+# Single lens — IDE handoff (no cursor-agent)
+./repolens.sh --project ~/my-app --agent cursor-ide --local --focus injection --yes
+
+# Security domain — IDE handoff
+./repolens.sh --project ~/my-app --agent cursor-ide --local --domain security --yes
+
+# Same flows with Cursor Agent CLI instead
+./repolens.sh --project ~/my-app --agent cursor --local --focus injection --yes
+./repolens.sh --project ~/my-app --agent cursor --local --domain security --yes
+./repolens.sh --project ~/my-app --agent cursor --local --yes
+./repolens.sh --project ~/my-app --agent cursor --local --output ~/reports/repolens --yes
+```
+
+For CLI-based agents (`claude`, `codex`, `opencode`), install commands and auth flows differ per CLI — see below.
+
+> [!NOTE]
+> Append `/<model>` to `claude`, `codex`, `opencode`, or `antigravity` to pin that run to a specific model — e.g. `--agent claude/claude-haiku-4-5` for a cheap, fast pass, or `--agent codex/<model>` / `--agent antigravity/<model>` to select any model your installed CLI and plan accept (including newly released ones). The model string is passed straight to the CLI. The `spark`/`sparc` presets do **not** take a `/<model>` suffix — use `codex/<model>` to choose a Codex model yourself. These `/<model>` forms are also valid [`--agent-override`](#optional-flags) targets. When RepoLens has no exact pricing for a model, its cost estimate is approximated from keywords in the model name (`flash`/`haiku`/`mini` price as cheap, `opus`/`ultra` as premium, everything else as standard).
+
+> [!TIP]
+> **Recommendation:** Use `claude` for complex audits — it produces the highest-quality findings, but is also the most expensive option. For a cheaper alternative, run `opencode` with a MiniMax model — costs are a fraction of Claude, with the trade-off of more false positives. Calibrate on a single lens or domain (`--focus` / `--domain`) before committing to a full parallel run. To get both in one run, keep a cheap default `--agent` and route only the reasoning-heavy domains (e.g. `security`, `architecture`) to `claude` with [`--agent-override`](#optional-flags).
+
+#### Claude Code (`claude`)
+
+**Install** — Linux, macOS, WSL:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Other platforms: `brew install --cask claude-code` (macOS), `winget install Anthropic.ClaudeCode` (Windows), or see the [official setup guide](https://code.claude.com/docs/en/setup) for PowerShell and legacy npm options.
+
+**Authenticate:** run `claude` and follow the browser prompt. Requires a Claude **Pro, Max, Team, Enterprise, or Console** account — the free Claude.ai plan does not include Claude Code. Alternatives: export `ANTHROPIC_API_KEY`, or route through Amazon Bedrock / Google Vertex AI / Microsoft Foundry.
+
+#### OpenAI Codex (`codex`)
+
+**Install:**
+
+```bash
+npm install -g @openai/codex
+```
+
+Alternatives: `brew install --cask codex` (macOS), or prebuilt binaries from [github.com/openai/codex/releases](https://github.com/openai/codex/releases).
+
+**Authenticate** — pick one:
+
+- `codex login` — browser flow using a ChatGPT Plus / Pro / Business / Edu / Enterprise subscription (recommended; unlocks fast mode)
+- `printenv OPENAI_API_KEY | codex login --with-api-key` — pay-as-you-go API billing
+- Or export `OPENAI_API_KEY` in your shell
+
+The `spark` / `sparc` agent values reuse the same `codex` binary — installing once covers all three.
+
+#### opencode (`opencode`)
+
+**Install:**
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+Alternatives: `npm install -g opencode-ai` (npm package is `opencode-ai`, binary is `opencode`), `brew install anomalyco/tap/opencode`, `paru -S opencode-bin` (Arch), or see [opencode.ai/docs](https://opencode.ai/docs/) for Windows / Docker options.
+
+**Authenticate:**
+
+```bash
+opencode auth login
+```
+
+Pick a provider from the interactive list — opencode supports 75+ providers (Anthropic, OpenAI, Bedrock, Vertex, Azure, Groq, DeepSeek, xAI, OpenRouter, Together AI, MiniMax, local Ollama, …). Credentials are stored in `~/.local/share/opencode/auth.json`.
+
+#### Google Antigravity (`antigravity`)
+
+**Install** — macOS, Linux:
+
+```bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+```
+
+This installs the `agy` binary, which RepoLens invokes when you pass `--agent antigravity`. See [antigravity.google](https://antigravity.google/) for other platforms and options.
+
+**Authenticate:** run `agy` and choose **Sign in with Google** for the browser flow. On a headless or SSH session, `agy` falls back to a device-code flow you complete in a local browser. For non-interactive API-key auth, follow the official Antigravity CLI documentation.
+
+Antigravity's very large context window (up to 1M tokens) makes it well suited to auditing large codebases without splitting them across runs.
+
+> [!NOTE]
+> Antigravity replaces the earlier `--agent gemini` support. Google deprecated the standalone Gemini CLI for individual users, so `--agent gemini` is no longer accepted — use `--agent antigravity` instead.
+
+### Quickstart
+
+```bash
+# 1. Clone RepoLens
+git clone https://github.com/TheMorpheus407/RepoLens.git
+cd RepoLens
+
+# 2. Make the entry point executable
+chmod +x repolens.sh
+
+# 3. Authenticate your forge CLI (if not already done; not needed for --local)
+gh auth login                  # GitHub
+tea login add                  # Gitea
+fj -H codeberg.org auth login  # Codeberg; use your Forgejo host for self-hosted instances
+
+# 4. Run your first audit — single lens, fast feedback
+./repolens.sh --project ~/my-app --agent claude --focus injection
+
+# 5. Audit an entire domain
+./repolens.sh --project ~/my-app --agent claude --domain security
+
+# 6. Full parallel audit (248 audit-visible lenses)
+./repolens.sh --project ~/my-app --agent claude --parallel --max-parallel 8
+```
+
+## Warnings & Limits
+
+RepoLens is a power tool. Before you point it at anything you care about — or anything that costs money — read this section.
+
+### Cost — RepoLens can be very expensive
+
+> [!CAUTION]
+> A default full audit runs **248 audit-visible lenses across 27 code/toolgate/logs domains**. RepoLens has 337 lenses across 34 domains in total for issue and backlog modes, but `discover`, `deploy`, `opensource`, `content`, `greenfield`, and `spec-change` lenses are mode-specific and do not run in the default audit mode. The separate polish pass has its own 16 suggestion lenses and also does not run in the default audit mode. Each audit lens loops until the agent emits `DONE` three times in a row. That adds up to **hundreds — often thousands — of agent invocations per run**, and cost scales with your model choice (Claude Opus is dramatically more expensive than smaller models or Codex). Real-world runs can easily reach hundreds of dollars on a single repo.
+
+**Before launching a full audit:**
+
+- Use `--max-cost <dollars>` to set a budget — RepoLens warns if the minimum estimate exceeds it. The estimate is a **lower bound**; real runs typically cost 2–5× more due to tool-call churn and DONE-streak iteration.
+- On a **flat-rate subscription or free tier** (Claude Pro, ChatGPT Plus, Gemini Advanced, Google AI Studio free tier, …), pass `--flat-rate` (or set `REPOLENS_FLAT_RATE=true`). The marginal per-token cost of a run is `$0.00`, so instead of a misleading dollar figure the estimate shows the expected number of LLM calls and how much of a typical message cap or free-tier rate budget the run will consume — letting you pace or split a large audit rather than lock yourself out of your plan mid-run.
+- Use `--dry-run` to preview which lenses would execute without spending anything.
+- Check the **estimated wall-clock** line printed at the confirmation prompt and in `--dry-run` (e.g. `~4h 30m at --max-parallel 8`) to know how long a run will take before you launch it. When the estimate exceeds 24h, RepoLens prints a loud warning listing levers to cut it down; tune the threshold with `REPOLENS_EST_WARN_HOURS` (`0` disables it).
+- Use `--max-issues <n>` to cap output (also forces sequential execution).
+- Scope with `--focus <lens-id>` or `--domain <domain-id>` instead of auditing everything at once.
+- Calibrate cost on a single domain with a cheap agent (`codex`, `opencode`) before committing to a full parallel audit with a premium model.
+
+You are responsible for every dollar of API spend. Know your per-token pricing.
+
+**Cost scales with `depth × rounds`.** Both flags multiply the per-lens iteration cost: raising `--depth` (within-lens iterations) and `--rounds` (cross-lens orchestration) compounds. In `bugreport` mode, a `--depth 5 --rounds 3` run is roughly **5× the per-lens iteration cost and 3× the lens-pass count** compared to defaults. Preview the resolved estimate with `--dry-run` before launching.
+
+**`--rounds >= 4` requires explicit cost acknowledgement.** RepoLens refuses to launch unless you pass `--i-know-this-is-expensive` (or the equivalent `--max-cost <dollars>` + `--yes` combination). The hard-ceiling environment variable `REPOLENS_MAX_ROUNDS` (default `5`) caps `--rounds` and cannot be bypassed by `--i-know-this-is-expensive` — to exceed it, set `REPOLENS_MAX_ROUNDS` explicitly before launching.
+
+### Runtime & tuning
+
+A full fan-out — the default `audit` runs **248 audit-visible lenses**, each looping until the agent emits `DONE` three times in a row — can run for **hours to days**. Runtime scales roughly as:
+
+```
+runtime ≈ ceil(lenses ÷ max-parallel) × depth × rounds × per-iteration-latency
+```
+
+In plain terms: how many lenses are in your run, divided by how many run at once, times the iterations each lens does, times how long a single agent iteration takes. RepoLens prints an **estimated wall-clock** line at the confirmation prompt and in `--dry-run` (see [Cost](#cost--repolens-can-be-very-expensive)); when that estimate exceeds `REPOLENS_EST_WARN_HOURS` (default 24h) it prints a loud warning. While a run is live, `./repolens.sh status` shows elapsed time and an ETA (see [Run Status Snapshot](#run-status-snapshot)).
+
+**Levers to cut runtime, biggest win first:**
+
+- **Choose a faster/cheaper model — `--agent` (usually the dominant factor for a full run).** Per-iteration latency is set by the model and multiplies across every iteration of every lens, so a slow reasoning-heavy model dictates total wall-clock more than anything else. A lighter `--agent` (e.g. `codex`, or `opencode` with a fast provider) can be many times faster end-to-end than `claude` Opus. Calibrate quality on one `--focus` or `--domain` first (see [Supported Agent CLIs](#supported-agent-clis)).
+- **Run in parallel — `--parallel --max-parallel <n>`.** Runs are sequential unless you pass `--parallel`; `--max-parallel` only takes effect together with it. When you don't pass it, the default is nproc-aware — `clamp(detected CPU cores, 8, 32)`, so small and CI hosts keep `8` while many-core machines scale up to `32`. Raise it (or pass any explicit value, which always wins and is never re-clamped) to run more lenses concurrently, bounded by host CPU/RAM and your AI provider's RPM/TPM limits — a higher default means a many-core host trips those limits sooner (see [Rate Limits](#rate-limits--automated-traffic)).
+- **Lower within-lens iterations — `--depth <n>`.** Fewer DONE-streak iterations per lens (default 3 for `audit`/`feature`/`bugfix`). `--depth 1` is the floor.
+- **Scope instead of fanning out — `--domain <domain-id>` or `--focus <lens-id>`.** Audit a single domain or a single lens rather than all 248. `--relevant-domains <csv>` covers the middle ground of a few domains.
+- **Spot-check — `--max-issues <n>`.** Stops after _n_ findings. This also forces **sequential** execution and **depth 1**, so it is the quickest path to a few results rather than a way to speed up a full parallel fan-out.
+- **Preview first — `--dry-run`.** Shows the resolved lens list plus the cost and wall-clock estimates without running any agent — the cheapest way to right-size a run before launching.
+
+The printed estimate is a rough planning number; faster/cheaper agents and tighter scoping reduce it, while real runs trend higher because lenses do not always converge in the estimated per-iteration time. Tune the estimate's inputs with `REPOLENS_EST_PER_ITER_SECS` (raise it for slow models) and `REPOLENS_EST_WARN_HOURS` (the warning threshold) — both documented under [Environment Variables](#environment-variables).
+
+### Rate Limits & Automated Traffic
+
+> [!NOTE]
+> RepoLens generates a lot of automated traffic. A default 248-lens audit run can create dozens to hundreds of remote issues, plus repo reads via `gh`, `tea`, or `fj`, plus parallel AI provider calls.
+
+- **GitHub API / Gitea API / Forgejo API.** Authenticated `gh` calls count against GitHub API quotas; authenticated `tea` and `fj` calls count against your Gitea or Forgejo account/API quotas. Large runs can trip rate limits. Use `--max-issues <n>` to cap output, or `--local` to skip remote forge calls entirely.
+- **Concurrent same-repo runs.** Starting multiple runs against the same repository is supported. Remote label setup is coordinated per repository; repeated runs with the same desired label set can reuse a fresh bootstrap result, while other runs create only missing labels when the forge supports label listing. Per-lens issue checks still run independently, so lower `--max-parallel` when running several modes at once against the same forge account.
+- **AI provider rate limits.** Every iteration consumes Anthropic / OpenAI tokens. Free and low-tier accounts will hit their RPM (requests-per-minute) and TPM (tokens-per-minute) ceilings immediately under `--parallel`. Verify your account is on a tier sized for concurrent agent traffic before scaling.
+- **Automatic agent retry.** If an agent exits non-zero with a recognized rate-limit message and a parseable resume time within `REPOLENS_RATE_LIMIT_MAX_SLEEP`, RepoLens sleeps until that time plus 60 seconds and retries the same lens once. If RepoLens cannot use that retry path during lens execution, the run finalizes as `rate-limit-pending`, exits `3`, and leaves unfinished lenses resumable (see [Resume](#resume)). When RepoLens knows the provider retry time for a terminal pending run, `status.json.next_action.earliest_at` exposes it as a UTC timestamp. If the retry sleep is interrupted by SIGHUP, SIGINT, or SIGTERM, the run finalizes as `interrupted` with stopped reason `interrupted-sighup`, `interrupted-sigint`, or `interrupted-sigterm` and exits `129`, `130`, or `143`.
+- **Terms of Service & abuse risk.** Do **not** point RepoLens at repositories you do not own or have explicit permission to audit. Automated bulk issue creation against third-party repos can be treated as spam by your forge provider and may get your account flagged or suspended.
+
+Start small with `--focus <lens-id>` or one `--domain`, then scale up with `--parallel --max-parallel 2` before raising concurrency. When `--max-parallel` is unset the default is nproc-aware (`clamp(detected CPU cores, 8, 32)`), so a many-core host defaults to a higher concurrency and hits provider limits sooner — pin it down explicitly (the value you pass always wins) if your account tier is small.
+
+### Security & Safe Use
+
+> [!WARNING]
+> **RepoLens is NOT a sandboxed or hardened security tool.** It is an operator-trust tool designed for scanning repositories you own on a machine you control.
+
+Under the hood, RepoLens spawns AI agents (claude, codex, etc.) with shell access — claude specifically runs with `--dangerously-skip-permissions` for autonomous operation. That means:
+
+- **Prompt injection is trivial.** A README, code comment, commit message, or docstring in the scanned repo can instruct the agent to do arbitrary things.
+- **`--spec` files from untrusted sources are dangerous.** Spec content is embedded in the agent prompt. While RepoLens sanitizes known tag-breakout vectors (e.g., `</spec>` injection), a malicious spec file can still influence agent behavior through indirect prompt injection. Only use `--spec` with files you wrote or trust completely.
+- **Greenfield backlog text is prompt input.** In `--mode greenfield`, current open issue bodies or local draft markdown files may be shown to the planner so it can avoid duplicate backlog items. Treat issue text and draft files as untrusted content that can influence planning.
+- **Scripts in the scanned repo can execute.** A hostile `docker-compose.yml`, `Makefile`, `package.json` postinstall hook, or shell script could be invoked by the agent while investigating.
+- **Deploy mode runs live shell commands** against whatever host you point it at — see also [Legal → Deploy Mode](#deploy-mode--authorization-required) for the authorization requirements.
+
+Remote deploy mode runs read-only commands on a server you authorize, but the agent has shell access via the SSH multiplexer. Treat it with the same caution as deploy mode locally — only point it at hosts you own or are explicitly authorized to audit. The legal references in `Deploy Mode — Authorization Required` apply identically to remote targets.
+
+**Recommended setup:**
+
+- Run RepoLens inside a **dedicated, isolated VM or container** — never on a workstation that holds SSH keys, cloud credentials, browser sessions, or anything you can't afford to lose.
+- **Only scan repositories you own or fully trust.** Do not point RepoLens at random GitHub clones, dependency sources, or third-party code.
+- Treat every run as if the target repo were actively hostile.
+
+For vulnerability disclosure, see [SECURITY.md](SECURITY.md).
+
+### Disclaimer — No Warranty, Use at Your Own Risk
+
+> [!WARNING]
+> **RepoLens is provided "AS IS", without warranty of any kind**, express or implied — including but not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement. **You use it entirely at your own risk.**
+
+That risk includes, without limitation:
+
+- **Incorrect findings** — false positives, hallucinated issues, or misleading recommendations from AI agents.
+- **Missed issues** — real bugs, vulnerabilities, or misconfigurations RepoLens fails to detect.
+- **Financial cost** — API/token usage from agent CLIs (claude, codex, etc.) can accrue significant charges.
+- **Infrastructure impact** — in `deploy` mode and similar, agents execute shell commands on real systems; despite read-only prompting, unintended side effects are possible.
+- **Remote forge side effects** — automated issue, label, and PR creation in your repositories.
+
+For the full legal text, see [LICENSE](LICENSE) (Apache License, Version 2.0, Sections 7 and 8).
+
+## Modes
+
+RepoLens supports 12 modes. Each mode controls which domains/lenses are visible and how the agent iterates. `polish` is a suggestion workflow that writes ranked JSON artifacts and grouped polishing shortlists.
+
+| Mode         | DONE Streak | Domains                                    | Description                                                                   |
+| ------------ | ----------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| `audit`      | 3×          | 27 code/toolgate/logs domains (248 lenses) | **Default.** Standard code audit — finds issues in existing code              |
+| `feature`    | 3×          | 27 code/toolgate/logs domains (248 lenses) | Feature gap discovery — identifies missing capabilities                       |
+| `bugfix`     | 3×          | 27 code/toolgate/logs domains (248 lenses) | Bug hunting — finds real bugs and defects                                     |
+| `bugreport`  | 1×          | 27 code/toolgate/logs domains (248 lenses) | Symptom-driven investigation — triage + rounds-driven lens dispatch + verifier + synthesizer. Requires `--bug-report <file\|text>` |
+| `discover`   | 1×          | `discovery` domain (14 lenses)             | Product discovery — brainstorming for product strategy                        |
+| `deploy`     | 1×          | `deployment` domain (26 lenses) or `android` domain (17 lenses) | Server or Android audit — inspects a live server, APK target, or shallow Gradle Android source tree |
+| `custom`     | 1×          | 27 code/toolgate/logs domains (248 lenses) | Change impact analysis — identifies what needs adapting after a change        |
+| `opensource` | 1×          | `open-source-readiness` domain (13 lenses) | Open-source readiness — checks if a repo can go public safely                 |
+| `content`    | 1×          | `content-quality` domain (17 lenses)       | Content audit & creation — audits or creates content from `--source` material |
+| `greenfield` | 1×          | `greenfield` domain (1 lenses)             | Spec-to-backlog planning — requires `--spec`, checks the current open issue or local draft backlog, and creates non-duplicate `[P0]`-`[P3]` implementation issues without inspecting repository code |
+| `polish`     | 1×          | `fluency`, `effort-signal`, and `hedonic` domains (16 lenses) | Ranked polishing shortlists — proposes small, additive craft refinements with voice-fit evidence |
+| `spec-change` | 1×         | `spec-change` domain (1 lenses)            | Spec-diff impact — requires `--spec` (a tracked spec file), diffs it against `--spec-base` (default `HEAD`), and files one impact-prefixed issue per code change the diff implies |
+
+### Mode Examples
+
+```bash
+# Audit (default) — comprehensive code review
+./repolens.sh --project ~/my-app --agent claude --parallel
+
+# Feature — discover missing capabilities
+./repolens.sh --project ~/my-app --agent codex --mode feature --domain testing
+
+# Bugfix — hunt for real bugs
+./repolens.sh --project ~/my-app --agent spark --mode bugfix --focus race-conditions
+
+# Discover — product strategy brainstorming
+./repolens.sh --project ~/my-app --agent claude --mode discover
+
+# Deploy — audit a live server (read-only)
+./repolens.sh --project /srv/myapp --agent claude --mode deploy --parallel --max-issues 5
+
+# Deploy — force live-server lenses even if Android files are present
+./repolens.sh --project /srv/myapp --agent claude --mode deploy --deploy-target server
+
+# Remote deploy — audit a server from your workstation
+./repolens.sh --project ~/myapp --agent claude --mode deploy \
+    --remote ubuntu@198.51.100.10 \
+    --remote-key ~/.ssh/server_deploy \
+    --remote-label "Production app server" \
+    --max-issues 1
+
+# Deploy — audit a remote server target over SSH
+./repolens.sh --project /srv/myapp --agent claude --mode deploy --remote ubuntu@host.example.com:2222 --remote-key ~/.ssh/id_ed25519
+
+# Deploy — audit an Android APK target
+./repolens.sh --project ~/my-app/app/build/outputs/apk/debug/app-debug.apk --agent claude --mode deploy
+
+# Deploy — audit an Android source tree when no APK is built yet
+./repolens.sh --project ~/my-android-app --agent claude --mode deploy --deploy-target android
+
+# Custom — change impact analysis
+./repolens.sh --project ~/my-app --agent claude --change "Switching from REST to GraphQL"
+
+# Opensource — pre-publication readiness check
+./repolens.sh --project ~/my-app --agent claude --mode opensource
+
+# Content — audit or create educational content
+./repolens.sh --project ~/my-app --agent claude --mode content --source ~/docs/math-book.pdf
+
+# Greenfield — plan implementation backlog from a product spec
+./repolens.sh --project ~/my-app --agent claude --mode greenfield --spec ~/docs/product-spec.md
+
+# Polish — file ranked polishing shortlists
+./repolens.sh --project ~/my-app --agent claude --mode polish
+
+# Logs — point runtime log analysis lenses at a log corpus
+./repolens.sh --project ~/AutoDev --agent claude --logs ~/CybersecurityAssessment/logs/auto-develop/ --domain logs --parallel
+
+# CI — skip confirmation prompt for automation
+./repolens.sh --project ~/my-app --agent claude --parallel --yes
+
+# Local — write findings as markdown files instead of remote issues
+./repolens.sh --project ~/my-app --agent claude --local
+
+# Local with custom output directory
+./repolens.sh --project ~/my-app --agent claude --local --output ~/reports/myapp-audit
+
+# Local with domain filter and parallel execution
+./repolens.sh --project ~/my-app --agent claude --local --domain security --parallel
+
+# Dry run — preview which lenses would run without executing anything
+./repolens.sh --project ~/my-app --agent claude --mode deploy --dry-run
+```
+
+## Greenfield planning
+
+Use `greenfield` before implementation starts, when you have a product spec, PRD, roadmap, or launch brief and need an implementation backlog. Use `feature` when you want RepoLens to inspect existing code for missing capabilities, `audit` when you want defects, security issues, and quality risks in existing code, and `bugreport` when you are starting from a symptom or user-reported failure.
+
+Greenfield is a planning mode, not an implementation mode. The product owner puts all human product intent in the `--spec` file. RepoLens reads that spec and the current backlog snapshot; it does not inspect repository code, dependencies, configuration, tests, docs, or implementation details to discover work. The greenfield planner turns the spec into implementation-sized `[P0]`-`[P3]` backlog items and resolves remaining non-human product and implementation decisions into the issue details so AutoDev receives decision-complete work.
+
+Run RepoLens greenfield to completion first, then run AutoDev on the created issues or local drafts. Do not run AutoDev concurrently against the same backlog while greenfield planning is still running, because each RepoLens planning iteration deduplicates against the current backlog snapshot.
+
+Forge-backed run:
+
+```bash
+./repolens.sh --project ~/my-app --agent claude --mode greenfield \
+  --spec ~/docs/product-spec.md --max-issues 3
+```
+
+Local draft run:
+
+```bash
+./repolens.sh --project ~/my-app --agent claude --mode greenfield \
+  --spec ~/docs/product-spec.md --local --output ~/reports/my-app-backlog \
+  --max-issues 3
+```
+
+`--local` changes the output sink, not the planning agent. In forge mode, RepoLens creates issues on the detected or selected forge and deduplicates against currently open issues. In `--local` mode, RepoLens writes markdown backlog drafts under `<output-dir>/greenfield/backlog-planning/` and deduplicates against existing drafts there. The greenfield prompt and backlog-planning lens are otherwise the same.
+
+Use `--max-issues` for controlled planning batches. `--max-issues 1` is useful for a first smoke-test issue; small batches such as `--max-issues 3` or `--max-issues 5` let you review, edit, or prioritize the generated backlog before rerunning greenfield. The next run uses the current open issues or local drafts as backlog coverage.
+
+Before every planning iteration, RepoLens refreshes the current backlog snapshot: forge runs read all currently open issues, and `--local` runs read the existing draft markdown files under the greenfield output directory. The planner uses that snapshot to skip spec slices that are already covered and emits `DONE` when there is no non-duplicate implementation issue left to file. With `--local`, seed `<output-dir>/greenfield/backlog-planning/*.md` before a run if you want drafts created elsewhere to count as existing backlog. In forge mode, if RepoLens cannot load the current open issue backlog, it tells the planner not to create a new issue while duplicate checks are unavailable.
+
+## Polish mode
+
+Use `polish` when nothing is necessarily broken, but you want small, additive refinements that make the project feel more fluent, cared-for, and voice-fit. Polish mode runs one pass over the `fluency`, `effort-signal`, and `hedonic` domains, builds a project voice profile for the run, and asks each lens for structured polish suggestions.
+
+Polish suggestions are not filed during lens execution. Each lens writes JSON suggestions with tags such as `voice_fit`, `voice_fit_justification`, `location_expectedness`, and `polish_family`. After the lenses finish, RepoLens writes the sorted artifact:
+
+```text
+logs/<run-id>/polish/ranked-suggestions.json
+```
+
+Each entry in that file includes the original suggestion fields plus `fluency_baseline`, `soul_fit`, `effort_gap_multiplier`, and `polish_rank_x1000`. RepoLens computes those fields deterministically from the structured tags and orders the suggestions highest-first. Lens agents do not compute the rank, and off-brand suggestions sort to the bottom.
+
+After ranking, RepoLens groups the ranked suggestions by lens and emits one `[POLISH] <domain>/<lens-id> polishing shortlist` per lens with usable suggestions. Each shortlist includes that lens's top-N ranked suggestions, defaults to 3 items, and includes a one-line voice-fit justification for every listed item. Set `REPOLENS_POLISH_TOP_N` to a positive integer to change the per-lens shortlist size. `--max-issues` still caps the total number of emitted polishing shortlists, so `--max-issues 1` files only the highest-ranked lens shortlist.
+
+In forge mode, polishing shortlists are created as remote issues with `polish:<domain>/<lens-id>` and `enhancement` labels. In `--local` mode, RepoLens writes the same grouped markdown drafts under:
+
+```text
+logs/<run-id>/polish/filed/
+```
+
+## Remote deploy mode
+
+Remote deploy mode lets you run deploy-mode server lenses from your workstation while inspecting a server over SSH. Use it only for server targets; it is rejected with `--hosted` and Android deploy targets.
+
+Remote SSH runs with `BatchMode=yes`, so the connection must not require an interactive password prompt. Load the key before starting RepoLens, for example with `ssh-add ~/.ssh/server_deploy`, or pass an unlocked key with `--remote-key <path>`. RepoLens writes the remote preflight output for each run under `logs/<run-id>/.remote/preflight.log`.
+
+Remote deploy uses OpenSSH ControlMaster so the run performs one TCP connection and authentication, then multiplexes agent SSH commands over the control socket. The master connection persists for 600 seconds after the last command, which reduces repeated authentication and connection setup during long deploy runs.
+
+For the first run against a remote host, start with `--max-issues 1` and avoid `--parallel`; if you do enable parallel execution, keep it to `--parallel --max-parallel 1` until the transcript confirms commands are wrapped correctly and the target handles the SSH load. `--max-issues 1` keeps the first pass short, and `--max-parallel 1` prevents several lenses from competing for the same remote target while you validate the setup.
+
+Forge actions still happen on the operator workstation. `gh`, `tea`, or `fj` issue creation, label setup, and issue lookups run locally against the configured forge account; only deploy-target investigation commands are wrapped over SSH.
+
+## Advanced controls
+
+These flags scale RepoLens beyond the simple [Quickstart](#quickstart) invocations. They compound cost — read [Warnings & Limits → Cost](#cost--repolens-can-be-very-expensive) before raising either.
+
+- **`--depth N`** — within-lens iteration depth. The DONE-streak length the agent must reach (the agent outputs `DONE` as the first or last word `N` times consecutively) before the lens is considered complete. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for every other mode (including `bugreport`). Supersedes the legacy `DONE_STREAK_REQUIRED` env var (honored as a fallback when `--depth` is unset, deprecated). Must be between `1` and `19`.
+- **`--rounds N`** — multi-round investigation orchestrated by a meta-orchestrator that re-prioritizes lenses across rounds based on prior-round findings. Defaults to `1` except `bugreport`, which defaults to `3`. Only `bugreport` accepts values above `1` (cap `10`); `audit`, `feature`, `bugfix`, `custom`, `deploy`, `opensource`, `content`, `discover`, `greenfield`, and `polish` are locked to `1`.
+
+### Example invocations
+
+```bash
+# Deep audit — full parallel audit with raised within-lens depth
+./repolens.sh --project ~/my-app --agent claude --parallel --depth 5
+
+# Focused single-lens deep-dive — high depth on one lens
+./repolens.sh --project ~/my-app --agent claude --focus injection --depth 8
+
+# Full bugreport pipeline — symptom-driven multi-round investigation
+./repolens.sh --project ~/my-app --agent claude --mode bugreport --bug-report ~/bug.txt
+
+# Cost-tuned audit — cheap model by default, flagship only on reasoning-heavy domains
+./repolens.sh --project ~/my-app --agent opencode --parallel \
+  --agent-override security=claude,architecture=claude
+```
+
+### Cost discipline
+
+Any run with `--depth > 3` or `--rounds >= 2` should be guarded explicitly. Use these together:
+
+- `--max-cost <dollars>` — RepoLens warns if the lower-bound estimate exceeds the budget. Real runs typically cost 2–5× the lower bound.
+- `--i-know-this-is-expensive` — required for `--rounds >= 4`. Acknowledges the multiplicative cost of multi-round runs.
+- `--dry-run` — preview the resolved depth, rounds, and lens list before spending anything.
+
+See [METHODOLOGY.md](METHODOLOGY.md) for the design rationale behind within-lens depth, multi-round orchestration, the meta-orchestrator, and cross-lens linking.
+
+## CLI Reference
+
+```
+Usage: repolens.sh --project <path|url> --agent <agent> [OPTIONS]
+       repolens.sh status [run-id] [OPTIONS]
+       repolens.sh clean [OPTIONS]
+       repolens.sh supersede <run-id>
+```
+
+### Commands
+
+| Command           | Description                                                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status [run-id]` | Show a live run snapshot from `logs/<run-id>/status.json`. If `run-id` is omitted, RepoLens selects the newest run that has a status file. Requires only `jq`. |
+| `clean [OPTIONS]`  | Remove old run directories under `logs/`. Only genuine run dirs are considered; resume candidates are kept by default, and currently-live runs are always kept. Needs no `--project`/`--agent`. See [Cleaning Up Old Runs](#cleaning-up-old-runs). |
+| `supersede <run-id>` | Mark a run dir as no-longer-authoritative by writing a `.superseded` marker into it. A superseded run is hidden from `status` auto-select and becomes eligible for `clean` even when it would otherwise be kept as a resume candidate; a live run is still never removed. Needs no `--project`/`--agent`. See [Retiring a Run](#retiring-a-run). |
+
+### Required Flags
+
+| Flag                    | Description                                                         |
+| ----------------------- | ------------------------------------------------------------------- |
+| `--project <path\|url>` | Local path, APK file, or remote Git URL (cloned read-only if URL)   |
+| `--agent <agent>`       | `claude \| codex \| spark \| sparc \| cursor \| cursor-ide \| opencode \| opencode/<model> | antigravity` |
+
+### Optional Flags
+
+| Flag                   | Description                                                                                                                                                                                                                                                                                              |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--mode <mode>`        | `audit` (default) \| `feature` \| `bugfix` \| `bugreport` \| `discover` \| `deploy` \| `custom` \| `opensource` \| `content` \| `greenfield` \| `polish`                                                                                                                                             |
+| `--bug-report <file\|text>` | Required for `--mode bugreport`. Path to a text file or inline symptom text (read verbatim). Env fallback: `REPOLENS_BUG_REPORT_PATH`. 100 KB max for file mode.                                                                                                                                  |
+| `--change <statement>` | Change impact statement (implies `--mode custom`)                                                                                                                                                                                                                                                        |
+| `--source <file>`      | Source material (PDF, text, markdown) for content creation or reference                                                                                                                                                                                                                                  |
+| `--logs <path>`        | Runtime log file or directory for the `logs` domain (path string only — agent reads it)                                                                                                                                                                                                                  |
+| `--focus <lens-id>`    | Run a single lens (e.g., `injection`, `dead-code`)                                                                                                                                                                                                                                                       |
+| `--lens <lens-id>`     | Alias for `--focus`                                                                                                                                                                                                                                                                                      |
+| `--domain <domain-id>` | Run all lenses in one domain (e.g., `security`)                                                                                                                                                                                                                                                          |
+| `--relevant-domains <csv>` | Comma-separated allowlist of domain ids — the "missing middle" between `--focus` (1 lens) and full fan-out. The mode-filtered lens list is intersected with this allowlist; unknown or wrong-mode ids abort startup with the offending token named. Whitespace and empty tokens in the CSV are tolerated. Bypassed when `--focus` or `--domain` is set (those win). Composes with `--scope-by-keywords` (AND semantics) and with the triage-side relevant-domains filter. Example: `--relevant-domains concurrency,database`. |
+| `--scope-by-keywords`  | Deterministic, LLM-free pruning for `--mode bugreport`: case-insensitive substring-match the bug-report text against each domain's optional `keywords` field in `config/domains.json`. Domains without a `keywords` field are always kept (back-compat). A zero-match result falls through with no pruning so the lens list never goes empty. Only effective in `--mode bugreport` (no-op in every other mode). Env fallback: `REPOLENS_SCOPE_BY_KEYWORDS=1`. |
+| `--agent-override <csv>` | Route specific domains or lenses to a different agent than the global `--agent`, trading API cost against reasoning depth — run a cheap model by default and spend a flagship model only where it matters (e.g. `security`, `architecture`). Comma-separated `key=agent` pairs. Each `key` is a domain id or a fully-qualified `domain/lens`; a bare lens id is rejected as ambiguous, since one lens id can live in more than one domain, so lens scope requires the `domain/lens` form. Each `agent` accepts the same values as `--agent` (`claude` \| `claude/<model>` \| `codex` \| `codex/<model>` \| `spark` \| `sparc` \| `opencode` \| `opencode/<model>` \| `antigravity` \| `antigravity/<model>`). Precedence: `domain/lens` > `domain` > global `--agent`. The flag may be repeated; pairs accumulate. Meta agents (synthesis, triage, verification, validation, issue filing) always run on the global `--agent`. An unknown key or an invalid agent aborts startup with the offending token named. When overrides are active, the estimated cost in `--dry-run` and the confirmation prompt is broken down per agent and the active routing map is shown. Example: `--agent opencode --agent-override security=claude,architecture=claude,information-architecture/empty-states=claude`. |
+| `--parallel`           | Run lenses in parallel (one agent process per lens)                                                                                                                                                                                                                                                      |
+| `--max-parallel <n>`   | Max concurrent agents in parallel mode. When unset the default is nproc-aware: `clamp(detected CPU cores, 8, 32)` (8 on small/CI hosts, up to 32 on many-core machines). An explicit value is always authoritative and is never re-clamped — you can deliberately run below `8` or above `32`. A non-positive-integer value is rejected at startup. Higher concurrency trips provider rate limits faster; pin the detected count with `REPOLENS_NPROC`. |
+| `--resume [<run-id>]`  | Resume a previous interrupted run. With an explicit run id, resume that run. With no id, auto-select and resume the most recent interrupted run under `logs/` (the chosen run is logged) — completed/clean runs and retired (`supersede`d) runs are never auto-picked, and RepoLens errors out (non-zero exit, no fresh run dir created) when no resumable run exists.                                                                                                                                                                                                                                                                      |
+| `--validate <file>`    | Post-audit validation: re-verify an existing findings artifact with the flagship `--agent` and drop its false positives, instead of running a scan. Ingests a `findings.jsonl` registry, a `manifest.json` array, or a single JSON finding object (typically produced by a cheaper "Radar" agent), sends each finding to the flagship "Filter" `--agent` with the repo on disk for context, keeps only the confirmed findings, and writes them to `logs/<validate-run>/validated-findings.jsonl` with explicit verified/dropped counts. Does not run the lens fan-out or `DONE×3` streak; needs `--agent` and `--project`. A missing/unreadable/malformed input errors loudly with no dispatch, an empty artifact is a graceful no-op, and an agent failure exits non-zero (never a silent "all false positives"). See [Post-audit validation](#post-audit-validation). |
+| `--spec <file>`        | Spec/PRD/roadmap to guide analysis (any text file, max 100 KB). Required for `--mode greenfield`; greenfield treats it as product-owner intent for backlog planning.                                                                                                                                    |
+| `--max-issues <n>`     | Stop after creating _n_ total issues. In polish mode, this caps emitted polishing shortlist issues rather than individual suggestions                                                                                                                                                                    |
+| `--min-severity <level>` | Only file findings at or above `critical`, `high`, `medium`, or `low`. Filtered findings are counted in `summary.json` and reported in final stdout when the count is non-zero. No effect in non-severity modes such as `discover`, `feature`, `custom`, `greenfield`, and `polish`. Env fallback: `REPOLENS_MIN_SEVERITY`. |
+| `--depth <n>`          | DONE streak depth per lens. Defaults to `3` for `audit`, `feature`, and `bugfix`; defaults to `1` for all other modes. Must be between `1` and `19`                                                                                        |
+| `--rounds <n>`         | Validated cross-lens round count for multi-round orchestration. Defaults to `1` except `bugreport`, which defaults to `3`. Only `bugreport` accepts values above `1`; `audit`, `feature`, `bugfix`, `custom`, `deploy`, `opensource`, `content`, `discover`, `greenfield`, and `polish` are locked to `1`. `--rounds >= 4` requires `--i-know-this-is-expensive`. The resolved value is shown by `--dry-run` and sizes the `logs/<run-id>/rounds/round-N/` artifact layout |
+| `--strategy <name>`    | Bugreport round-1 dispatch strategy: `fanout` (default — every lens runs in round 1, identical to today's `--mode bugreport`) \| `waves` (a narrow set of triage-seeded GENERIC investigators dispatch in round 1; subsequent rounds use the existing role-aware dispatch). `waves` requires `--mode bugreport` and rejects with a clear error on any other mode. The resolved value is shown by `--dry-run` under `--mode bugreport`. Env fallback: `REPOLENS_STRATEGY`. Wave width is controlled by `REPOLENS_WAVE_WIDTH` (default `7`, clamped to `1..50`). |
+| `--local`              | Write local output files instead of creating remote issues. Most modes write markdown; polish mode writes JSON suggestion objects and grouped polishing shortlist drafts. No forge CLI required                                                                                                         |
+| `--output <path>`      | Output directory for local output files (requires `--local`, default: `logs/<run-id>/rounds/round-1/lens-outputs/`)                                                                                                                                                                                     |
+| `--forge <provider>`   | Override forge auto-detection: `gh` for GitHub, `tea` for Gitea, `fj` for Forgejo/Codeberg. Codeberg is auto-detected; use this for self-hosted Gitea/Forgejo remotes whose hostname is not auto-detected. Self-hosted Forgejo needs an HTTPS or SSH `origin` remote so RepoLens can pass `fj -H <host>` |
+| `--hosted`             | Spin up Docker Compose for DAST scanning (used with `toolgate` domain)                                                                                                                                                                                                                                   |
+| `--remote <ssh-target>` | Remote deploy server target. Accepts `host`, `host:port`, `user@host`, or `user@host:port`; only valid with `--mode deploy` server targets; incompatible with `--hosted` and Android deploy targets. The target is validated, exported to deploy agents, shown in `--dry-run`, and repeated in deploy authorization and normal run confirmation prompts. |
+| `--remote-key <path>`  | SSH private key path for `--remote`. The path must exist and be a regular file. If omitted, remote SSH uses normal SSH key resolution. |
+| `--remote-label <text>` | Human-readable label for the remote target. When provided, confirmation prompts show the label and a separate `Raw target: ...` line with the exact SSH target. Multi-word labels can be quoted or passed as adjacent words before the next option. |
+| `--deploy-target <target>` | Deploy target resolver: `--deploy-target auto\|server\|android`, with `auto` as the default. Only valid with `--mode deploy`. `auto` opportunistically selects Android only for a direct APK, discovered APK, or shallow Android source marker (`gradlew`, `build.gradle`, `build.gradle.kts`, `app/build.gradle`, or `app/build.gradle.kts`); otherwise it preserves live-server deploy behavior. `server` skips Android detection and build handling. Only explicit `--deploy-target android` receives the no-source/no-APK Android exit when no APK or shallow marker exists. |
+| `--build-android-apk` | In Android deploy mode, allow the optional source build fallback to run `./gradlew assembleDebug` when no APK is already resolved. The fallback is gated behind deploy authorization and the normal run confirmation, and is never executed during `--dry-run`. |
+| `--max-cost <amount>`  | Warn if the **minimum cost estimate** exceeds this dollar amount (e.g., `--max-cost 10`). The estimate is a lower bound — real runs typically cost 2–5× more due to tool-call churn and iteration non-convergence. Budget accordingly.                                                                   |
+| `--flat-rate`          | Cost the run as a flat-rate subscription or free tier (Claude Pro, ChatGPT Plus, Gemini Advanced, Google AI Studio free tier, …) instead of pay-as-you-go tokens. Shows `Estimated cost: ~$0.00` plus the expected LLM-call count and the share of a typical message cap / free-tier rate budget the run consumes, so you can weigh a run against your plan's limits. Suppresses the per-token dollar estimate and the "2–5× higher" disclaimer; with `$0.00` marginal cost the `--max-cost` guardrail never trips. Env fallback: `REPOLENS_FLAT_RATE=true`. |
+| `--cross-link <mode>`  | Synthesizer cross-link strategy: `off` \| `comment` \| `suggest-reopen`. Controls whether the synthesizer links related findings across lenses/domains in the synthesized output. Defaults to `comment` for `bugreport`, `off` for every other mode. Env fallback: `REPOLENS_CROSS_LINK`.                |
+| `--human-review`       | Opt into a curated, noise-budgeted human-review digest at finalize time instead of dumping every finding (a full run can emit hundreds). This is the entry point only: the flag takes no argument, is accepted and validated, and the resolved value is shown by `--dry-run` as `Human review: <bool>`; the digest renderer itself lands in follow-up work, so today the flag changes no output. Env fallback: `REPOLENS_HUMAN_REVIEW=1`. |
+| `--i-know-this-is-expensive` | Cost-acknowledgement gate required for `--rounds >= 4`. Does not bypass the `REPOLENS_MAX_ROUNDS` hard ceiling (default `5`). Equivalent to passing `--max-cost <budget>` together with `--yes`.                                                                                                  |
+| `--dry-run`            | Validate config and show which lenses would run, then exit (no agents executed)                                                                                                                                                                                                                          |
+| `--yes, -y`            | Skip confirmation prompt (for CI/automation)                                                                                                                                                                                                                                                             |
+| `--version`            | Show version and sponsor information, then exit                                                                                                                                                                                                                                                          |
+| `--about`              | Show tool description and sponsor information, then exit                                                                                                                                                                                                                                                 |
+| `-h, --help`           | Show help                                                                                                                                                                                                                                                                                                |
+
+### Hosted DAST Scanning
+
+Use `--hosted` with the `toolgate` domain when the target project has a Docker Compose file and you want RepoLens to run live DAST tools against the services:
+
+```bash
+./repolens.sh --project ~/my-app --agent claude --domain toolgate --hosted
+```
+
+RepoLens starts or reuses the Compose project, connects scanner containers to the same Compose network, and lists services as `http://<service>:<internal-port>`. Discovery prefers Docker-network container ports from Compose metadata, falls back to exposed TCP ports from container metadata, and only uses a published host port when no internal port is known. If a service maps host port `8080` to container port `80`, DAST tools are pointed at `http://service:80`; the published host port is kept only as context. Services with no discovered TCP port are shown as `service:none`, marked `[not probed]` in service details, and are not guessed.
+
+Hosted service details include a compact health label so agents can tell whether a target is ready before scanning:
+
+```text
+- web: http://web:80 (internal, nginx:alpine) [healthy]
+- api: http://api:8000 (internal, python:3.12) [responding HTTP 404]
+- job: no discovered port (example/job) [not probed]
+```
+
+RepoLens uses Docker Compose health/status data when available. Services without an explicit health status are probed from inside the Compose network at `http://<service>:<port>/`: 2xx and 3xx responses are `[healthy]`, 4xx responses are `[responding HTTP NNN]`, 5xx responses are `[unhealthy HTTP NNN]`, connection failures are `[unreachable]`, and unavailable probe state is `[unknown]`. If every discovered HTTP service is unhealthy or unreachable, RepoLens logs a warning before agents start so you can fix the Compose stack before spending scan iterations.
+
+Hosted mode also checks common OpenAPI and Swagger locations from inside the Compose network. When RepoLens finds a raw JSON/YAML schema, or a docs UI that may point to one, the hosted prompt includes a separate API spec block using the same scanner-reachable service name and port:
+
+```text
+**Detected API specs:**
+- api: http://api:8000/openapi.json (OpenAPI JSON)
+- gateway: http://gateway:8080/api/docs (Swagger UI/docs, schema URL not confirmed)
+```
+
+Raw OpenAPI/Swagger schemas are preferred over docs pages. If no service exposes a recognized schema or docs endpoint, the block is omitted.
+
+### Environment Variables
+
+Agent timeouts are resolved per invocation with this precedence: `REPOLENS_AGENT_TIMEOUT_<AGENT>` > `REPOLENS_AGENT_TIMEOUT` > `REPOLENS_AGENT_TIMEOUT_<MODE>` > the mode default. `REPOLENS_LENS_MAX_WALL` caps the whole lens loop and each invocation is limited to the smaller of the resolved agent timeout and the remaining lens budget. Worst-case agent wall time per lens is bounded by `min(resolved agent timeout * MAX_ITERATIONS_PER_LENS, REPOLENS_LENS_MAX_WALL)` before rate-limit sleep and non-agent I/O; for a global override, that is `min(REPOLENS_AGENT_TIMEOUT * MAX_ITERATIONS_PER_LENS, REPOLENS_LENS_MAX_WALL)`. With the 1800s default and `MAX_ITERATIONS_PER_LENS=20`, the raw cap is 30 min * 20 = 10 hours before the default 3600s wall budget applies. Use an agent-specific variable when one backend needs a different cap, or a mode-specific variable when only one workflow needs a different per-invocation cap:
+
+```bash
+# Let live-server deploy investigations run longer without changing audit runs
+REPOLENS_AGENT_TIMEOUT_DEPLOY=2400 ./repolens.sh --project /srv/myapp --agent claude --mode deploy
+
+# Cap every mode for a short smoke run
+REPOLENS_AGENT_TIMEOUT=300 ./repolens.sh --project ~/my-app --agent codex --focus injection
+
+# Let OpenCode run longer without slowing Claude or Codex runs
+REPOLENS_AGENT_TIMEOUT_OPENCODE=3600 ./repolens.sh --project ~/my-app --agent opencode/gpt-5.3
+```
+
+| Variable                             | Default  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `REPOLENS_AGENT_TIMEOUT`             | unset    | Global per-invocation timeout override in seconds. Wins over every mode-specific timeout, but agent-specific timeout variables win over this global value. Every agent call is wrapped with `timeout(1)` at the resolved cap; if an agent reaches the cap, the iteration is logged with `[ERROR] agent timed out after Ns`, and the lens loop continues.                                                                                                                                                       |
+| `REPOLENS_AGENT_KILL_GRACE`          | `30`     | Seconds to wait after `timeout(1)` sends `SIGTERM` before escalating to `SIGKILL` via `--kill-after`. A clean timeout exits `124`; hard kill exits `137`. Must be a positive integer.                                                                                                                                                                                                                                                                                                                          |
+| `REPOLENS_LENS_MAX_WALL`             | `3600`   | Per-lens wall-clock budget in seconds. Prevents one slow lens from holding a sequential run or parallel worker slot until `MAX_ITERATIONS_PER_LENS × resolved agent timeout`. Each iteration receives the remaining wall time as its effective timeout when that is lower than the resolved agent timeout. When the budget is exhausted, the lens stops with summary status `max-wall`. Must be a positive integer.                                                                                                      |
+| `REPOLENS_EST_WARN_HOURS`            | `24`     | Threshold in hours for the startup wall-clock estimate. When the estimated full-run wall time exceeds this, RepoLens prints a loud warning listing concrete tuning levers (raise `--max-parallel`, pick a faster/cheaper `--agent`, lower `--depth`, scope with `--domain`/`--focus`, or `--max-issues` for a spot check). Set `0` to disable the warning; a non-numeric value falls back to `24`.                                                                                                                |
+| `REPOLENS_EST_PER_ITER_SECS`         | `90`     | Per-iteration wall-clock guess in seconds used by the startup estimate (`ceil(lens_count / max_parallel) × depth × rounds × per_iter`). Raising it inflates the estimate; a non-numeric value falls back to `90`. Rough planning number only — real runs trend higher due to iteration non-convergence.                                                                                                                                                                                                          |
+| `REPOLENS_FLAT_RATE`                 | unset    | Fallback for `--flat-rate` when the CLI flag is unset. Truthy values (`true`, `1`, `yes`) enable flat-rate / subscription costing — a `$0.00` marginal-cost estimate showing the expected LLM-call count and plan-quota consumption instead of a per-token dollar figure — for users on Claude Pro, ChatGPT Plus, Gemini Advanced, or a free tier. Any other value leaves pay-as-you-go costing in effect; the `--flat-rate` flag also enables it.                                                                |
+| `REPOLENS_NPROC`                     | unset    | Pins the CPU core count used to derive the nproc-aware `--max-parallel` default (`clamp(cores, 8, 32)`, parsed base-10). Primarily a determinism knob for tests and reproducible wall-clock estimates. When unset, RepoLens detects cores via `nproc`/`getconf`. An explicit `--max-parallel` always wins regardless of this value; a non-numeric value falls back to detection, then a floor of `8`.                                                                                                          |
+| `REPOLENS_AGENT_TIMEOUT_CLAUDE`      | unset    | Claude per-invocation timeout override. Wins over `REPOLENS_AGENT_TIMEOUT` and mode-specific timeout variables when `--agent claude` is selected.                                                                                                                                                                                                                                                                                                                                                              |
+| `REPOLENS_AGENT_TIMEOUT_CODEX`       | unset    | Codex per-invocation timeout override. Wins over `REPOLENS_AGENT_TIMEOUT` and mode-specific timeout variables when `--agent codex` is selected.                                                                                                                                                                                                                                                                                                                                                                |
+| `REPOLENS_AGENT_TIMEOUT_OPENCODE`    | unset    | OpenCode per-invocation timeout override. Wins over `REPOLENS_AGENT_TIMEOUT` and mode-specific timeout variables when `--agent opencode` or `--agent opencode/<model>` is selected.                                                                                                                                                                                                                                                                                                                           |
+| `REPOLENS_AGENT_TIMEOUT_SPARK`       | unset    | Codex Spark per-invocation timeout override. Wins over `REPOLENS_AGENT_TIMEOUT` and mode-specific timeout variables when `--agent spark` is selected, and also applies to `sparc` when `REPOLENS_AGENT_TIMEOUT_SPARC` is unset.                                                                                                                                                                                                                                                                               |
+| `REPOLENS_AGENT_TIMEOUT_SPARC`       | unset    | SPARC alias per-invocation timeout override. Wins over `REPOLENS_AGENT_TIMEOUT` and mode-specific timeout variables when `--agent sparc` is selected, and also applies to `spark` when `REPOLENS_AGENT_TIMEOUT_SPARK` is unset.                                                                                                                                                                                                                                                                               |
+| `REPOLENS_AGENT_TIMEOUT_ANTIGRAVITY` | unset    | Antigravity per-invocation timeout override. Wins over `REPOLENS_AGENT_TIMEOUT` and mode-specific timeout variables when `--agent antigravity` is selected.                                                                                                                                                                                                                                                                                                                                                   |
+| `REPOLENS_AGENT_TIMEOUT_AUDIT`       | `1800`   | Audit-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `REPOLENS_AGENT_TIMEOUT_FEATURE`     | `1800`   | Feature-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `REPOLENS_AGENT_TIMEOUT_BUGFIX`      | `1800`   | Bugfix-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `REPOLENS_AGENT_TIMEOUT_DISCOVER`    | `1800`   | Discover-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `REPOLENS_AGENT_TIMEOUT_DEPLOY`      | `1800`   | Deploy-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `REPOLENS_AGENT_TIMEOUT_CUSTOM`      | `1800`   | Custom/change-impact timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `REPOLENS_AGENT_TIMEOUT_OPENSOURCE`  | `1800`   | Open-source readiness timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `REPOLENS_AGENT_TIMEOUT_CONTENT`     | `1800`   | Content-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `REPOLENS_AGENT_TIMEOUT_GREENFIELD`  | `1800`   | Greenfield-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `REPOLENS_AGENT_TIMEOUT_POLISH`      | `1800`   | Polish-mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `REPOLENS_AGENT_TIMEOUT_BUGREPORT`   | `1800`   | Bug-report mode timeout when no agent-specific or global override is set.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `REPOLENS_POLISH_TOP_N`              | `3`      | Number of ranked suggestions to include in each per-lens polishing shortlist. Must be a positive integer.                                                                                                                                                                                                                                                                                                                                       |
+| `REPOLENS_RATE_LIMIT_MAX_SLEEP`      | `21600`  | Maximum parsed agent rate-limit wait in seconds before RepoLens falls back to the terminal rate-limit abort path. When an agent exits non-zero with a known rate-limit signature and a parseable resume time within this cap, RepoLens sleeps until that time plus a 60-second buffer, retries the same lens once, and records `rate_limit_sleep_seconds` in `summary.json`. During lens execution, unparseable resume times, waits beyond this cap, a second rate-limit after retry, or a non-signal retry sleep failure finish as `rate-limit-pending` and exit `3`; SIGHUP, SIGINT, or SIGTERM during the sleep preserve `interrupted` and exit `129`, `130`, or `143`. |
+| `REPOLENS_NO_PROGRESS_LIMIT`         | `3`      | Consecutive degraded iterations allowed before RepoLens stops the lens with summary status `agent-no-progress`. A degraded iteration is a non-zero agent exit or near-empty output without `DONE`, issue URLs, or newly created local findings. Must be a positive integer no greater than the per-lens safety cap.                                                                                                                                                                                            |
+| `REPOLENS_NO_PROGRESS_MIN_BYTES`     | `512`    | Output-size threshold, in bytes, used by the no-progress guard. Agent output below this size is treated as degraded unless the iteration still shows progress through `DONE`, issue URLs, or local findings. Must be a non-negative integer up to `1048576`.                                                                                                                                                                                                                                                     |
+| `REPOLENS_DEGENERATE_THRESHOLD`      | `90`     | Percentage of run lenses that may end with status `max-iterations` before a zero-finding run is treated as broken. Must be an integer from `1` to `100`.                                                                                                                                                                                                                                                                                                                                                      |
+| `REPOLENS_ALLOW_DEGENERATE`          | `false`  | Set to `true` to let a degenerate zero-finding run exit `0`. The run still records `health: "broken"` and `stopped_reason: "degenerate-no-findings"` in `summary.json`.                                                                                                                                                                                                                                                                          |
+| `REPOLENS_CHILD_MAX_WAIT`            | `144000` | Per-child deadline in seconds for parallel-mode workers. `wait_all` polls each background lens with `kill -0` + `sleep 1` and, if a child exceeds this deadline, sends SIGTERM (10s grace) then SIGKILL, logs `[lens_id] exceeded REPOLENS_CHILD_MAX_WAIT=Ns`, and continues reaping the remaining children. Outer safety net above `REPOLENS_LENS_MAX_WALL`; keep it large enough to cover the lens wall budget plus rate-limit sleep and non-agent I/O (forge queries, file locks). |
+| `REPOLENS_LABEL_CACHE_DIR`           | `${XDG_CACHE_HOME:-$HOME/.cache}/repolens/labels` | Directory for the short-lived remote-label bootstrap cache. RepoLens uses it to coordinate startup label setup across concurrent runs against the same repository.                                                                                                                                                                                                                                                                                                                            |
+| `REPOLENS_LABEL_CACHE_TTL`           | `600`    | Freshness window, in seconds, for skipping repeated remote-label bootstrap work when the desired label set has already been seeded. Set to `0` to disable the skip hint while keeping normal label creation behavior.                                                                                                                                                                                                                                                                       |
+| `DONE_STREAK_REQUIRED`               | unset    | Deprecated alias for `--depth`. Used only when `--depth` is unset, emits a warning, and must be between `1` and `19`.                                                                                                                                                                                                                                                                                                                            |
+| `REPOLENS_ROUNDS`                    | `1`      | Fallback for `--rounds` when the CLI flag is unset. Must be a positive integer within the mode cap; CLI `--rounds` wins when both are provided.                                                                                                                                                                                                                                                                                                      |
+| `REPOLENS_STRATEGY`                  | unset    | Fallback for `--strategy` when the CLI flag is unset. Accepts `fanout` or `waves`; any other value aborts startup. Only meaningful for `--mode bugreport` — `waves` is rejected on any other mode, and the resolved value is shown by `--dry-run` only under `--mode bugreport`. CLI `--strategy` wins when both are provided.                                                                                                                  |
+| `REPOLENS_WAVE_WIDTH`                | `7`      | Number of GENERIC investigators dispatched in `--strategy waves` round 1. Non-positive or non-integer values fall back to `7`; values above `50` are clamped to `50`. Has no effect under `--strategy fanout`.                                                                                                                                                                                                                                          |
+| `REPOLENS_SCOPE_BY_KEYWORDS`         | unset    | Fallback for `--scope-by-keywords` when the CLI flag is unset. Truthy values (`1`, `true`, `yes`, `on`) enable the deterministic keyword-based domain pruner; falsy or unrecognized values leave it disabled. CLI `--scope-by-keywords` wins when both are set. Only effective in `--mode bugreport`.                                                                                                                                                              |
+| `REPOLENS_HUMAN_REVIEW`              | unset    | Fallback for `--human-review` when the CLI flag is unset. Truthy values (`1`, `true`, `yes`, `on`) enable the curated human-review digest opt-in; falsy values (`0`, `false`, `no`, `off`, empty) leave it disabled; any other value aborts startup with an error mentioning `REPOLENS_HUMAN_REVIEW`. CLI `--human-review` wins when both are set. |
+| `REPOLENS_HEARTBEAT_INTERVAL`        | `60` for parallel log output, `15` for per-lens files | Shared heartbeat interval in seconds. While more than one parallel child is still running, `wait_all` logs `[heartbeat] N running: domain/lens (elapsed)` through the standard logging channels. Active lenses also write JSON heartbeat files under `logs/<run-id>/.heartbeat/` when `REPOLENS_LENS_HEARTBEAT_INTERVAL` is unset. Set to `0` to disable parallel log heartbeats and, when no lens-specific override is set, per-lens heartbeat files.                                                                      |
+| `REPOLENS_LENS_HEARTBEAT_INTERVAL`   | unset    | Per-lens heartbeat file interval override in seconds. Wins over `REPOLENS_HEARTBEAT_INTERVAL` for files only; default file interval is `15` seconds when both variables are unset. Set to `0` to disable per-lens heartbeat files without changing parallel log heartbeats.                                                                                                                                                                                                                                     |
+| `REPOLENS_STATUS_INTERVAL`           | `10`     | Whole-run `logs/<run-id>/status.json` refresh interval in seconds. Must be a positive integer; invalid values and `0` fall back to `10`. RepoLens writes the first snapshot immediately after run setup, then refreshes it while the run is active and writes a final `finished`, `finished-empty`, `failed`, `interrupted`, or `rate-limit-pending` snapshot on exit.                                                                                                                                                |
+| `REPOLENS_CLEANUP_GRACE`             | `5`      | Interrupt cleanup grace in seconds for tracked parallel workers. When a parallel run receives Ctrl-C or TERM, RepoLens asks tracked workers to stop, waits up to this many seconds, then force-stops any workers still running so cleanup returns. Set to `0` to skip the grace wait. Must be a non-negative integer.                                                                                                                                                                                            |
+| `REPOLENS_AUTO_CLEAN`                | `false`  | Set to `true` to prune old run directories under `logs/` in the background at startup, using `REPOLENS_RETENTION_DAYS` and `REPOLENS_KEEP_LAST`. The prune logs an INFO line with the resolved retention settings, never blocks or fails the run, keeps resume candidates and live runs, and applies the same safe selector as `repolens.sh clean`. Off by default; equivalent to running `clean` by hand.                                                                                                     |
+| `REPOLENS_RETENTION_DAYS`            | `30`     | Age threshold in days for the `REPOLENS_AUTO_CLEAN` startup prune — runs older than this are eligible for removal. Non-numeric values fall back to the default. No effect unless `REPOLENS_AUTO_CLEAN=true`.                                                                                                                                                                                                                                                                                                   |
+| `REPOLENS_KEEP_LAST`                 | `50`     | Number of most-recent runs the `REPOLENS_AUTO_CLEAN` startup prune always protects, regardless of age. Non-numeric values fall back to the default. No effect unless `REPOLENS_AUTO_CLEAN=true`.                                                                                                                                                                                                                                                                                                               |
+| `REPOLENS_ITERATION_KEEP`            | `3`      | Number of most-recent per-lens forensic `iteration-N-TIMESTAMP.txt` captures kept uncompressed after a lens finishes. Older captures are gzipped to `.txt.gz` to save disk; this is forensic-only data and never read by synthesis, verification, or `--resume`. Compression is skipped silently when `gzip` is unavailable.                                                                                                                                                                                  |
+| `DEDUPE_TITLE_SIM_PRIMARY`           | `8500`   | Primary near-duplicate title-similarity bar on the Jaccard ×10000 integer scale (`0`–`10000`, where `8500` = 0.85). During synthesis RepoLens treats two findings as near-duplicate titles when their similarity exceeds this bar; lower it to deduplicate more aggressively, raise it to flag fewer pairs. A value above `10000` effectively disables the bar (no pair's similarity can reach it). Non-numeric or negative values fall back to the default with a warning instead of crashing. Unlike most variables here it has no `REPOLENS_` prefix. |
+| `DEDUPE_TITLE_SIM_SECONDARY`         | `6000`   | Looser secondary title-similarity bar (Jaccard ×10000, where `6000` = 0.60) applied only when two findings already share the same non-empty location, so location-backed pairs merge at a lower title match. Same scale, validation, and "above `10000` disables it" semantics as `DEDUPE_TITLE_SIM_PRIMARY`. |
+
+### Per-Lens Heartbeat Files
+
+Each running lens writes a machine-readable heartbeat at:
+
+```text
+logs/<run-id>/.heartbeat/<domain>__<lens-id>.json
+```
+
+Inspect the file from another terminal while a run is active:
+
+```bash
+jq . logs/<run-id>/.heartbeat/<domain>__<lens-id>.json
+```
+
+The file is rewritten atomically while the lens is active and removed after clean lens completion. If the process dies abnormally, the last heartbeat is left behind so status tools and operators can treat it as stale. The JSON contains `run_id`, `domain`, `lens_id`, numeric `pid`, current `iteration`, `started_at`, `last_heartbeat_at`, and `state: "running"`.
+
+### Run Status Snapshot
+
+Each run also writes a whole-run progress snapshot at:
+
+```text
+logs/<run-id>/status.json
+```
+
+Show the newest run from another terminal while RepoLens is active:
+
+```bash
+./repolens.sh status
+```
+
+Show a specific run by id:
+
+```bash
+./repolens.sh status 20260315T120000Z-a1b2c3d4
+```
+
+The status command prints run metadata, started/updated times, progress counters, a timing line, and active lenses with running time and heartbeat age. The timing line shows roughly how long the run has been going and when it is projected to finish, for example `timing:    ~1h 23m elapsed  |  ~4h 12m remaining  (ETA 2026-04-17 11:39:00 UTC)`. When the remaining time cannot be computed yet — nothing has completed, the run has reached a terminal state, or the snapshot predates ETA tracking — the line shows `remaining unknown` (and `elapsed unknown` for an older snapshot without timing data) instead of a bogus estimate. When a run has taken more than one attempt — a fresh start plus one or more `--resume` continuations — the render adds an `attempts:` line, for example `attempts:  2  (latest: rate-limit-pending)`, showing how many passes the run has taken and the status of the latest one; a single-attempt run omits the line. Active lenses whose heartbeat age is greater than 120 seconds are marked `[STALE?]`; use `--stale-after <seconds>` to change that threshold. A missing run exits `1` and lists available runs. A non-watch render with stale active lenses exits `2`, which is useful for CI or external monitoring.
+
+Use raw JSON for scripts:
+
+```bash
+./repolens.sh status <run-id> --json
+```
+
+Refresh the terminal view until Ctrl-C:
+
+```bash
+./repolens.sh status <run-id> --watch 5 --no-color
+```
+
+Omit the watch interval to use the 5-second default. Use `--no-color` when piping output or capturing snapshots without ANSI color.
+
+`status.json` is refreshed atomically at `REPOLENS_STATUS_INTERVAL` seconds and is safe for humans, scripts, and monitoring tools to read while RepoLens is running. It includes run metadata, `state`, `health`, `total_lenses`, `completion_percentage`, aggregate `counts`, the `active`, `queued`, and `completed` lens lists, and an `attempts` array recording the continuation history of the run. Terminal `rate-limit-pending` snapshots also include `next_action.earliest_at` when RepoLens knows the provider retry time; the value is a UTC timestamp such as `2026-05-14T21:30:00Z` and is omitted for other final states or pending runs without a known retry time.
+
+The `state` value is `running` during execution, then `finished` when at least one finding was created, `finished-empty` when no findings were created without a degenerate failure, `failed` when the run health gate detects a broken zero-finding run, `interrupted` after Ctrl-C, SIGHUP, or TERM, or `rate-limit-pending` when a lens-level agent rate-limit abort leaves unfinished work to resume. The CLI exits `3` for `rate-limit-pending`; interrupted rate-limit retry sleeps preserve signal exit codes `129`, `130`, and `143`. Final snapshots also include `health`: `ok` when findings exist, `no-findings` for a clean zero-finding run, `empty` when no lenses ran, or `broken` when zero findings were created and at least `REPOLENS_DEGENERATE_THRESHOLD` percent of run lenses ended as `max-iterations`. `active` entries come from per-lens heartbeat files and include `pid`, `iteration`, `started_at`, `last_heartbeat_at`, `age_seconds`, and `heartbeat_age_seconds`; stale heartbeat files are still reported. `queued` lists resolved lenses that are neither active nor completed. `completed` reflects completed lenses, including existing completed state when using `--resume`. `attempts` is a compact, ordered record of every pass at this run — the initial start plus one entry per `--resume` continuation — where each entry carries `attempt_id`, `status`, `why_stopped`, and `lenses_completed_this_attempt`; it is an empty array (`[]`) for a run that predates continuation tracking or whose record is missing or unreadable, so reading it never errors. `counts.issues_created` comes from `logs/<run-id>/summary.json`.
+
+### Cleaning Up Old Runs
+
+Run directories under `logs/` accumulate over time and are never removed automatically by default. The `clean` subcommand prunes old ones:
+
+```bash
+# Remove runs older than 30 days, always keeping the 50 most recent (defaults)
+./repolens.sh clean
+
+# Remove runs older than a week
+./repolens.sh clean --older-than 7d
+
+# Preview what would be removed without deleting anything
+./repolens.sh clean --dry-run
+```
+
+`clean` is deliberately conservative. It only ever considers a direct child of `logs/` whose name is a genuine run id and that carries a `summary.json` or `status.json` — AutoDev working state, partial directories, and anything else under `logs/` are never touched. By default, it also keeps any run that is still resumable (incomplete, interrupted, failed, with a recorded stop reason, or whose most recent continuation attempt did not finish cleanly). Runs that a process is using right now are always kept.
+
+| Option                | Default | Description                                                                                                                    |
+| --------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `--older-than <dur>`  | `30d`   | Remove runs older than this age. Suffix `d`/`h`/`m` for days/hours/minutes, or pass a bare number of seconds.                   |
+| `--keep-last <n>`     | `50`    | Always protect the N most recent runs, regardless of age.                                                                       |
+| `--keep-incomplete`   | on      | Keep resume-candidate runs (running/interrupted/failed, a non-null stop reason, an abort sentinel, or a multi-attempt run whose most recent continuation attempt did not finish cleanly). On by default. |
+| `--remove-incomplete` | —       | Opposite of `--keep-incomplete`: also remove resume candidates that are otherwise eligible.                                     |
+| `--dry-run`           | —       | Print the run ids that would be removed and delete nothing.                                                                     |
+| `--force`             | —       | Skip the confirmation prompt. The prompt is also skipped automatically when stdin is not an interactive terminal (CI/AutoDev). |
+| `-h`, `--help`        | —       | Show `clean` help.                                                                                                              |
+
+To prune automatically at startup instead of running `clean` by hand, set `REPOLENS_AUTO_CLEAN=true` (see [Environment Variables](#environment-variables)). RepoLens logs the resolved retention settings at INFO before starting the background prune. This is off by default.
+
+### Retiring a Run
+
+`clean` keeps any run that still looks resumable, which means a run you have deliberately abandoned can linger and keep being picked up as the newest one. Mark it as no-longer-authoritative with `supersede`:
+
+```bash
+./repolens.sh supersede 20260315T120000Z-a1b2c3d4
+```
+
+This writes a `.superseded` marker into `logs/<run-id>/` and changes two behaviors for that run:
+
+- `./repolens.sh status` (with no run id) skips it when auto-selecting the newest run, so a retired run no longer shadows the run you actually care about. Asking for it explicitly with `status <run-id>` still works.
+- `./repolens.sh clean` will remove it even though it would otherwise be protected as a resume candidate — you no longer need `--remove-incomplete` to clear that one run. A run a process is using right now is still never removed, marker or not.
+
+The `<run-id>` must be a direct child of `logs/` and a genuine run dir (one carrying `summary.json` or `status.json`). Ids containing `/`, `.`, or `..` are rejected, and superseding a missing or non-run directory exits non-zero with a message.
+
+## Domains & Lenses (337 total across 34 domains)
+
+### Code Analysis Domains (used by `audit`, `feature`, `bugfix`, `custom`)
+
+| Domain                       | Lenses | Focus                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Security**                 | 11     | Injection, XSS/CSRF, auth, secrets, CVEs, headers, crypto, input validation, data exposure, rate limiting                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Code Quality**             | 14     | Naming, complexity, dead code, duplication, magic values, smells, linting, formatting, comments, types, immutability, readability, consistency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Architecture**             | 9      | SoC, module boundaries, circular deps, coupling, SRP, dependency direction, API contracts, state, extensibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Testing**                  | 9      | Unit/integration/e2e gaps, quality, anti-patterns, edge cases, error paths, maintainability, determinism                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Error Handling**           | 6      | Unhandled errors, swallowing, messages, boundaries, graceful degradation, timeout/retry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Performance**              | 9      | Queries, memory, blocking I/O, frontend perf, caching, algorithms, pagination, connections, startup                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **API Design**               | 6      | REST conventions, validation, response consistency, versioning, idempotency, documentation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Database**                 | 6      | Schema, migrations, indexes, transactions, integrity, query safety                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Frontend**                 | 5      | Component architecture, accessibility, responsive design, routing, frontend security                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Visual Design**            | 5      | Color system, typography scale, spacing system, visual hierarchy, icon consistency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Design System**            | 4      | Design tokens, component library usage, CSS architecture, UI copy consistency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Interaction Design**       | 8      | Loading states, error states, form UX, animations, interactive feedback, touch targets, scroll behavior, keyboard navigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Information Architecture** | 6      | Empty states, navigation patterns, content hierarchy, search UX, help context, dashboard patterns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Adaptive UX**              | 5      | Adaptive content, theme adaptation, viewport sizing, RTL layout, print stylesheet                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **UX Anti-Patterns**         | 6      | Dark patterns, cognitive overload, destructive actions, flow dead-ends, permission anti-patterns, notification interrupts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Observability**            | 5      | Logging, structured logging, metrics, audit trail, health monitoring                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **DevOps**                   | 6      | CI, Docker, env config, deployment safety, infra reproducibility, dependency management                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Compliance**               | 56     | GDPR/DSGVO, NIS2, HIPAA, PCI-DSS, AI Act, DORA, AML/KYC, sovereignty, privacy-by-design, data retention, consent flows, and 45 more                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Maintainability**          | 6      | Tech debt, upgrade paths, config patterns, error traceability, modularity, dependency health                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Internationalization**     | 2      | String internationalization, locale-aware formatting                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Documentation**            | 4      | Code docs, architecture docs, operational docs, onboarding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Concurrency**              | 4      | Race conditions, async patterns, resource contention, transaction concurrency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Tool Gate**                | 18     | Lint, typecheck, SAST, dependency CVEs, quality gates, test suite, DAST (web, injection, scanner, headers, API), session-based tools (ZAP, sqlmap, Nuclei, Lighthouse, k6, ZAP API, Schemathesis)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Runtime Log Analysis**     | 21     | Error storm detection for repeated log/event fingerprints above threshold; error cascade reconstruction across components with root cause, chain, terminal symptom, and break-point evidence; retry-loop detection for unchanged operations failing identically across repeated attempts; recursive-growth detection for depth, fan-out, queue, hop, and nesting counters that climb without convergence; resource-leak trajectory detection for handles, memory, connections, file descriptors, locks, caches, and queues whose repeated measurements climb across long-running logs; resource-exhaustion detection for OOM, file-descriptor, pool, thread/worker, disk/inode, socket, and conntrack hard-limit events; log-gap detection for abnormal silence in normally-busy components, workers, or subsystems; missing-heartbeat detection for periodic signals that stop, drift, never start, or report degraded payload state; silent-failure detection for start events with no terminal event; state-machine violation detection for illegal, skipped, regressed, incompatible, or cross-component lifecycle states; race-condition symptom detection for optimistic-lock exhaustion, double-processing, interleaved operations, split-brain leadership, and stale-read warnings visible in logs; lifecycle-order detection for terminal-before-start, duplicate start, duplicate terminal, swapped timestamp, and worker/thread reorder bugs; orphaned-event detection for missing acquire/release, begin/end, span/scope close, transaction terminal, or audit counterpart events after expected closure time; process-orphan detection for PIDs, sessions, lockfiles, pidfiles, temp dirs, worktrees, and sockets that survive past owner exit or cleanup; latency-degradation detection for same-operation durations, startup times, and p99 tails growing over time while work still completes; clock-skew detection for out-of-order, future-dated, timezone-less, precision-mixed, or cross-host drifted timestamps; timeout-cluster detection for rc=124/137, deadline, retry-chain, watchdog, and time-window timeout patterns; `--logs` passes a log file or directory path into lens prompts without orchestrator-level content reads                                                                                 |
+| **Kubernetes**               | 7      | Pod/container security contexts, NetworkPolicy coverage, HPA/PDB coverage, resource requests/limits, LimitRange/ResourceQuota guardrails, image tags, pull policies, registry trust, Ingress TLS, cert-manager, HSTS, SSL redirect, RBAC least privilege, ServiceAccount scoping, secret manifests, SealedSecrets, SOPS, External Secrets, secret RBAC                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **LLM Security**             | 5      | LLM output sanitization, rendering safety, prompt injection, RAG/tool/chat-history injection, agent sandbox boundaries, container privilege, subprocess fallbacks, credential exposure in agent environments, LLM API key isolation, secret redaction in tool output/logs, cost/token budget enforcement, rate limits on LLM-triggering endpoints, spend anomaly detection, tier/model access controls, markdown/link injection, external system forwarding, structured output validation, filesystem and command injection risks                                                                                                                                                                                                                                                                                                                               |
+| **Infrastructure as Code**   | 5      | Terraform completeness, placeholder stubs, empty resource blocks, dead modules, missing outputs, broken references, provider/backend hygiene, Terraform security groups, encryption, IAM, public access, disabled resources, zero-resource plans, README-vs-code infrastructure promises, tfvars secrets, Terraform/OpenTofu state exposure, missing sensitive annotations, backend credentials, CI -var secret handling, VPC design, public/private subnet topology, NAT gateways, VPC Flow Logs, route tables, security groups, NACLs, peering, transit gateways, DNS, VPN, load balancer placement, database subnet exposure, backups, monitoring alarms, tagging policy, cost alerts, CloudTrail, S3 versioning, server-side encryption, lifecycle, access logging, replication, WAF, SNS alerting, service logging, maintenance windows, disaster recovery |
+
+### Mode-Specific Domains
+
+| Domain                    | Mode         | Lenses    | Focus                                                                                                                                                                                                                                                |
+| ------------------------- | ------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Product Discovery**     | `discover`   | 14 lenses | Product gaps, integration opportunities, UX improvements, monetization, developer experience, automation, data insights, scale readiness, community, competitive edge, accessibility, content/education, AI augmentation, workflow orchestration     |
+| **Deployment**            | `deploy`     | 26 lenses | Service health, TLS, DNS, NTP, network security, load balancing, reverse proxy, disk/memory/CPU, containers, database, queues, secrets, SSH, hardening, logs, monitoring, backups, disaster recovery, config drift, dependencies, updates, cron jobs |
+| **Android**               | `deploy`     | 17 lenses | APK overview, package metadata, bundled dependency CVE inventory, native `.so` inventory, JNI surface, binary hardening, AndroidManifest permissions and component flags, exported IPC components, intent filters, deeplinks, App Links, Android intent fuzzing for exported activities, providers, broadcasts, and malformed IPC inputs, drozer attack-surface enumeration for exported activities, services, receivers, providers, backup posture, and shared UID exposure, APK secrets, credentials, internal URLs, WebView security settings, JavaScript bridges, Network Security Config, TLS trust, certificate pinning, MITM traffic observation, logcat sensitive-data leaks, Frida runtime behavior hooks for crypto, file I/O, network, process, reflection, IPC, logging anomalies, anti-tamper and detection-bypass robustness, Android KeyStore, EncryptedSharedPreferences, SQLCipher/Realm secure-storage misuse, Android Lint, detekt, ktlint, Spotless, Gradle SDK consistency, manifest merger, R8/ProGuard posture, suppressions, baselines, and device-aware Android audit context |
+| **Open Source Readiness** | `opensource` | 13 lenses | Secret leaks, license compliance, dependency licensing, internal exposure, git history secrets, community readiness, documentation gaps, monetization exposure, PII, build reproducibility, security posture, code attribution, trademarks           |
+| **Content Quality**       | `content`    | 17 lenses | Content inventory, metadata, staleness, accessibility, linking, duplication, completeness, consistency, code examples, PII, multimedia, versioning, audience targeting, localization, topic extraction, planning, exercise design                    |
+| **Greenfield Planning**   | `greenfield` | 1 lens | Spec-led backlog planning for new or skeletal projects; creates one implementation-sized `[P0]`-`[P3]` issue per invocation, then continues until existing issues sufficiently cover the spec |
+| **Fluency**               | `polish`     | 6 lenses | Visual-UI processing-fluency refinements for contrast, alignment, spacing, motion, conventions, and typographic rhythm |
+| **Effort Signal**         | `polish`     | 6 lenses | Polishing forgotten corners, empty states, loading transparency, edge cases, errors, and offline or failure states |
+| **Hedonic**               | `polish`     | 4 lenses | Experimental polish lenses for voice, microcopy, identity, stimulation moments, and fitting hidden delights that require strong voice-profile fit |
+
+## How It Works
+
+1. Validates target repo, server, APK target, Android source tree, or greenfield product spec, agent CLI, and forge CLI auth (skipped with `--local`)
+2. Resolves lens list (all, `--domain`, `--focus`, or `--lens`) and creates the run artifact layout under `logs/<run-id>/`
+3. If `--dry-run`: prints mode, agent, project path, resolved round count, remote target metadata when `--remote` is set, and the full lens list, then exits — no agents run, no prompts are shown, and no Android Gradle build is executed
+4. For `--agent claude`: prompts for acknowledgment that `--dangerously-skip-permissions` only skips interactive permission prompts, not safety filters. `--yes` bypasses this prompt
+5. For `deploy` mode: resolves `--deploy-target auto|server|android`, then prompts for explicit authorization confirmation (`I confirm I am authorized to audit this server [y/N]`). Displays legal references (§202a StGB, CFAA, EU Directive 2013/40/EU). When `--remote` is set, this prompt also shows `Remote target: ...`; labelled targets show `Raw target: ...` on the next line, followed by `Local commands will be wrapped in: ssh -S <socket> <target> '...'`. `--yes` bypasses this prompt
+6. Shows confirmation prompt (target repo, mode, lens count, estimated cost, and an estimated wall-clock line such as `Estimated wall-clock: ~4h 30m at --max-parallel 8`) — requires `y` to proceed, or use `--yes` to skip. The same cost and wall-clock estimates also appear in the `--dry-run` preview. When the wall-clock estimate exceeds `REPOLENS_EST_WARN_HOURS` (default 24h), a loud warning lists concrete tuning levers — raise `--max-parallel`, pick a faster/cheaper `--agent`, lower `--depth`, scope with `--domain`/`--focus`, or use `--max-issues` for a spot check. Remote deploy runs repeat the remote target and SSH wrapper preview before `Proceed? [y/N]`. For Android APK deploy targets, the prompt also shows the resolved APK path, detected package name or `unknown`, connected device status, `android` domain, queued lens count, and selected agent before `Proceed? [y/N]`. If no device is connected, dynamic lenses report no device and exit cleanly. If `--max-cost` is set and the estimate exceeds it, a warning is displayed
+7. For Android source deploy targets with no resolved APK, `--build-android-apk` may then run `./gradlew assembleDebug`. RepoLens uses debug builds rather than release builds because debug builds are the predictable local artifact most Gradle projects can produce without release keystores, Play signing, publishing credentials, minification, or other release-only paths.
+8. Ensures remote labels exist (skipped with `--local`). For remote runs, RepoLens coordinates this startup step across concurrent runs against the same repository and skips repeated setup for the same desired label set while the label cache is fresh
+9. For each lens:
+   - Composes prompt from base template + lens expert focus
+   - Runs agent in target repo directory
+   - Agent follows the selected mode: code modes read code, deploy modes inspect the target, content modes inspect content/source material, greenfield plans from `--spec` using the current open issue or local draft backlog without inspecting repository code, and polish mode looks for voice-fit refinements
+   - Agent creates remote issues, writes local files, or writes polish suggestion JSON depending on the selected mode
+   - Loops until DONE detected (3× streak for audit/feature/bugfix, 1× for other modes)
+10. For polish mode, ranks collected suggestions and emits grouped polishing shortlists
+11. Writes `logs/<run-id>/status.json` while the run is active and generates `logs/<run-id>/summary.json`
+
+For a deeper look at the methodology — how lenses are composed, how agents iterate, and how streak detection works — see [METHODOLOGY.md](METHODOLOGY.md).
+
+## Adding a Lens
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution workflow (fork, branch, PR process).
+
+1. Create `prompts/lenses/<domain>/<your-lens>.md`:
+
+```yaml
+---
+id: your-lens
+domain: your-domain
+name: Your Lens Name
+role: Your Expert Role Title
+---
+## Your Expert Focus
+
+Detailed instructions for what this lens should analyze...
+```
+
+2. Add `"your-lens"` to the domain's `lenses` array in `config/domains.json`
+
+That's it. No code changes needed.
+
+## Resume
+
+If a run is interrupted, crashes, or ends as `rate-limit-pending`, resume it:
+
+```bash
+./repolens.sh --project ~/my-app --agent claude --resume 20260315T120000Z-a1b2c3d4
+```
+
+Completed lenses are skipped; unfinished and rate-limited lenses are retried. The run ID is printed at startup and found in `logs/`.
+
+Resume **reuses the same `logs/<run-id>/` directory** — it does not create a new sibling run. Lenses that already finished are recorded in `logs/<run-id>/.completed` and are skipped on resume; only unfinished and rate-limited lenses run again. You can **narrow a resume** by adding `--focus <lens-id>` or `--domain <domain-id>`: only those lenses run, and their results merge into the same run rather than starting a fresh directory.
+
+```bash
+# Resume a run but only re-run the injection lens; results merge into <run-id>
+./repolens.sh --project ~/app --agent claude --resume <run-id> --focus injection
+```
+
+To skip hunting for the id, drop it — `--resume` with no run id auto-selects and resumes the **most recent interrupted run** under `logs/`:
+
+```bash
+./repolens.sh --project ~/my-app --agent claude --resume
+```
+
+The chosen run is logged (`Auto-resuming latest interrupted run: <run-id>`). Only genuine resume candidates qualify: completed/clean runs and retired (`supersede`d) runs are never auto-selected. If no resumable run exists, RepoLens stops with an error instead of starting a fresh run.
+
+Each pass at a run — the initial start and every `--resume` — is recorded as an **attempt** against the same run id, so one parent run can own several attempts while still producing a single merged result in the one `logs/<run-id>/` directory. You can see how many attempts a run has taken in `./repolens.sh status <run-id>` (an `attempts:` line) and in `status.json` (the `attempts` array). When a run finishes after more than one attempt, the end-of-run summary also prints a one-line note pointing at the full per-attempt history:
+
+```text
+This run took 2 attempts (latest: finished). Full continuation history: logs/<run-id>/attempts.json
+```
+
+A run that completed in a single attempt prints no such note.
+
+## Post-audit validation
+
+Cheap models (a local LLM, MiniMax via `opencode`, and similar) can scan a large repo affordably, but they emit a lot of false positives. `--validate` splits the work: run the heavy `DONE×3` lens scan with a cheap **"Radar"** agent, then pay a flagship **"Filter"** agent only for a fast pass that re-reads the cited code and drops the false positives — instead of running the whole expensive scan on the flagship.
+
+```bash
+# 1. Cheap scan writes a findings artifact (a --local run writes final/findings.jsonl)
+./repolens.sh --project ~/my-app --agent opencode/<cheap-model> --local
+
+# 2. Re-verify those findings with a flagship agent and keep only the real ones
+./repolens.sh --project ~/my-app --agent claude \
+  --validate logs/<run-id>/final/findings.jsonl
+```
+
+`--validate <file>` short-circuits the run: it does **not** launch the lens fan-out, the `DONE×3` streak, or the synthesizer. It reads the findings artifact, sends each finding (with the repo on disk for context) to the flagship `--agent`, and keeps only the findings the flagship confirms. It needs both `--agent` (the flagship filter) and `--project` (the repo re-read for context).
+
+Accepted input is the RepoLens finding registry `findings.jsonl`, a `manifest.json` JSON array, or a single JSON finding object. An empty artifact is a graceful no-op (`Nothing to validate: 0 findings`); a missing, unreadable, or malformed file stops with a clear error and never dispatches the agent. If the flagship agent itself fails, the run exits non-zero rather than silently reporting that everything was a false positive.
+
+Verified findings survive; findings the flagship judges wrong are dropped as false positives; findings it flags as stale are kept (downranked downstream). The cleaned findings are written to `logs/<validate-run>/validated-findings.jsonl`, and the counts are printed explicitly:
+
+```text
+Findings validated: 42
+Verified (survivors): 30
+Dropped (false positives): 11
+Stale (kept, downranked): 1
+Cleaned findings written to: logs/validate-.../validated-findings.jsonl (31 kept)
+```
+
+This first slice emits the cleaned findings file only — it does not yet file the survivors as issues.
+
+## Output
+
+- **Remote Issues** — Created directly in the target repo with severity-prefixed titles and domain labels for issue-filing modes. Audit findings (single-pass `audit` and multi-round `bugreport` synthesis) additionally carry a `repolens/complexity/<1-5>` routing label and a `- **Complexity:** <n> (<Descriptor>)` line in the body — a 1-5 estimate of the *effort* to fix, orthogonal to severity — so downstream automation can route each fix to a cheap or flagship model tier (e.g. `gh issue list --label repolens/complexity/1`). Polish mode creates `[POLISH]` lens-scoped polishing shortlist issues instead
+- **Local Output** — With `--local`, findings or backlog items are written as individual markdown files to `<output-dir>/<domain>/<lens-id>/NNN-slug.md` with YAML frontmatter (title, severity or priority, domain, lens, labels). Polish lenses write JSON suggestion objects, then RepoLens writes grouped polishing shortlist drafts under `logs/<run-id>/polish/filed/`. Default output directory: `logs/<run-id>/rounds/round-1/lens-outputs/`. In greenfield mode, existing draft files in that directory are treated as the current draft backlog on later planning iterations. RepoLens also indexes the written finding markdown into a machine-readable [finding registry](docs/finding-registry-schema.md) at `logs/<run-id>/final/findings.jsonl` (plus the flat `findings.csv`), so a `--local` run is no longer just an unindexed tree of markdown files; each registry record's `markdown_path` points back at the file it came from, the registry lives under `final/` while the output directory stays markdown-only, and the end-of-run summary prints the index path. A registry-build failure is non-fatal — it warns and the run still succeeds
+- **Polish Ranked Suggestions** — Polish runs write `logs/<run-id>/polish/ranked-suggestions.json`, sorted by deterministic polish rank with `fluency_baseline`, `soul_fit`, `effort_gap_multiplier`, and `polish_rank_x1000` on each suggestion
+- **Round Artifacts** — Every run creates `logs/<run-id>/rounds/round-N/` for each resolved round, including `metadata.json`, `lens-outputs/`, and `digest.md`. `round-N/.completed` appears only after that round finishes cleanly. Multi-round runs write between-round `dispatch.md` handoff files on completed rounds before the final round
+- **Final Artifacts** — Every run creates `logs/<run-id>/final/` and `logs/<run-id>/final/filed/`. Successful multi-round runs promote a schema-validated `logs/<run-id>/final/manifest.json`; later filing stages record filed issue links under `final/filed/`
+- **Logs** — `logs/<run-id>/<domain>/<lens>/iteration-N-TIMESTAMP.txt`. After a lens finishes, all but the most recent `REPOLENS_ITERATION_KEEP` (default `3`) of these forensic captures are gzipped to `.txt.gz`. Prune whole run directories with `./repolens.sh clean`
+- **Heartbeats** — Active lenses write `logs/<run-id>/.heartbeat/<domain>__<lens-id>.json`; files are removed after clean lens completion and left behind if a worker exits abnormally
+- **Status** — `logs/<run-id>/status.json`, refreshed during the run with queued, active, completed, issue-count, completion-percentage, run-health, final-state, and per-attempt continuation data (the `attempts` array); render it with `./repolens.sh status [run-id]`
+- **Summary** — `logs/<run-id>/summary.json`, including per-lens status, iterations, issue counts, `findings_filtered`, `rate_limit_sleep_seconds`, per-lens wall-clock timing (`started_at` and `completed_at` as ISO-8601 UTC timestamps plus an integer `duration_seconds`, so you can see which lenses dominate a multi-hour run), final `health`, and run-level `stopped_reason` when an agent abort guard, signal interruption, or the run-health gate stops the run. When `findings_filtered` is non-zero, final stdout prints `Findings filtered by --min-severity: N` before the `=== RepoLens Run Summary ===` JSON dump
+- **Time breakdown** — At the end of every run, final stdout prints a `Time breakdown` section (just before the `=== RepoLens Run Summary ===` JSON dump) summarizing where the time went: total wall time, total lens-seconds, the 10 slowest individual lenses, and per-domain duration totals (descending). Durations are human-formatted (e.g. `2h 13m`). Runs whose `summary.json` predates per-lens timing print a single `Time breakdown: no timing data` line instead
+
+## Development
+
+### Running Tests
+
+Run the full test suite:
+
+```bash
+make check
+```
+
+Or invoke the pure-bash runner directly (useful in environments without `make`):
+
+```bash
+bash tests/run-all.sh
+```
+
+Either entry point discovers and runs all `tests/test_*.sh` scripts, reports per-suite results, and exits non-zero if any suite fails. Individual suites can also be run standalone, e.g. `bash tests/test_streak_ansi.sh`.
+
+Set `REPOLENS_TEST_DOCKER=1` to also run integration tests requiring Docker.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to report bugs, suggest features, submit code, and add new lenses.
+
+Please note that this project is released with a [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to abide by its terms.
+
+## Authors
+
+See [AUTHORS.md](AUTHORS.md) for credits and contributors.
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Do not open a public issue for security vulnerabilities.
+
+## Governance
+
+For information about project leadership, decision-making, and contribution acceptance criteria, see [GOVERNANCE.md](GOVERNANCE.md).
+
+## Legal
+
+### License
+
+This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for the full text and [NOTICE](NOTICE) for required attribution. The warranty disclaimer is summarized in [Warnings & Limits → Disclaimer](#disclaimer--no-warranty-use-at-your-own-risk).
+
+### Deploy Mode — Authorization Required
+
+`deploy` mode can target live servers, Android APK files, or shallow Android source trees. Live-server deploy runs read-only inspection commands (e.g., `systemctl`, `journalctl`, `ss`, `df`). Android deploy inspects the resolved APK or source tree. **You must have explicit authorization to audit the target before running deploy mode.**
+
+`--remote <ssh-target>` is accepted only for deploy server targets and may be written as `host`, `host:port`, `user@host`, or `user@host:port`. It is rejected with `--hosted` and Android deploy targets. Remote deploy confirmations show the target before authorization and again before the run starts. If `--remote-label` is set, prompts show the label plus a separate `Raw target: ...` line. The same prompt block shows the SSH wrapper form agents will use, for example `Local commands will be wrapped in: ssh -S <socket> ubuntu@host.example.com:2222 '...'`.
+
+**Legal risk:** Running RepoLens deploy mode against infrastructure you do not own or are not explicitly authorized to audit may constitute a criminal offense, including but not limited to:
+
+- **Germany:** [§202a StGB](https://www.gesetze-im-internet.de/stgb/__202a.html) — Ausspähen von Daten (data espionage)
+- **EU:** Directive 2013/40/EU — Attacks against information systems
+- **United States:** Computer Fraud and Abuse Act (CFAA), 18 U.S.C. §1030
+- **United Kingdom:** Computer Misuse Act 1990
+
+RepoLens enforces read-only operation through prompt instructions, but **responsibility for authorization lies entirely with the user**. The CLI will prompt for explicit authorization confirmation before executing deploy mode. Using `--yes` to skip this prompt implies acceptance of this responsibility.
+
+Android source builds are the exception to read-only inspection. If you pass `--build-android-apk` for an Android source target with no resolved APK, RepoLens may execute the target-controlled `./gradlew assembleDebug` after deploy authorization and the normal run confirmation. That build never runs during `--dry-run`.
+
+For Android deploy prompts, `$REPOLENS_ANDROID_APK_PATH` exposes the resolved APK path to agents. The value comes from user input or files discovered inside the target project, so treat it as untrusted target-controlled data and quote it in shell usage, for example `aapt dump badging "$REPOLENS_ANDROID_APK_PATH"`.
+
+### About `--dangerously-skip-permissions`
+
+RepoLens passes `--dangerously-skip-permissions` to the Claude agent CLI. This flag is required for autonomous operation — agents need to create remote issues and read project files without interactive permission prompts. Despite its name, the flag does **not** disable safety filters, content guardrails, or ethical guidelines. Safety is enforced through detailed prompt instructions (not the CLI permissions system), which restrict agents to read-only analysis and remote issue creation commands.
+
+When using `--agent claude`, RepoLens displays an explanation of the flag and asks for acknowledgment before running any agents. Use `--yes` to skip this prompt in CI/automation.
+
+## Troubleshooting
+
+Most first-run failures fall into one of these patterns. Errors are quoted verbatim from the script except placeholders such as `<host>`, which stand in for values RepoLens prints at runtime.
+
+| Error / Symptom                                                                                                                      | Cause                                                                                                        | Fix                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ERROR: RepoLens requires bash 4.0 or newer.`                                                                                        | bash < 4 (macOS ships 3.2 by default)                                                                        | `brew install bash`, then re-run with the Homebrew `bash` first on `PATH`                                                                                                           |
+| `Missing required command: jq`                                                                                                       | jq not installed                                                                                             | `apt install jq` / `brew install jq` / `nix-env -i jq`                                                                                                                              |
+| `Missing required command: gh`                                                                                                       | GitHub CLI not installed for a GitHub target                                                                 | Install from [cli.github.com](https://cli.github.com), or pass `--local` to skip remote issue output                                                                                |
+| `gh is not authenticated. Run 'gh auth login'.`                                                                                      | `gh` not authenticated, or token expired                                                                     | `gh auth login` (or `gh auth refresh` if your token is stale)                                                                                                                       |
+| `Missing required command: tea`                                                                                                      | Gitea CLI not installed for a Gitea target                                                                   | Install from [gitea.com/gitea/tea](https://gitea.com/gitea/tea), or pass `--local` to skip remote issue output                                                                      |
+| `tea is not authenticated. Run 'tea login add'.`                                                                                     | `tea` has no configured login for your Gitea account                                                         | `tea login add`                                                                                                                                                                     |
+| `fj not found — install from https://codeberg.org/forgejo-contrib/forgejo-cli`                                                       | Forgejo CLI not installed for a Forgejo or Codeberg target                                                   | Install from [forgejo-contrib/forgejo-cli](https://codeberg.org/forgejo-contrib/forgejo-cli), or pass `--local` to skip remote issue output                                         |
+| `fj is not authenticated. Run 'fj -H <host> auth login' or 'fj -H <host> auth add-key <user>'.`                                      | `fj` has no configured login for the detected Codeberg or Forgejo host                                       | Run the command shown in the error, for example `fj -H codeberg.org auth login`                                                                                                     |
+| `Forgejo fj backend requires an HTTPS or SSH origin remote so RepoLens can pass fj --host; insecure HTTP origins are not supported.` | `--forge fj` was selected, but the target repo has no secure `origin` remote to derive the Forgejo host from | Add an HTTPS or SSH `origin` remote such as `https://forge.example.com/owner/repo.git`, or use `--local`                                                                            |
+| `Missing required command: claude` (or `codex` / `opencode`)                                                                         | Agent CLI not installed                                                                                      | See [Supported Agent CLIs](#supported-agent-clis) for install + auth                                                                                                                |
+| `Missing required command: cursor-agent` (or runner not on PATH)                                                                   | Cursor CLI agent not found for `--agent cursor`                                                              | Set `CURSOR_AGENT_RUNNER_CMD`, e.g. `export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"` and ensure `cursor-agent` is on `PATH`                                      |
+| Lens hangs on `cursor` / `cursor-ide`                                                                                                | Agent does not return promptly                                                                               | Resolved timeout uses `REPOLENS_AGENT_TIMEOUT*` / mode defaults (see env table). For `cursor-ide`, complete `ide-prompt` / `ide-response` / `ide-done` files under `logs/<run-id>/`. |
+| Cursor exits with `You've hit your usage limit`                                                                                      | Cursor account has no remaining Agent capacity                                                               | Wait for quota reset or upgrade plan, then rerun with `--resume`. RepoLens may mark lenses `agent-capacity` or rate-limit-retry depending on backend.                               |
+| `--agent cursor and cursor-ide currently support only --local mode in Phase 1.`                                                      | Cursor backends used without `--local`                                                                       | Add `--local`, or use another `--agent` backend                                                                                                                                      |
+| Agent prompts for login on every iteration                                                                                           | Agent CLI not authenticated                                                                                  | Authenticate the CLI directly — see [Supported Agent CLIs](#supported-agent-clis)                                                                                                   |
+| `Invalid agent: …`                                                                                                                   | Typo in `--agent` value                                                                                      | Must be one of `claude`, `codex`, `spark`, `sparc`, `cursor`, `cursor-ide`, `opencode`, `opencode/<model> | antigravity`                                                                          |
+| `Not a git repository: …`                                                                                                            | `--project` path is not a git repo                                                                           | Use `git init`, pass a real repo path, or use `--mode deploy` (which doesn't require git)                                                                                           |
+| `--remote requires --mode deploy`                                                                                                    | `--remote` was passed outside deploy mode                                                                    | Add `--mode deploy`, or remove `--remote` for normal repository audits                                                                                                               |
+| `--remote and --hosted are mutually exclusive`                                                                                       | Remote server metadata and hosted Docker Compose scanning were requested together                            | Choose either remote deploy server metadata with `--mode deploy --remote ...` or local hosted DAST scanning with `--hosted`                                                         |
+| `--remote is incompatible with android deploy targets`                                                                               | `--remote` was combined with a direct APK, detected Android source tree, or `--deploy-target android`        | Remove `--remote`, or force server deploy with `--deploy-target server` when the path should be treated as a live-server target                                                      |
+| `Remote key file does not exist or is not a regular file: …`                                                                         | `--remote-key` points to a missing path or a directory                                                       | Pass an existing private key file path, or omit `--remote-key` to rely on default SSH key resolution                                                                                 |
+| `Cannot reach remote target … BatchMode requires no password prompt`                                                                  | SSH needs a passphrase or password but RepoLens remote preflight is non-interactive                          | `ssh-add` your key first, or pass an unlocked key with `--remote-key <path>`                                                                                                        |
+| `Cannot reach remote target … kex_exchange_identification`                                                                            | The target or network is rejecting new SSH handshakes; fail2ban or a similar protection may have tripped     | Wait 10 minutes, verify direct SSH works, then retry with lower concurrency such as `--max-issues 1` or `--parallel --max-parallel 1`                                                |
+| `[WARN] remote control socket lost; reopening`                                                                                        | The SSH ControlMaster socket was dropped or expired during a long-running lens                               | This can be expected on long-running lenses; if the run aborts, reduce concurrency and check `ServerAliveInterval` on the target's sshd and `ClientAliveInterval` on the master       |
+| `agent ran an unwrapped local command`                                                                                                | A deploy lens executed a target command without the SSH wrapper                                              | Re-run with `--max-issues 1`, watch the transcript, and consider opening an issue with the offending lens-id                                                                         |
+| `--hosted requires Docker to be installed`                                                                                           | Docker missing or daemon stopped                                                                             | Install Docker, then `sudo systemctl start docker` (or open Docker Desktop)                                                                                                         |
+| `--hosted requires a docker-compose.yml or compose.yml in the project`                                                               | No compose file at project root                                                                              | Add a compose file, or drop `--hosted` and audit statically                                                                                                                         |
+| `All discovered hosted HTTP services are unhealthy or unreachable`                                                                   | Every discovered hosted HTTP target failed its Compose health status or HTTP probe                           | Check `docker compose ps`, service logs, healthchecks, and the service root HTTP paths before spending DAST scan iterations                                                         |
+| `Lens '…' not found in domains.json`                                                                                                 | Typo in `--focus` / `--lens` lens id, or wrong mode                                                          | List available lenses: `jq -r '.domains[].lenses[]' config/domains.json`                                                                                                            |
+| `Domain '…' not found in domains.json`                                                                                               | Typo in `--domain` id, or mode mismatch                                                                      | `discover` / `deploy` / `opensource` / `content` / `greenfield` / `polish` modes only see their own domain — see the [Modes](#modes) table                                           |
+| `Mode 'custom' requires --change "your change statement"`                                                                            | `--mode custom` without a change statement                                                                   | Pass `--change "your statement"`                                                                                                                                                    |
+| `Mode 'greenfield' requires --spec <file>`                                                                                            | `--mode greenfield` without a product specification                                                          | Pass `--spec path/to/spec.md`                                                                                                                                                       |
+| `Hit safety cap (N iterations). Stopping lens.`                                                                                      | Agent never emitted `DONE` 3× in a row                                                                       | Inspect `logs/<run-id>/<domain>/<lens>.log` — usually a model output-format issue, rate limit, or context overflow. Retry with a smaller `--max-parallel` or a different `--agent`. |
+| `Agent rate-limited / quota exceeded. Aborting run.`                                                                                 | Agent hit a provider quota and RepoLens could not complete the one-shot sleep retry                          | Lens-level aborts end with `status.json.state: "rate-limit-pending"` and exit `3`; bugreport phase aborts can end as `failed` with a `rate-limited-*` stopped reason. Inspect the relevant log for the provider message, then wait for quota reset, retry with lower `--max-parallel`, rerun with `--resume <run-id>`, or raise `REPOLENS_RATE_LIMIT_MAX_SLEEP` before starting a new run. |
+| `No-progress circuit breaker tripped`                                                                                                | The agent repeatedly exited non-zero or produced near-empty output without `DONE`, issue URLs, or local findings | Inspect the lens log for provider outages, auth failures, crashed agent CLIs, or unexpected empty output. Fix the agent/backend issue, then rerun with `--resume <run-id>`. Tune `REPOLENS_NO_PROGRESS_LIMIT` or `REPOLENS_NO_PROGRESS_MIN_BYTES` only for agents that are expected to be unusually terse. |
+| `Run health: BROKEN`                                                                                                                  | The run created zero findings and at least `REPOLENS_DEGENERATE_THRESHOLD` percent of run lenses stopped at `max-iterations` | Inspect the affected lens logs for agents that repeatedly missed the required `DONE` streak. Retry with a smaller scope or different agent, lower concurrency if provider instability is suspected, or set `REPOLENS_ALLOW_DEGENERATE=true` only when CI should accept this known-broken result while preserving `summary.health="broken"`. |
+| `Pricing data is N days old — estimates may be inaccurate`                                                                           | `config/agent-pricing.json` has not been refreshed in over 60 days                                           | Update the pricing file with current model prices from your AI provider's pricing page, and set the top-level `updated_at` field to today's date                                    |
+| `Running non-interactively without --yes flag.`                                                                                      | CI / non-TTY without confirmation                                                                            | Pass `--yes` (read [Security & Safe Use](#security--safe-use) first)                                                                                                                |
+
+**Still stuck?** Check `logs/<run-id>/` — every lens writes its full agent transcript there, including the prompt sent and the raw output received. The run id is printed at startup. To list past runs: `ls -1 logs/`.
+
+## Support
+
+RepoLens is free, open source, and maintained on a best-effort basis. **We do not offer free user support.** Please do not open GitHub issues asking for help with installation, environment setup, or general usage — the [Troubleshooting](#troubleshooting) section above covers the predictable failures, and `logs/<run-id>/` covers the rest.
+
+**Bug reports** (with reproduction steps) and **well-scoped feature requests** are welcome via [GitHub Issues](https://github.com/TheMorpheus407/RepoLens/issues).
+
+**Commercial / paid support** for companies — installation help, custom lens development, integration consulting, prioritized fixes — is available. Email [hallo@bootstrap.academy](mailto:hallo@bootstrap.academy).
+
+Supported by [Patreon patrons](https://patreon.com/themorpheus) — thank you.

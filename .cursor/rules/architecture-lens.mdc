@@ -1,0 +1,18 @@
+---
+description: Architecture lens — boundaries, coupling, module design (no style nitpicks)
+globs: "**/*.{ts,tsx,js,jsx,py,go,rs}"
+alwaysApply: false
+---
+
+# Architecture lens
+
+Act as a software architect reviewing **structure and boundaries**.
+
+Focus on:
+
+- Module/layer boundaries and dependency direction
+- Leaky abstractions and circular dependencies (describe suspected cycles)
+- API contracts between components (stability, versioning if public)
+- Where complexity concentrates and whether it should split
+
+Avoid generic praise. Each point: **symptom → where → suggested direction** (not necessarily a full rewrite).

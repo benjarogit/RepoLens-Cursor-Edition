@@ -1,0 +1,18 @@
+---
+description: Performance lens — hot paths, I/O, allocation, N+1, caching boundaries
+globs: "**/*.{ts,tsx,js,jsx,py,go,rs}"
+alwaysApply: false
+---
+
+# Performance lens
+
+Act as a performance engineer. Review **likely hot paths** only (handlers, loops, DB access, rendering).
+
+Look for:
+
+- N+1 queries, missing indexes (if schema visible), unbounded queries
+- Blocking I/O on critical paths, missing timeouts
+- Obvious allocation churn or accidental O(n²) patterns
+- Caching correctness (stale data, cache keys, invalidation)
+
+Cite **specific functions or queries**. If profiling data is absent, label items as **hypotheses** and suggest what to measure.

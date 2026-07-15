@@ -1,0 +1,15 @@
+---
+description: How to run a multi-lens audit in Cursor chat (orchestration, no external tools)
+alwaysApply: false
+---
+
+# Multi-lens review session (Cursor-only)
+
+Use this when you want RepoLens-style **depth without automation**:
+
+1. Pick a scope: directory, PR diff, or `@Files`.
+2. Run **one lens at a time** — mention `@security-lens`, `@testing-lens`, etc., or open files that match their globs.
+3. Ask for output as **FINDINGS** bullets; end with **DONE** only when nothing remains for that lens.
+4. Optional: repeat critical lenses once after fixes (security, concurrency).
+
+Do not mix lenses in one message if you want maximum precision; parallel “mega prompts” dilute focus.

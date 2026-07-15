@@ -1,0 +1,32 @@
+---
+description: RepoLens nur mit --agent cursor-ide — niemals claude/codex/opencode/cursor-CLI
+alwaysApply: true
+---
+
+# RepoLens-Agent: nur cursor-ide
+
+Diese **RepoLens Cursor Edition**-Fork ist **ausschließlich** auf Cursor-IDE-Handoff ausgelegt.
+
+## Pflicht
+
+Jede `repolens.sh`-Invocation hier:
+
+```bash
+--agent cursor-ide --local
+```
+
+plus üblicherweise `REPOLENS_IDE_AUTONOMOUS=1` und `--yes`.
+
+## Verboten (ohne explizite Nutzer-Ausnahme)
+
+- `--agent claude` / `codex` / `spark` / `sparc` / `opencode` / `opencode/…`
+- `--agent cursor` (CLI-Subprozess) — Login/Binary-Probleme, nicht unser Pfad
+- „Fallback“ auf fremde CLIs, weil „schneller“ oder „ohne Handoff“
+
+## Warum
+
+Andere Agenten brauchen externe Auth (`claude /login`, Codex-Keys, …) und umgehen das IDE-Handoff-Protokoll (`REPOLENS_CTL` → prompt/response/done). Das führt zu `agent-error` / „Not logged in“ und bricht den vorgesehenen Chat-Workflow.
+
+## Handoff
+
+Siehe Rule `repolens-ide-handoff` und Skill `audit-pipeline`.

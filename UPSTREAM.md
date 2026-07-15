@@ -1,72 +1,43 @@
-# RepoLens upstream sync (CSRetro vendored fork)
+# Upstream sync (RepoLens Cursor Edition)
 
-The tree `maintainers/RepoLens/` is a **vendored fork** of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) with CSRetro-specific integrations (Cursor `cursor-ide`, `repolens_until_done.sh`, `tools.sh` entry points, log hygiene). It is **not** a git submodule.
+This repository is a **standalone fork** of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) with Cursor IDE handoff (`cursor-ide`), local-first defaults, and helper scripts (`repolens_until_done.sh`, `repolens_agent_or_ide.sh`).
 
-**Standalone GitHub fork (visibility / issues / PRs):** [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition) — default branch `master`. **Source of truth for day-to-day work** is still this path inside **csretro**; publish to the GitHub fork after upstream merges or when you want a public mirror.
+GitHub: [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition) (`master`).
 
-### Publish csretro → RepoLens-Cursor-Edition (repeatable)
-
-From a temp clone (SSH example):
+## Remotes (typical)
 
 ```bash
-git clone git@github.com:benjarogit/RepoLens-Cursor-Edition.git /tmp/repolens-fork
-cd /tmp/repolens-fork
-git remote add upstream https://github.com/TheMorpheus407/RepoLens.git   # once
-git fetch upstream master
-git merge upstream/master -m "Merge upstream RepoLens master"
-rsync -a --delete --exclude '.git/' /path/to/csretro/maintainers/RepoLens/ /tmp/repolens-fork/
-git add -A && git commit -m "sync(csretro): vendor snapshot after upstream merge" && git push origin master
+git remote -v
+# origin / fork  →  benjarogit/RepoLens-Cursor-Edition
+# origin upstream remote often named:
+# origin  → TheMorpheus407/RepoLens   (fetch upstream)
+# fork    → benjarogit/RepoLens-Cursor-Edition
 ```
-
-Resolve merge conflicts if upstream touched the same files as the Cursor edition; then run `rsync` so the tree matches `maintainers/RepoLens/`.
-
-## Baseline revision
-
-After each successful merge from upstream, update [`UPSTREAM_REVISION`](UPSTREAM_REVISION) with the upstream commit you consolidated against.
-
-## One-time: add a remote (in the CSRetro clone)
 
 ```bash
-cd /path/to/csretro
-git remote add repolens-upstream https://github.com/TheMorpheus407/RepoLens.git
-git fetch repolens-upstream
+git fetch origin master   # upstream, if origin points there
+git log -1 --oneline origin/master
+cat UPSTREAM_REVISION
 ```
 
-## Check for new upstream commits
+## Merge workflow
 
-```bash
-git fetch repolens-upstream
-git log -1 --oneline repolens-upstream/master
-# or repolens-upstream/main depending on default branch
-```
+1. Clean working tree (commit or stash).
+2. `git merge origin/master` (or `upstream/master`).
+3. Resolve conflicts: prefer **upstream** for neutral tooling (lenses, ledger, triage, tests); prefer **fork** for Cursor handoff (`lib/cursor_runner.sh`, `cursor-ide` branches in `repolens.sh` / `lib/core.sh`).
+4. `bash -n repolens.sh lib/core.sh lib/summary.sh lib/cursor_runner.sh`
+5. Update [`UPSTREAM_REVISION`](UPSTREAM_REVISION) to the upstream SHA you merged.
+6. Smoke: `./repolens.sh --help` and a narrow `--domain security --local --dry-run` if available.
 
-Compare against the SHA in `UPSTREAM_REVISION`.
+### Fork-specific paths (review carefully)
 
-## Consolidate changes (recommended workflow)
+| Area | Paths |
+|------|--------|
+| Cursor IDE / CTL | `repolens.sh`, `lib/cursor_runner.sh`, `lib/core.sh`, `lib/summary.sh` |
+| Resume wrappers | `repolens_until_done.sh`, `repolens_agent_or_ide.sh` |
+| Cursor rules / skill | `.cursor/rules/`, `.cursor/skills/audit-pipeline/` |
+| Docs / branding | `README.md`, `README.de.md`, `docs/`, this file |
 
-1. **Shallow clone upstream** to a temp directory (or use `git worktree`).
-2. **Diff** against `maintainers/RepoLens/` — focus on upstream changes you want (lenses, `lib/*.sh`, `config/`, prompts).
-3. **Re-apply** or **cherry-pick** behaviour; **do not** blindly overwrite CSRetro edits listed below.
-4. Run **`make check`** or **`bash tests/run-all.sh`** inside `maintainers/RepoLens/` if you touched shell logic.
-5. From CSRetro root: **`./tools.sh repolens --domain security --dry-run`** (or a narrow `--focus`) to sanity-check wiring.
-6. Commit with a clear message, e.g. `maintainers(repolens): sync upstream to <short-sha>`.
-7. Update **`UPSTREAM_REVISION`** to the upstream commit you merged.
+## Publish
 
-### Files to treat as fork-specific (review carefully on each sync)
-
-| Area | Paths (typical) |
-|------|-----------------|
-| Cursor IDE / CTL | `repolens.sh`, `lib/cursor_runner.sh`, `lib/core.sh`, `lib/streak.sh`, `lib/summary.sh` (as touched by fork) |
-| Auto-resume wrapper | `repolens_until_done.sh` |
-| Docs / branding | `README.md` (Cursor Local Edition / csretro blocks), this `UPSTREAM.md`, `UPSTREAM_REVISION` |
-| Consumer integration | CSRetro [`tools.sh`](../../tools.sh), [`tools/lib/repolens_logs_prune.sh`](../../tools/lib/repolens_logs_prune.sh), [`.cursor/rules/repolens-ide-handoff.mdc`](../../.cursor/rules/repolens-ide-handoff.mdc), [`.vscode/tasks.json`](../../.vscode/tasks.json) |
-
-Upstream may rename files; after a large upstream jump, re-diff the whole tree.
-
-## Conflicts
-
-Prefer **upstream behaviour** for neutral tooling (lenses, prompts, domain config), and **preserve** CSRetro-only paths (Cursor handoff protocol, `repolens_until_done`, log pruning hooks). When in doubt, keep upstream logic and re-layer the fork’s small patches in a follow-up commit.
-
-## Publishing
-
-Push consolidated changes on your usual CSRetro branch. Optionally maintain a **separate GitHub fork** of RepoLens for visibility; the **source of truth** for CSRetro remains this monorepo path.
+Push to `fork` / `benjarogit/RepoLens-Cursor-Edition` after merge and docs updates. Do not add Cursor co-author trailers to commits.

@@ -1,0 +1,30 @@
+---
+description: RepoLens cursor-ide Handoff — auf REPOLENS_CTL reagieren und Lens-Prompts ausführen
+alwaysApply: true
+---
+
+# RepoLens IDE-Handoff
+
+**Agent-Policy:** Nur `--agent cursor-ide` (siehe Rule `repolens-agent-cursor-ide-only`). Keine Claude-/Codex-/OpenCode-CLIs.
+
+Wenn `repolens.sh` mit `--agent cursor-ide` läuft oder `REPOLENS_CTL` / `ide-prompt-iter-*.md` / `repolens-ctl.ndjson` sichtbar ist:
+
+## Pro Handoff (ohne Nachfrage)
+
+1. CTL-Event lesen: stderr-Zeile `REPOLENS_CTL {…}` oder Append in `logs/<run-id>/repolens-ctl.ndjson` (`kind: ide_handoff`)
+2. `files.prompt` öffnen und Lens ausführen (Projekt-Kontext)
+3. Volle Antwort nach `files.response` schreiben (≥ `REPOLENS_IDE_MIN_RESPONSE_BYTES`, Default 400)
+4. `touch files.done` (Pfad aus dem CTL-JSON)
+
+## Antwort-Qualität
+
+- Mindestens ~400 Bytes, echte Findings oder `DONE` wenn nichts zu melden
+- Keine Stub-Texte („Automatischer Durchlauf“, leere Platzhalter)
+- Pro Finding: Pfad, Severity, ein Satz Exploit, Fix
+
+## Bei Stall
+
+- `logs/<run-id>/summary.json` prüfen
+- Fortsetzen: `./repolens.sh --resume <run-id> --project <pfad> --agent cursor-ide --local --yes`
+
+Für die volle Pipeline (Struktur-Audit zuerst): Skill `audit-pipeline` in `.cursor/skills/audit-pipeline/`.

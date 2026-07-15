@@ -1,0 +1,19 @@
+---
+description: Quick security triage for AI-assisted / MVP codebases (~2h scope, not full RepoLens audit)
+alwaysApply: false
+---
+
+# Vibe-coded security triage
+
+Use for fast-moving or AI-built apps when you want **low-hanging fruit**, not a full multi-lens audit. Run sections in order; skip what does not apply.
+
+1. **Secrets** — `.env` in git, API keys in frontend bundles, Supabase/Firebase service keys client-side, tutorial credentials still working.
+2. **Auth** — `userId`/`role` from query/body; admin routes without server checks; JWT without expiry/verify; insecure cookies.
+3. **Data access** — `{id}` routes without ownership; list endpoints not scoped to current user; GraphQL without tenant filter.
+4. **Test vs prod** — debug flags, test accounts, `X-Test-Auth` bypasses, shared DB, verbose errors in production.
+5. **Uploads** — no type/size limits; original filenames; executable storage paths.
+6. **Dependencies** — `npm audit` / `pip-audit` level issues; ancient auth/crypto libs.
+7. **Hygiene** — CORS `*` + credentials, missing rate limits on login, no CSRF on state changes.
+8. **Injection** — SQL string concat, `innerHTML`/`dangerouslySetInnerHTML`, `eval`/`exec`, LLM output in queries/shell.
+
+Output **FINDINGS** bullets with severity, path, one-line exploit, fix. End with **DONE** when the triage pass is complete.

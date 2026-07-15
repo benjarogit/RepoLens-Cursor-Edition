@@ -20,6 +20,7 @@ Willkommen bei der Doku zu **RepoLens Cursor Edition**. Navigation über die Sid
 | Doc | Wann |
 |-----|------|
 | [Upstream-Sync](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
+| [Releases](releasing.md) | Cursor-Edition GitHub Release aus dem CHANGELOG |
 | [Changelog](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md) | Änderungen in Cursor Edition / Upstream |
 | [Methodik](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/METHODOLOGY.md) | Lens-Design (fortgeschritten, EN) |
 | [Contributing](https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CONTRIBUTING.md) | Lenses / Pull Requests (EN) |

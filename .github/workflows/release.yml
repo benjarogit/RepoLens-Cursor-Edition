@@ -1,0 +1,126 @@
+name: release
+
+# Creates a GitHub Release from CHANGELOG.md for Cursor Edition tags.
+# Changelog stays human-written; this workflow only packages it.
+#
+# Tag push:
+#   git tag cursor-edition-YYYY.MM.DD && git push fork cursor-edition-YYYY.MM.DD
+#
+# Or Actions → release → Run workflow (date = YYYY.MM.DD).
+
+on:
+  push:
+    tags:
+      - "cursor-edition-*"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Release date as YYYY.MM.DD (creates tag cursor-edition-YYYY.MM.DD if missing)"
+        required: true
+        type: string
+      dry_run:
+        description: "Print notes only; do not create tag/release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: meta
+        env:
+          INPUT_DATE: ${{ inputs.date }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            date="$INPUT_DATE"
+          else
+            date="${REF_NAME#cursor-edition-}"
+          fi
+          if [[ ! "$date" =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]]; then
+            echo "Invalid date/tag fragment: $date (want YYYY.MM.DD)" >&2
+            exit 1
+          fi
+          tag="cursor-edition-${date}"
+          title="Cursor Edition ${date}"
+          echo "date=$date" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog notes
+        id: notes
+        env:
+          DATE: ${{ steps.meta.outputs.date }}
+        run: |
+          set -euo pipefail
+          chmod +x ci/extract-changelog-section.sh
+          ci/extract-changelog-section.sh "$DATE" CHANGELOG.md > release-notes.md
+          {
+            echo "## Docs"
+            echo
+            echo "- Site: https://benjarogit.github.io/RepoLens-Cursor-Edition/"
+            echo "- Changelog: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md"
+            echo
+            echo "---"
+            echo
+            cat release-notes.md
+          } > release-body.md
+          echo "----- release body preview -----"
+          cat release-body.md
+
+      - name: Create tag if missing (dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run != true }}
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists."
+          else
+            git config user.name "benjarogit"
+            git config user.email "benjarogit@users.noreply.github.com"
+            git tag -a "$TAG" -m "$TITLE"
+            git push origin "refs/tags/$TAG"
+            echo "Created and pushed $TAG"
+          fi
+
+      - name: Publish GitHub Release
+        if: ${{ github.event_name == 'push' || inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-body.md
+            echo "Updated existing release $TAG"
+          else
+            gh release create "$TAG" --title "$TITLE" --notes-file release-body.md --latest
+            echo "Created release $TAG"
+          fi
+
+      - name: Dry-run summary
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          echo "Dry run only — no tag/release created for $TAG"
+          echo "Notes length: $(wc -c < release-body.md) bytes"

@@ -81,6 +81,7 @@ plugins:
             Toolgate tools: Toolgate-Tools
             CLI & modes: CLI & Modes
             Finding registry: Finding-Registry
+            Releasing: Releases
             Upstream sync: Upstream-Sync
             Changelog: Changelog
             Methodology: Methodik
@@ -96,6 +97,7 @@ nav:
       - CLI & modes: full-reference.md
       - Finding registry: finding-registry-schema.md
   - Project:
+      - Releasing: releasing.md
       - Upstream sync: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/UPSTREAM.md
       - Changelog: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md
       - Methodology: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/METHODOLOGY.md

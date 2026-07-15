@@ -37,6 +37,7 @@ Highlights from TheMorpheus407/RepoLens (see `[Unreleased]` and linked issues fo
 ### Changed
 
 - Publish docs with **MkDocs Material** on GitHub Pages (`https://benjarogit.github.io/RepoLens-Cursor-Edition/`); README EN/DE shortened to entry + dominant docs CTA
+- Add **release** workflow: GitHub Releases from dated `CHANGELOG` sections (`cursor-edition-YYYY.MM.DD`), with `ci/extract-changelog-section.sh` and releasing docs (EN/DE)
 - Documentation refresh for Cursor Edition: docs index (EN/DE), simpler operator/handoff guides, full-reference preamble without csretro paths, accurate soft domain/lens counts pointing at `config/domains.json`
 
 ### Fixed

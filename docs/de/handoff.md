@@ -1,6 +1,9 @@
 # IDE-Handoff-Protokoll
 
-**Navigation:** [README.de](../../README.de.md) · [Operator](operator.md) · [English](../en/handoff.md)
+<p align="right">
+  <a href="../en/handoff.md">English</a> · <strong>Deutsch</strong>
+  · <a href="../../README.de.md">README</a>
+</p>
 
 Mit `--agent cursor-ide` startet RepoLens keinen externen Agent-CLI. Es wartet, bis der Cursor-Chat-Agent jede Lens-Iteration über Dateien abschließt.
 
@@ -40,3 +43,5 @@ repolens.sh  →  schreibt Prompt  →  REPOLENS_CTL (stderr + ndjson)
 ```bash
 ./repolens.sh --resume <run-id> --project <pfad> --agent cursor-ide --local --yes
 ```
+
+Siehe auch: [Operator-Hinweise](operator.md)

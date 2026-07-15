@@ -1,17 +1,42 @@
-# RepoLens Cursor Edition
+<p align="center">
+  <strong>RepoLens</strong><br/>
+  <sub>Cursor Edition</sub>
+</p>
 
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Upstream](https://img.shields.io/badge/upstream-TheMorpheus407%2FRepoLens-informational)](https://github.com/TheMorpheus407/RepoLens)
-[![Fork](https://img.shields.io/badge/fork-Cursor%20Edition-blue)](https://github.com/benjarogit/RepoLens-Cursor-Edition)
+<p align="center">
+  Multi-Lens-Audits in der <strong>Cursor IDE</strong> — lokale Findings, ohne fremde Agent-CLIs.
+</p>
 
-**Navigation:** [Start](#30-sekunden-start) · [Agent-Policy](#agent-policy) · [Handoff](#ide-handoff) · [Resume](#resume) · [Doku](#dokumentation) · [English](README.md)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Lizenz" /></a>
+  <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
+  <a href="UPSTREAM_REVISION"><img src="https://img.shields.io/badge/sync-tracked-brightgreen" alt="Upstream-Sync" /></a>
+</p>
 
-Multi-Lens-Code-Audit, ausgelegt auf die **Cursor IDE**. Dieser Fork führt Spezial-Lenses gegen ein Git-Repo aus und schreibt Findings als lokales Markdown — gesteuert über Composer/Agent und das IDE-Handoff-Protokoll (`REPOLENS_CTL`).
+<!-- README-I18N:START -->
+<p align="center">
+  <a href="README.md">English</a> · <strong>Deutsch</strong>
+</p>
+<!-- README-I18N:END -->
+
+---
+
+## Was das ist
+
+Fork von [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens), verdrahtet für **Cursor Composer/Agent**:
+
+| | |
+|---|---|
+| **Agent** | nur `--agent cursor-ide` (vorgesehener Pfad) |
+| **Output** | Markdown unter `logs/<run-id>/` (`--local`) |
+| **Schleife** | IDE-Handoff über `REPOLENS_CTL` → Prompt → Antwort → Done |
+
+Upstream kennt weiterhin Claude, Codex & Co. Diese Edition nutzt die nicht als Default.
 
 > [!IMPORTANT]
-> RepoLens gibt KI-Agenten Shell-Zugriff auf dein Projekt. Ein voller Audit kann viel Zeit (und mit bezahlten CLIs Geld) kosten. **In diesem Fork immer `--local` nutzen.** Vor dem ersten Lauf die [Warnungen](#warnungen) lesen.
+> Agenten bekommen Shell-Zugriff auf dein Projekt. Zuerst eine Domain (`--domain security`), nicht gleich den vollen Audit. Immer `--local`.
 
-## 30-Sekunden-Start
+## Schnellstart
 
 ```bash
 git clone https://github.com/benjarogit/RepoLens-Cursor-Edition.git
@@ -27,67 +52,55 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --yes
 ```
 
-Cursor-Chat in diesem Workspace offen lassen. Bei `REPOLENS_CTL {…}` im Terminal: Agent liest `files.prompt`, schreibt `files.response`, `touch` auf `files.done`.
+Cursor-Chat auf diesem Repo offen lassen. Bei `REPOLENS_CTL` im Terminal:
 
-## Agent-Policy
+1. `files.prompt` lesen
+2. volle Antwort nach `files.response` schreiben
+3. `files.done` per `touch` setzen
 
-| Nutzen | Nicht nutzen (ohne explizite Ausnahme) |
-|--------|----------------------------------------|
-| `--agent cursor-ide --local` | `claude`, `codex`, `opencode`, `antigravity`, `cursor` (CLI) |
+Details: [docs/de/handoff.md](docs/de/handoff.md)
 
-Mitgelieferte Rules:
+## Zusammenspiel
 
-- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc)
-- [`.cursor/rules/repolens-ide-handoff.mdc`](.cursor/rules/repolens-ide-handoff.mdc)
-- Skill: [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) (Struktur-Audit → RepoLens)
+```
+repolens.sh ──► ide-prompt ──► Cursor Agent ──► ide-response ──► touch done
+                    ▲                                    │
+                    └──────── REPOLENS_CTL (stderr) ─────┘
+```
 
-## IDE-Handoff
+Mitgelieferte Cursor-Hilfen:
 
-1. RepoLens schreibt `ide-prompt-iter-N.md` unter `logs/<run-id>/…`
-2. Agent führt die Lens aus und speichert die volle Antwort in `ide-response-iter-N.txt` (≥ ~400 Bytes, keine Stubs)
-3. Agent erzeugt `ide-done-iter-N` (`touch`)
-4. Skript macht mit der nächsten Lens / Iteration weiter
-
-Maschinenprotokoll: stderr-Zeilen `REPOLENS_CTL {…json…}` und Append in `logs/<run-id>/repolens-ctl.ndjson` (`kind: "ide_handoff"`). Details: [docs/de/handoff.md](docs/de/handoff.md).
+- [`.cursor/rules/repolens-agent-cursor-ide-only.mdc`](.cursor/rules/repolens-agent-cursor-ide-only.mdc) — Agent-Policy
+- [`.cursor/rules/repolens-ide-handoff.mdc`](.cursor/rules/repolens-ide-handoff.mdc) — Handoff-Schleife
+- [`.cursor/skills/audit-pipeline/SKILL.md`](.cursor/skills/audit-pipeline/SKILL.md) — Struktur-Audit → RepoLens
 
 ## Resume
 
-Unterbrochene oder rate-limitierte Läufe:
-
 ```bash
-./repolens.sh --resume <run-id> --project /pfad/zum/projekt --agent cursor-ide --local --yes
-# oder automatisch den letzten unterbrochenen Run:
-./repolens.sh --resume --project /pfad/zum/projekt --agent cursor-ide --local --yes
+./repolens.sh --resume <run-id> \
+  --project /pfad/zum/projekt \
+  --agent cursor-ide --local --yes
+
+# letzter unterbrochener Run:
+./repolens.sh --resume \
+  --project /pfad/zum/projekt \
+  --agent cursor-ide --local --yes
 ```
 
-Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`.
+Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 
 ## Dokumentation
 
-| Doc | Inhalt |
-|-----|--------|
-| [README.md](README.md) | English landing page |
-| [docs/de/handoff.md](docs/de/handoff.md) | IDE-Handoff-Protokoll |
-| [docs/en/handoff.md](docs/en/handoff.md) | Handoff (English) |
-| [docs/de/operator.md](docs/de/operator.md) | Operator-Hinweise (Resume, Quota, Triage) |
-| [docs/en/operator.md](docs/en/operator.md) | Operator notes |
-| [UPSTREAM.md](UPSTREAM.md) | Sync mit TheMorpheus407/RepoLens |
-| [docs/en/full-reference.md](docs/en/full-reference.md) | Volle CLI-/Modes-/Domains-Referenz |
-| [METHODOLOGY.md](METHODOLOGY.md) | Methodik |
+| | |
+|---|---|
+| [Handoff-Protokoll](docs/de/handoff.md) | Dateivertrag & Env-Vars |
+| [Operator-Hinweise](docs/de/operator.md) | Erste Läufe, Quota, Triage |
+| [CLI-Referenz](docs/en/full-reference.md) | Modes, Flags, Domains (EN) |
+| [Upstream-Sync](UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
+| [Methodik](METHODOLOGY.md) | Lens-Design |
 
-## Upstream
-
-Upstream: [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens).  
-Pin: [`UPSTREAM_REVISION`](UPSTREAM_REVISION). Sync: [`UPSTREAM.md`](UPSTREAM.md).
-
-Diese Edition hält Cursor-IDE-Handoff und Local-First fest; Upstream-Features (Ledger, Triage, Resume, Perf-Schätzungen, …) werden regelmäßig gemerged.
-
-## Warnungen
-
-- **Nicht sandboxed** — Agenten können Shell-Befehle im Projekt ausführen
-- **Kosten / Zeit** — zuerst `--domain security` oder `--focus <lens>`; volles `--mode audit` ist lang
-- **Keine Gewähr** — Apache-2.0; Nutzung der Findings liegt bei dir
+Englische Varianten unter [`docs/en/`](docs/en/).
 
 ## Lizenz
 
-Apache-2.0 — siehe [LICENSE](LICENSE). Upstream-Copyright Bootstrap Academy / TheMorpheus407; Cursor-Edition-Erweiterungen unter denselben Bedingungen, soweit anwendbar.
+[Apache-2.0](LICENSE). Upstream © Bootstrap Academy / TheMorpheus407; Cursor-Edition unter denselben Bedingungen, soweit anwendbar.

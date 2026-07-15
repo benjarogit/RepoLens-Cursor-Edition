@@ -1,6 +1,9 @@
 # Operator-Hinweise
 
-**Navigation:** [README.de](../../README.de.md) · [Handoff](handoff.md) · [English](../en/operator.md)
+<p align="right">
+  <a href="../en/operator.md">English</a> · <strong>Deutsch</strong>
+  · <a href="../../README.de.md">README</a>
+</p>
 
 ## Empfohlene erste Läufe
 
@@ -26,8 +29,10 @@ Cursor-Limits können eine Lens pausieren. Lieber denselben `run-id` mit `--resu
 
 ## Audit-Pipeline
 
-Im Cursor-Chat mit diesem Repo: Skill [`.cursor/skills/audit-pipeline/SKILL.md`](../../.cursor/skills/audit-pipeline/SKILL.md) — zuerst Struktur-Audit, dann RepoLens.
+Im Cursor-Chat mit diesem Repo: [`.cursor/skills/audit-pipeline/SKILL.md`](../../.cursor/skills/audit-pipeline/SKILL.md) — zuerst Struktur-Audit, dann RepoLens.
 
 ## Vendor-/Dependency-Forks
 
 Volle Multi-Lens-Audits von Interpreter- oder Library-Mirrors (z. B. vendored `php-src`, `htmlpurifier`) lohnen sich selten. Besser die **Anwendung** auditieren, die sie nutzt — oder schmal das **Delta zum Upstream-Parent**, wenn ihr einen Patch-Fork pflegt.
+
+Siehe auch: [Handoff-Protokoll](handoff.md)

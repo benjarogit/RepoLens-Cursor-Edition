@@ -1,8 +1,11 @@
 # IDE handoff protocol
 
-**Navigation:** [README](../../README.md) · [Operator](operator.md) · [Deutsch](../de/handoff.md)
+<p align="right">
+  <strong>English</strong> · <a href="../de/handoff.md">Deutsch</a>
+  · <a href="../../README.md">README</a>
+</p>
 
-When `--agent cursor-ide` is set, RepoLens does not spawn an external agent CLI. It waits for the Cursor chat agent to complete each lens iteration via files.
+When `--agent cursor-ide` is set, RepoLens does not spawn an external agent CLI. It waits for the Cursor chat agent to finish each lens iteration via files.
 
 ## Flow
 
@@ -40,3 +43,5 @@ Check `logs/<run-id>/summary.json`, then:
 ```bash
 ./repolens.sh --resume <run-id> --project <path> --agent cursor-ide --local --yes
 ```
+
+See also: [Operator notes](operator.md)

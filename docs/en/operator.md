@@ -1,6 +1,9 @@
 # Operator notes
 
-**Navigation:** [README](../../README.md) · [Handoff](handoff.md) · [Deutsch](../de/operator.md)
+<p align="right">
+  <strong>English</strong> · <a href="../de/operator.md">Deutsch</a>
+  · <a href="../../README.md">README</a>
+</p>
 
 ## Recommended first runs
 
@@ -26,8 +29,10 @@ Cursor usage limits may pause a lens. Prefer `--resume` on the same `run-id` ins
 
 ## Audit pipeline
 
-From Cursor chat with this repo open, use the skill [`.cursor/skills/audit-pipeline/SKILL.md`](../../.cursor/skills/audit-pipeline/SKILL.md): Struktur-Audit first, then RepoLens.
+From Cursor chat with this repo open, use [`.cursor/skills/audit-pipeline/SKILL.md`](../../.cursor/skills/audit-pipeline/SKILL.md): structure audit first, then RepoLens.
 
 ## Vendor / dependency forks
 
 Full multi-lens audits of interpreter or library mirrors (e.g. vendored `php-src`, `htmlpurifier`) are usually poor ROI. Prefer auditing the **application** that consumes them, or a narrow **delta vs upstream parent** when you maintain a patched fork.
+
+See also: [Handoff protocol](handoff.md)

@@ -9,7 +9,10 @@ So schneidest du ein **RepoLens Cursor Edition**-Release, ohne Changelog-Text zu
    `## [Cursor Edition YYYY.MM.DD] - YYYY-MM-DD`
 3. Nach `master` committen, dann Release erzeugen.
 
-Die GitHub Action **erfindet keine** Einträge aus Commits. Sie packt nur den Abschnitt, den du geschrieben hast.
+Die GitHub Action **erfindet keine** Changelog-Bullets aus Commits. Sie packt den Abschnitt, den du geschrieben hast, und **hängt an**:
+
+- einen **Compare-Link** zum vorherigen `cursor-edition-*`-Tag
+- eine kurze **Commit-Liste** (verlinkte SHAs; volle Range auf GitHub, wenn es viele sind)
 
 ## Option A — Tag pushen
 
@@ -33,8 +36,7 @@ Fehlt der Tag, erzeugt der Workflow `cursor-edition-YYYY.MM.DD` auf dem aktuelle
 
 ```bash
 ./ci/extract-changelog-section.sh 2026.07.15
-# oder:
-./ci/extract-changelog-section.sh cursor-edition-2026.07.15
+./ci/release-commit-range.sh cursor-edition-2026.07.15
 ```
 
 ## Docs-Site

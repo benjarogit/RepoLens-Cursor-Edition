@@ -67,19 +67,26 @@ jobs:
         id: notes
         env:
           DATE: ${{ steps.meta.outputs.date }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          REPO_URL: https://github.com/${{ github.repository }}
         run: |
           set -euo pipefail
-          chmod +x ci/extract-changelog-section.sh
+          chmod +x ci/extract-changelog-section.sh ci/release-commit-range.sh
           ci/extract-changelog-section.sh "$DATE" CHANGELOG.md > release-notes.md
+          ci/release-commit-range.sh "$TAG" > release-commits.md
           {
             echo "## Docs"
             echo
             echo "- Site: https://benjarogit.github.io/RepoLens-Cursor-Edition/"
-            echo "- Changelog: https://github.com/benjarogit/RepoLens-Cursor-Edition/blob/master/CHANGELOG.md"
+            echo "- Changelog: ${REPO_URL}/blob/master/CHANGELOG.md"
             echo
             echo "---"
             echo
             cat release-notes.md
+            echo
+            echo "---"
+            echo
+            cat release-commits.md
           } > release-body.md
           echo "----- release body preview -----"
           cat release-body.md

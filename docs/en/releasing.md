@@ -9,7 +9,10 @@ How to cut a **RepoLens Cursor Edition** release without inventing changelog tex
    `## [Cursor Edition YYYY.MM.DD] - YYYY-MM-DD`
 3. Commit that change to `master`, then create the release.
 
-The GitHub Action **does not** invent entries from commits. It only packages the section you wrote.
+The GitHub Action **does not** invent changelog bullets from commits. It packages the section you wrote and **appends**:
+
+- a **compare link** to the previous `cursor-edition-*` tag
+- a short **commit list** (linked SHAs; full range on GitHub if there are many)
 
 ## Option A — tag push
 
@@ -33,8 +36,7 @@ If the tag is missing, the workflow creates `cursor-edition-YYYY.MM.DD` on the c
 
 ```bash
 ./ci/extract-changelog-section.sh 2026.07.15
-# or:
-./ci/extract-changelog-section.sh cursor-edition-2026.07.15
+./ci/release-commit-range.sh cursor-edition-2026.07.15
 ```
 
 ## Docs site

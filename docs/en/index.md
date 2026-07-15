@@ -6,9 +6,13 @@ hide:
   - toc
 ---
 
-# RepoLens Cursor Edition
-
-Multi-lens code audits **inside Cursor IDE** — findings as local files, without a separate agent CLI.
+<div class="rl-hero" markdown="0">
+  <img class="rl-hero__logo" src="assets/logo-light.png" alt="" width="72" height="72" />
+  <div class="rl-hero__copy">
+    <h1>RepoLens Cursor Edition</h1>
+    <p>Multi-lens code audits <strong>inside Cursor IDE</strong> — findings as local files, without a separate agent CLI.</p>
+  </div>
+</div>
 
 Start here, then dig into reference when you need flags and schemas.
 
@@ -18,7 +22,7 @@ Start here, then dig into reference when you need flags and schemas.
 
     ---
 
-    First runs, findings layout, resume, and useful domains.
+    First runs, full audits, findings, resume, and domains.
 
     [:octicons-arrow-right-24: Open guide](operator.md)
 
@@ -48,7 +52,9 @@ Start here, then dig into reference when you need flags and schemas.
 
 </div>
 
-## One command
+## Commands
+
+**Small start** (one domain):
 
 ```bash
 export REPOLENS_IDE_AUTONOMOUS=1
@@ -56,6 +62,17 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --project /path/to/repo \
   --agent cursor-ide --local --domain security --yes
 ```
+
+**Full audit** (all default audit domains — long run):
+
+```bash
+export REPOLENS_IDE_AUTONOMOUS=1
+./repolens.sh \
+  --project /path/to/repo \
+  --agent cursor-ide --local --mode audit --parallel --yes
+```
+
+Details: [Operator guide → Full audit](operator.md#full-audit-all-default-domains).
 
 !!! tip "Always `--local`"
     Cursor Edition is built around local markdown findings and IDE handoff. Prefer `--agent cursor-ide --local`.

@@ -26,7 +26,34 @@ Empfohlener Weg: `--agent cursor-ide --local`.
 2. Cursor-Chat auf **diesem** RepoLens-Repo offen lassen, damit Handoffs fertig werden ([Handoff](handoff.md)).
 3. Findings (gemeldete Punkte) unter `logs/<run-id>/issues/` öffnen.
 4. Im **Zielprojekt** beheben, dieselbe Domain erneut laufen lassen.
-5. Erst danach weitere Domains oder ein volles `--mode audit` (lang und aufwendig).
+5. Erst danach weitere Domains oder ein [vollständiger Audit](#vollstandiger-audit-alle-standard-domains) (lang und aufwendig).
+
+## Vollständiger Audit (alle Standard-Domains)
+
+Ohne `--domain` / `--focus` führt `--mode audit` (Default) **alle Domains** des Standard-Audit-Sets aus — hunderte Lenses. Rechne mit langer Laufzeit und hohem Cursor-Kontingent; den Handoff-Chat die ganze Zeit offen lassen.
+
+```bash
+export REPOLENS_IDE_AUTONOMOUS=1
+./repolens.sh \
+  --project /pfad/zum/projekt \
+  --agent cursor-ide \
+  --local \
+  --mode audit \
+  --parallel \
+  --yes
+```
+
+Optionale Hebel:
+
+| Flag | Wirkung |
+|------|---------|
+| `--parallel` | Lenses parallel (für Voll-Audits empfohlen) |
+| `--max-parallel <n>` | Concurrency deckeln (Default nproc-bewusst; senken bei Rate-Limits) |
+| `--dry-run` | Lens-Anzahl und Wall-Clock-Schätzung ohne Start |
+| `--human-review` | Kuratierter Digest am Ende statt nur Roh-Issue-Dateien |
+| `--relevant-domains security,architecture,toolgate` | Mittelweg — mehrere Domains, nicht der volle Fan-out |
+
+Vor dem Start die Zeile `Estimated wall-clock` in der Bestätigung / `--dry-run` prüfen. Bei Pause: `--resume`.
 
 ## Sinnvolle Domains
 

@@ -6,9 +6,13 @@ hide:
   - toc
 ---
 
-# RepoLens Cursor Edition
-
-Multi-Lens-Audits **in der Cursor-IDE** — Findings als lokale Dateien, ohne separate Agent-CLI.
+<div class="rl-hero" markdown="0">
+  <img class="rl-hero__logo" src="assets/logo-light.png" alt="" width="72" height="72" />
+  <div class="rl-hero__copy">
+    <h1>RepoLens Cursor Edition</h1>
+    <p>Multi-Lens-Audits <strong>in der Cursor-IDE</strong> — Findings als lokale Dateien, ohne separate Agent-CLI.</p>
+  </div>
+</div>
 
 Hier starten, Referenz nutzen wenn Flags und Schemas gebraucht werden.
 
@@ -18,7 +22,7 @@ Hier starten, Referenz nutzen wenn Flags und Schemas gebraucht werden.
 
     ---
 
-    Erste Läufe, Findings-Layout, Resume und sinnvolle Domains.
+    Erste Läufe, vollständiger Audit, Findings, Resume und Domains.
 
     [:octicons-arrow-right-24: Guide öffnen](operator.md)
 
@@ -48,7 +52,9 @@ Hier starten, Referenz nutzen wenn Flags und Schemas gebraucht werden.
 
 </div>
 
-## Ein Befehl
+## Befehle
+
+**Klein starten** (eine Domain):
 
 ```bash
 export REPOLENS_IDE_AUTONOMOUS=1
@@ -56,6 +62,17 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --project /pfad/zum/projekt \
   --agent cursor-ide --local --domain security --yes
 ```
+
+**Vollständiger Audit** (alle Standard-Audit-Domains — langer Lauf):
+
+```bash
+export REPOLENS_IDE_AUTONOMOUS=1
+./repolens.sh \
+  --project /pfad/zum/projekt \
+  --agent cursor-ide --local --mode audit --parallel --yes
+```
+
+Details: [Operator-Guide → Vollständiger Audit](operator.md#vollstandiger-audit-alle-standard-domains).
 
 !!! tip "Immer `--local`"
     Die Cursor Edition ist auf lokale Markdown-Findings und IDE-Handoff ausgelegt. Bevorzuge `--agent cursor-ide --local`.

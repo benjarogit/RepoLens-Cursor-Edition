@@ -26,7 +26,34 @@ Recommended path: `--agent cursor-ide --local`.
 2. Leave the Cursor chat open on **this** RepoLens repo so handoffs can finish ([handoff](handoff.md)).
 3. Open findings (reported issues) under `logs/<run-id>/issues/`.
 4. Fix them in the **target** repo, then run the same domain again.
-5. Only then add more domains or a full `--mode audit` (long and demanding).
+5. Only then add more domains or a [full audit](#full-audit-all-default-domains) (long and demanding).
+
+## Full audit (all default domains)
+
+Omit `--domain` / `--focus` so `--mode audit` (the default) runs **every domain** in the default audit set — hundreds of lenses. Expect a long wall-clock and heavy Cursor quota use; leave the handoff chat open the whole time.
+
+```bash
+export REPOLENS_IDE_AUTONOMOUS=1
+./repolens.sh \
+  --project /path/to/your/repo \
+  --agent cursor-ide \
+  --local \
+  --mode audit \
+  --parallel \
+  --yes
+```
+
+Optional levers:
+
+| Flag | Effect |
+|------|--------|
+| `--parallel` | Run lenses concurrently (recommended for full audits) |
+| `--max-parallel <n>` | Cap concurrency (default is nproc-aware; lower it if Cursor rate-limits) |
+| `--dry-run` | Preview lens count and wall-clock estimate without starting |
+| `--human-review` | Curated digest at the end instead of only raw issue files |
+| `--relevant-domains security,architecture,toolgate` | Middle ground — several domains, not the full fan-out |
+
+Check the confirmation / `--dry-run` line for `Estimated wall-clock` before you commit. Resume with `--resume` if the run pauses mid-way.
 
 ## Useful domains
 

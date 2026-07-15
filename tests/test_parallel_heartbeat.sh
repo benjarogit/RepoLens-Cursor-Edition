@@ -25,10 +25,13 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/logging.sh"
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/parallel.sh"
 
 PASS=0

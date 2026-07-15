@@ -31,6 +31,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
@@ -161,7 +162,6 @@ echo ""
 readme_content=""
 if [[ -f "$OPERATOR_DOC" ]]; then
   readme_content="$(cat "$OPERATOR_DOC")"
-landing_readme_content="$(cat "$LANDING_README")"
 fi
 
 echo "Test 5: README is substantive (at least 100 lines)"

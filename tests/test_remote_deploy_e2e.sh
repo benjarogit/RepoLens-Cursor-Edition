@@ -22,6 +22,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 REPOLENS="$SCRIPT_DIR/repolens.sh"

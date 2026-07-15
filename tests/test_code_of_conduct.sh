@@ -21,6 +21,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COC="$SCRIPT_DIR/CODE_OF_CONDUCT.md"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 CONTRIBUTING="$SCRIPT_DIR/CONTRIBUTING.md"

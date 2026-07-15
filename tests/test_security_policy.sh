@@ -25,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECURITY="$SCRIPT_DIR/SECURITY.md"
 COC="$SCRIPT_DIR/CODE_OF_CONDUCT.md"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 

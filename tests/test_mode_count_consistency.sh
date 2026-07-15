@@ -19,6 +19,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 METHODOLOGY="$SCRIPT_DIR/METHODOLOGY.md"
@@ -67,7 +68,7 @@ extract_cli_modes() {
     '
 }
 
-methodology_content="$(cat "$METHODOLOGY")"
+readme_content="$(cat "$README")"
 mapfile -t cli_modes < <(extract_cli_modes)
 mode_count="${#cli_modes[@]}"
 
@@ -93,7 +94,7 @@ else
   assert_eq "mode count from CLI is positive" "1" "$([[ $mode_count -ge 1 ]] && echo 1 || echo 0)"
 fi
 
-echo "Test 4: every CLI mode appears in operator doc"
+echo ""
 echo "Test 4: every CLI mode appears in operator doc"
 for mode in "${cli_modes[@]}"; do
   row_count="$(grep -cE "^\| \`${mode}\`[[:space:]]+\|" "$README" || true)"

@@ -106,6 +106,7 @@ echo ""
 
 AUTHORS="$SCRIPT_DIR/AUTHORS.md"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 

@@ -20,6 +20,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
@@ -126,8 +127,7 @@ assert_not_contains "no stale '109' count" "109 expert" "$readme_content"
 # =====================================================================
 
 echo ""
-echo "Test 5: Domain count matches domains.json"
-actual_domains="$(jq '[.domains[] | select(.mode != "polish")] | length' "$DOMAINS_FILE")"
+echo "Test 5: Domain inventory is documented (exact counts live in domains.json)"
 assert_contains "operator doc discusses domains" "domain" "$readme_content"
 
 # =====================================================================

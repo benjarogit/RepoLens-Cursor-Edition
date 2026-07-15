@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 PROMPTS_DIR="$SCRIPT_DIR/prompts/lenses"
 # Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck disable=SC1091
 # shellcheck source=helpers/docs_contract.sh
 source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 METHODOLOGY="$SCRIPT_DIR/METHODOLOGY.md"
@@ -87,7 +88,6 @@ registry_total_lenses="$(jq -r '[.domains[].lenses | length] | add' "$DOMAINS_FI
 total_lenses="$(jq -r '[.domains[] | select(.mode != "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
 prompt_lenses="$(find "$PROMPTS_DIR" -type f -name '*.md' | wc -l | tr -d '[:space:]')"
 domain_count="$(jq -r '[.domains[] | select(.mode != "polish")] | length' "$DOMAINS_FILE")"
-default_domain_count="$(jq -r '[.domains[] | select((.mode // "default") as $mode | $mode != "discover" and $mode != "deploy" and $mode != "opensource" and $mode != "content" and $mode != "greenfield" and $mode != "polish" and $mode != "spec-change")] | length' "$DOMAINS_FILE")"
 default_lenses="$(jq -r '[.domains[] | select((.mode // "default") as $mode | $mode != "discover" and $mode != "deploy" and $mode != "opensource" and $mode != "content" and $mode != "greenfield" and $mode != "polish" and $mode != "spec-change") | .lenses | length] | add' "$DOMAINS_FILE")"
 toolgate_lenses="$(jq_domain_lenses "toolgate")"
 logs_lenses="$(jq_domain_lenses "logs")"

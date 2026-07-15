@@ -4,6 +4,34 @@ All notable changes to RepoLens will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+Fork releases for **RepoLens Cursor Edition** use calendar tags (`cursor-edition-YYYY.MM.DD`) and are listed first below. Upstream SemVer sections follow afterward.
+
+## [Cursor Edition 2026.07.15] - 2026-07-15
+
+Release of [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition). Upstream pin: [`14c0b78`](https://github.com/TheMorpheus407/RepoLens/commit/14c0b78cbefaa0d75d0f2477e234edcfaacd527c) ([`UPSTREAM_REVISION`](UPSTREAM_REVISION)).
+
+### Cursor Edition
+
+- Ship Cursor workspace guidance: `.cursor/rules/` (`cursor-ide` only, IDE handoff, vibe-triage, lens rules) and `.cursor/skills/audit-pipeline/`
+- Modern bilingual landing docs: `README.md` / `README.de.md` with a proper language switcher; operator and handoff guides under `docs/en/` and `docs/de/`
+- Standalone-oriented [`UPSTREAM.md`](UPSTREAM.md) sync notes for this fork
+- GitHub repository description updated for Cursor Edition (IDE handoff, local findings)
+
+### Upstream (merged since `cursor-edition-2026.06.16-v2`)
+
+Highlights from TheMorpheus407/RepoLens (see `[Unreleased]` and linked issues for full detail):
+
+- **Run continuation:** `attempts.json`, resume hints on abort, `--resume` without a run id (auto-select latest interrupted run), clean/status awareness of incomplete attempts
+- **Ledger / triage / human-review / validation / dedupe:** finding registry for `--local`, triage artifacts, human-review digest accounting, proof-anchor validation, local markdown dedupe, configurable near-duplicate thresholds
+- **Performance:** startup wall-clock estimate + >24h warning, nproc-aware default `--max-parallel`, per-lens timing in `summary.json`, ETA in `status`, end-of-run time breakdown
+- **Modes / agents (upstream):** `spec-change` mode, `--validate` false-positive filter, complexity labels on findings, `--agent-override`, `--agent antigravity`, `<agent>/<model>` pinning, `--flat-rate`
+- **CI:** GitHub Actions pipeline fixes ([#386](https://github.com/TheMorpheus407/RepoLens/issues/386))
+
+### Notes for operators of this fork
+
+- Recommended invocation remains `--agent cursor-ide --local` (plus typically `REPOLENS_IDE_AUTONOMOUS=1` and `--yes`)
+- Upstream agents (`claude`, `codex`, `antigravity`, …) remain in the codebase for compatibility; they are not the default path for Cursor Edition
+
 ## [Unreleased]
 
 ### Fixed
@@ -170,6 +198,7 @@ _This is the first public release. Previous development was private._
 - Test suite with 17 test suites
 - Modular library architecture (`lib/`)
 
+[Cursor Edition 2026.07.15]: https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/tag/cursor-edition-2026.07.15
 [Unreleased]: https://github.com/TheMorpheus407/RepoLens/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/TheMorpheus407/RepoLens/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TheMorpheus407/RepoLens/releases/tag/v0.1.0

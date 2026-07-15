@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>
+  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest release" /></a>
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
   <a href="UPSTREAM_REVISION"><img src="https://img.shields.io/badge/sync-tracked-brightgreen" alt="Upstream sync" /></a>
 </p>
@@ -97,6 +98,7 @@ Helpers: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 | [Operator notes](docs/en/operator.md) | First runs, quota, triage |
 | [CLI reference](docs/en/full-reference.md) | Modes, flags, domains |
 | [Upstream sync](UPSTREAM.md) | Merging TheMorpheus407/RepoLens |
+| [Changelog](CHANGELOG.md) | Cursor Edition + upstream history |
 | [Methodology](METHODOLOGY.md) | How lenses are designed |
 
 German copies of handoff/operator live under [`docs/de/`](docs/de/).

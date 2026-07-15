@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Lizenz" /></a>
+  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest Release" /></a>
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
   <a href="UPSTREAM_REVISION"><img src="https://img.shields.io/badge/sync-tracked-brightgreen" alt="Upstream-Sync" /></a>
 </p>
@@ -97,6 +98,7 @@ Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 | [Operator-Hinweise](docs/de/operator.md) | Erste Läufe, Quota, Triage |
 | [CLI-Referenz](docs/en/full-reference.md) | Modes, Flags, Domains (EN) |
 | [Upstream-Sync](UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
+| [Changelog](CHANGELOG.md) | Cursor Edition + Upstream-Historie |
 | [Methodik](METHODOLOGY.md) | Lens-Design |
 
 Englische Varianten unter [`docs/en/`](docs/en/).

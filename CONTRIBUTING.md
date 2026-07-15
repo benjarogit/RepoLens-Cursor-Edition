@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to RepoLens — an open-source, multi-lens code audit and analysis tool. Whether you're adding a new analysis lens, fixing a bug, or improving documentation, your contribution helps make automated code review more thorough and accessible.
 
+> **RepoLens Cursor Edition** ([benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition)): day-to-day runs use `--agent cursor-ide --local`. See the [docs index](docs/README.md) and [UPSTREAM.md](UPSTREAM.md). Lens contributions below still apply; prefer testing with `cursor-ide` on this fork.
+
 ## Table of Contents
 
 - [Quick Start: Adding a Lens](#quick-start-adding-a-lens)

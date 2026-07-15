@@ -34,6 +34,10 @@ Highlights from TheMorpheus407/RepoLens (see `[Unreleased]` and linked issues fo
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation refresh for Cursor Edition: docs index (EN/DE), simpler operator/handoff guides, full-reference preamble without csretro paths, accurate soft domain/lens counts pointing at `config/domains.json`
+
 ### Fixed
 
 - `config/agent-pricing.json` refreshed to current Anthropic pricing (2026-05-24): corrected `claude-opus-4-6` from $15/$75 to $5/$25 per MTok, added `claude-sonnet-4-6` ($3/$15) and `claude-opus-4-7` ($5/$25), and updated the default model for `--agent claude` from `claude-sonnet-4-5` to `claude-sonnet-4-6`. Cost estimates shown by `--dry-run` and the confirmation prompt are now within ±10% of current published pricing ([#249](https://github.com/TheMorpheus407/RepoLens/issues/249))

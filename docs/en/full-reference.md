@@ -1,330 +1,18 @@
-> **Note:** Landing docs are [README.md](../../README.md) / [README.de.md](../../README.de.md). This file keeps the long CLI/modes/domains reference from before the Cursor Edition doc split.
-
-# RepoLens
-
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Version: v0.2.0](https://img.shields.io/badge/version-v0.2.0-brightgreen.svg)](CHANGELOG.md)
-[![CI](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml/badge.svg)](https://github.com/TheMorpheus407/RepoLens/actions/workflows/ci.yml)
-[![GitHub Stars](https://img.shields.io/github/stars/TheMorpheus407/RepoLens?style=social)](https://github.com/TheMorpheus407/RepoLens)
-[![Fork: RepoLens Cursor Edition](https://img.shields.io/badge/Fork-RepoLens--Cursor--Edition-blue)](https://github.com/benjarogit/RepoLens-Cursor-Edition)
-
-**Multi-lens code audit tool.** Runs 337 specialist lenses across 34 domains against any git repository, live server, Android APK, or product specification and creates remote issues for real findings, backlog work, or polishing shortlists. The polish pass also writes ranked suggestion artifacts for review. Think automated code review, agent-driven pentesting, tool-driven static/dynamic analysis, infrastructure auditing, Android auditing, spec-to-backlog planning, and polishing — all with deep specialization.
-
-> [!IMPORTANT]
-> **RepoLens runs AI agents with shell access against your repository, and a full audit can cost hundreds of dollars in API charges.** It is NOT a sandboxed security tool, comes with NO warranty, and you use it entirely at your own risk. **Read [Warnings & Limits](#warnings--limits) before your first run** — especially the cost and security sections.
-
-## Getting Started
-
-### Cursor Local Edition (this fork)
-
-This fork is tailored for running RepoLens **in the Cursor IDE** without the separate `cursor-agent` CLI: use **`--agent cursor-ide --local`** (recommended). RepoLens writes each lens prompt under `logs/<run-id>/…`; you run Composer in Cursor, save the reply to the indicated file, then `touch` the done marker so the shell script continues.
-
-Optional: **`--agent cursor`** still uses the Cursor Agent **CLI** (`cursor-agent`) if you want headless automation and accept its separate quota.
-
-> [!IMPORTANT]
-> In this fork, **`cursor` and `cursor-ide`** are intentionally limited to local output mode in Phase 1.
-> Always pass `--local` so findings are written to markdown files instead of opening GitHub issues.
-
-#### Fork vs upstream (csretro)
-
-This tree is **vendored inside the CSRetro monorepo**, not a separate clone. **Upstream project:** [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens). Maintainer sync (fetch, diff, fork-specific files, pin): **[`UPSTREAM.md`](UPSTREAM.md)** and **[`UPSTREAM_REVISION`](UPSTREAM_REVISION)**.
-
-#### Fast Start (Cursor IDE — `cursor-ide`, no CLI agent)
-
-```bash
-cd /path/to/RepoLens-Cursor-Edition
-chmod +x repolens.sh
-./repolens.sh --project /path/to/your/repo --agent cursor-ide --local --domain security --yes
-```
-
-Per iteration, under **`maintainers/RepoLens/logs/<run-id>/<domain>/<lens-id>/`**: open `ide-prompt-iter-N.md` in Composer, save the **full** assistant reply to `ide-response-iter-N.txt` (default **≥ 400 bytes**, no stub boilerplate — otherwise the run emits `IDE_RESPONSE_REJECTED` and you retry), then `touch ide-done-iter-N` in that same directory. For quick pipeline demos only, set **`REPOLENS_IDE_ALLOW_STUB=1`**.
-
-**Machine protocol (IDE „Run Everything“ / Agent):** RepoLens prints **`REPOLENS_PHASE …`**, **`REPOLENS_AWAIT …`**, **`REPOLENS_ERROR …`**, and **`REPOLENS_CTL {…json…}`** on stderr and appends JSON lines to **`logs/<run-id>/repolens-ctl.ndjson`**. The JSON event **`kind: "ide_handoff"`** lists `files.prompt`, `files.response`, and `files.done` — an autonomous agent should perform those three steps without asking you each time. Set **`REPOLENS_IDE_AUTONOMOUS=1`** if you want `autonomous_env_hint: true` regardless of terminal detection. In **csretro**, the Cursor rule **`.cursor/rules/repolens-ide-handoff.mdc`** is **`alwaysApply: true`** so the Agent gets these instructions in every chat.
-
-#### Happy path — fully automatic in Cursor (csretro)
-
-1. Open the **csretro** workspace in Cursor and switch **Composer/Agent** to autonomous mode (auto-run terminal + file edits as your policy allows).
-2. From the repo root, start a local IDE run (defaults to `cursor-ide`):
-
-   ```bash
-   ./tools.sh repolens --domain security
-   ```
-
-   For a full audit (long-running): `./tools.sh repolens --mode audit` or `./tools.sh repolens:complete --mode audit` if you want the resume wrapper between quota windows.
-3. Leave the **integrated terminal** visible: the Agent should react to **`REPOLENS_CTL`** lines, write each **`files.response`**, and **`touch`** each **`files.done`** until the run finishes.
-
-If the Agent does not pick up terminal output, paste the latest **`REPOLENS_CTL`** JSON from **`maintainers/RepoLens/logs/<run-id>/repolens-ctl.ndjson`** into the chat once to prime it.
-
-#### CSRetro operator runbook (`cursor-ide`)
-
-- **`REPOLENS_IDE_AUTONOMOUS=1`:** RepoLens can mark handoffs for a fully autonomous agent (no per-step questions). The VS Code/Cursor tasks in **[`.vscode/tasks.json`](../../.vscode/tasks.json)** set this for **RepoLens: security** and **RepoLens: complete — security (auto-resume)**.
-- **Typical starts:** `./tools.sh repolens --domain security` from the CSRetro root; for long runs that may hit Cursor quota, prefer **`./tools.sh repolens:complete --domain security`** (wrapper sleeps and **`--resume`** the same `run-id`). If a run stops mid-way, continue with `./tools.sh repolens --resume <run-id> …`.
-- **When lenses stall:** Check `maintainers/RepoLens/logs/<run-id>/summary.json` for `rate-limited`, `agent-capacity`, or `agent-timeout`. Fix quota/wait, then **`--resume`** or **`repolens:complete`** — do not start a fresh run-id unless you intend to abandon the old one.
-- **Logs / disk:** By default **`REPOLENS_LOGS_AUTO_PRUNE`** runs before each `repolens` / `repolens:cli` / `repolens:complete` and deletes whole old run directories, keeping **`REPOLENS_LOGS_KEEP`** (default **3**). Opt out: `REPOLENS_LOGS_AUTO_PRUNE=0`. Roots with **`AUDIT.md`** and the active **`--resume`** target are never removed. To **keep evidence** but free space, run **`./tools.sh repolens:logs-archive [N] [--dry-run]`** — packs removed runs into **`maintainers/RepoLens/logs/archive/*.tar.gz`**. **Do not** delete `ide-response-*` / `iteration-*` inside an active run manually if you still need to debug or resume.
-
-#### Resolved findings & log retention (csretro)
-
-- **Closed audit items:** Local findings stay in `maintainers/RepoLens/logs/<run-id>/issues/…` (or manual audit trees like `…/full-security-audit/issues/`). Update the **Status** section in each markdown file when fixed; do not delete the file — it preserves evidence and rationale.
-- **Pruning agent run folders:** Each RepoLens run creates a large directory under `maintainers/RepoLens/logs/<run-id>/`. From the CSRetro repo root:
-  - `./tools.sh repolens:logs-prune` — delete old runs, keep the **3** newest (override count: `repolens:logs-prune 5`; preview: `repolens:logs-prune --dry-run`).
-  - `./tools.sh repolens:logs-archive` — same keep rules, but write removed runs to **`logs/archive/<run-id>.tar.gz`** before deleting the directory (preview: `--dry-run`).
-  - Environment: `REPOLENS_LOGS_KEEP` (default `3`). **Auto-prune is on by default** before `./tools.sh repolens`, `repolens:cli`, or `repolens:complete`; set `REPOLENS_LOGS_AUTO_PRUNE=0` to skip. A `--resume <run-id>` target is always kept even if it is not among the newest runs. Any run directory that contains **`AUDIT.md`** at its top level (manual or curated audits) is **never** deleted by pruning.
-
-#### Fast Start (Cursor Agent CLI — `cursor`)
-
-**1) Install the official Cursor Agent CLI** ([installer](https://cursor.com/install)):
-
-```bash
-curl https://cursor.com/install -fsSL | bash
-```
-
-The binary is placed under **`~/.local/bin`**. Put that on your `PATH` for every terminal session (add to `~/.bashrc`, `~/.zshrc`, etc.):
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-**2) Sign in** (browser opens unless you set `NO_OPEN_BROWSER=1`):
-
-```bash
-cursor-agent login
-cursor-agent status
-```
-
-Alternatively set **`CURSOR_API_KEY`** if you use key-based auth. The installer may note that the command **`agent`** is an alias for **`cursor-agent`** — either name works in `CURSOR_AGENT_RUNNER_CMD` below.
-
-**3) Clone this fork and run RepoLens** (always pass **`--local`** with `--agent cursor` in Phase 1):
-
-```bash
-git clone https://github.com/benjarogit/RepoLens-Cursor-Edition.git
-cd RepoLens-Cursor-Edition
-chmod +x repolens.sh
-
-# RepoLens → Cursor CLI wiring (defaults shown; tune timeouts if needed)
-export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
-export CURSOR_AGENT_MODEL="auto"
-export CURSOR_AGENT_TIMEOUT_SEC=600
-
-./repolens.sh --project /path/to/your/repo --agent cursor --local --domain security --yes
-```
-
-Result files are written to:
-
-- `logs/<run-id>/issues/<domain>/<lens-id>/NNN-*.md`
-- `logs/<run-id>/summary.json`
-
-#### Recommended workflow for this fork
-
-1. Start with one domain (`--domain security`) in `--local` mode.
-2. Review markdown findings under `logs/<run-id>/issues/` (or the path printed as «Local mode» in the run header).
-3. Apply fixes in your target repo.
-4. Re-run the same domain to verify.
-5. Scale to parallel/domain-wide runs only after a stable baseline.
-
-#### Cursor quota-safe mode (default in this fork)
-
-For `--agent cursor`, RepoLens now defaults to a quota-safe strategy:
-
-- Force sequential execution when `--parallel` is requested.
-- On Cursor rate-limit responses, wait and retry the same lens automatically.
-
-Environment knobs:
-
-```bash
-export REPOLENS_CURSOR_SERIAL=true                    # default
-export REPOLENS_CURSOR_WAIT_ON_RATE_LIMIT=true        # default
-export REPOLENS_CURSOR_RATE_LIMIT_SLEEP_SEC=120       # default (fallback if no parseable hint)
-export REPOLENS_CURSOR_RATE_LIMIT_MAX_RETRIES=120     # default
-export REPOLENS_CURSOR_RATE_LIMIT_HINT_MIN_SEC=30    # clamp parsed "try again in …" (default)
-export REPOLENS_CURSOR_RATE_LIMIT_HINT_MAX_SEC=7200  # upper clamp (default)
-export REPOLENS_CURSOR_RATE_LIMIT_HANDOFF=true       # optional: write MANUAL_HANDOFF.md + stderr JSON
-```
-
-When the CLI is **rate-limited**, RepoLens **parses “try again in/at …”** from the captured agent output when possible and sleeps that long (within the hint min/max). Set **`REPOLENS_CURSOR_RATE_LIMIT_HANDOFF=true`** to emit **`logs/<run-id>/MANUAL_HANDOFF.md`**, append one **`cursor_cli_rate_limited`** line to **`repolens-ctl.ndjson`**, and print **`REPOLENS_MANUAL_HANDOFF …`** on stderr so you (or an IDE agent) know exactly **which run / lens / log file** to continue with **`--resume`** or by switching to **`--agent cursor-ide`**.
-
-For unattended completion across quota windows, use **`./repolens_until_done.sh`** (same flags as `repolens.sh`; optional leading `--resume <run-id>`).
-
-For **one lens at a time** on the same run — **try `cursor` (CLI) first, then `cursor-ide` only if that lens is still missing from `logs/<run-id>/.completed`**, use **`./repolens_agent_or_ide.sh --resume <run-id>`** with the same flags as `repolens.sh` except **`--agent`**, **`--focus`**, and **`repolens --dry-run`**. Optional **`--dry-run`** on the orchestrator only prints the pending queue. Omit **`--domain`** to walk **all** audit lenses in order (after security comes code quality, architecture, …); pass **`--domain security`** (for example) to stay within one domain. Duplicate lens ids across domains (e.g. `dependency-management`) are pinned with **`--domain <id> --focus <lens>`** together. **Note:** the orchestrator only mirrors **`.completed`**; for a strict “green” run also check **`run_outcome`** in **`summary.json`** (and `repolens.sh` exit code). Lenses that ended with **`max-iterations`**, **`agent-timeout`**, or **`agent-capacity`** are not added to **`.completed`**, so they stay **pending** for resume/orchestrator until they finish with **`completed`** (or **`skipped`** where applicable).
-
-If you explicitly want parallel cursor execution anyway:
-
-```bash
-export REPOLENS_CURSOR_SERIAL=false
-```
-
-### Prerequisites
-
-| Tool                        | Required               | Purpose                                                                                | Install                                                                                                                                                                               |
-| --------------------------- | ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bash`                      | Yes (4.0+)             | Shell runtime — associative arrays, `read -ra`, other 4.x features are used throughout | Linux distributions ship 4.0+ already. macOS ships 3.2 by default (GPLv3 avoidance) — upgrade via `brew install bash`. RepoLens aborts at startup on older bash with an upgrade hint. |
-| `git`                       | Yes                    | Repo validation, cloning                                                               | OS package manager (`apt install git`, `brew install git`, `nix-env -i git`)                                                                                                          |
-| `jq`                        | Yes                    | JSON config parsing                                                                    | OS package manager (`apt install jq`, `brew install jq`, `nix-env -i jq`)                                                                                                             |
-| `timeout` (coreutils)       | Yes                    | Per-invocation agent timeout watchdog with SIGKILL escalation grace (see `REPOLENS_AGENT_TIMEOUT*` and `REPOLENS_AGENT_KILL_GRACE` below) | Ships in GNU coreutils. Pre-installed on Linux/NixOS. On macOS: `brew install coreutils`.                                                                                             |
-| `gh`, `tea`, or `fj`        | Yes (unless `--local`) | Remote forge operations for labels and issue queries                                   | See [Supported forges](#supported-forges) for detection, install links, and auth commands                                                                                             |
-| Agent CLI                   | Yes (at least one)     | Run analysis agents                                                                    | See [Supported Agent CLIs](#supported-agent-clis) below for install + auth per CLI                                                                                                    |
-| `docker` + `docker compose` | Only for `--hosted`    | DAST scanning environment                                                              | OS package manager                                                                                                                                                                    |
-
-### Supported forges
-
-Supported forges are GitHub (`gh`), Gitea (`tea`), and Codeberg/Forgejo (`fj`). RepoLens reads `git remote get-url origin` from the target project and uses the origin host to choose the forge backend. Pass `--forge <gh|tea|fj>` to override auto-detection. Use `--local` to write local output files without any remote forge CLI.
-
-| Forge              | Provider | CLI           | Auto-detection               | Install / auth                                                                                                                   |
-| ------------------ | -------- | ------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub             | `gh`     | GitHub CLI    | `github.com` origins         | Install from [cli.github.com](https://cli.github.com), then run `gh auth login`                                                  |
-| Gitea              | `tea`    | Gitea Tea CLI | Hostnames containing `gitea` | Install from [gitea.com/gitea/tea](https://gitea.com/gitea/tea), then run `tea login add`                                        |
-| Codeberg / Forgejo | `fj`     | Forgejo CLI   | `codeberg.org` origins       | Install from [forgejo-contrib/forgejo-cli](https://codeberg.org/forgejo-contrib/forgejo-cli), then run `fj -H <host> auth login` |
-
-Self-hosted instances whose hostnames do not match the auto-detect heuristics require `--forge <gh|tea|fj>`. Self-hosted Forgejo targets also need an HTTPS or SSH `origin` remote so RepoLens can pass a secure `fj -H <host>` binding; insecure HTTP origins are not used for authenticated `fj` commands.
-
-### Supported Agent CLIs
-
-| `--agent` value    | CLI required | Notes                                   |
-| ------------------ | ------------ | --------------------------------------- |
-| `claude`           | `claude`     | Anthropic Claude Code                   |
-| `codex`            | `codex`      | OpenAI Codex CLI                        |
-| `spark` / `sparc`  | `codex`      | Codex CLI with spark model              |
-| `cursor`           | `cursor-agent` (via `CURSOR_AGENT_RUNNER_CMD`) | **RepoLens Cursor Edition:** CLI agent; Phase 1 requires `--local`. |
-| `cursor-ide`       | *(none)*    | **RepoLens Cursor Edition:** IDE handoff — prompts under `logs/…`; you run Composer and write `ide-response-*` / `touch ide-done-*`. Phase 1: `--local` only. |
-| `opencode`         | `opencode`   | Open-source agent CLI (75+ providers)   |
-| `opencode/<model> | antigravity` | `opencode`   | opencode with a specific provider/model |
-
-You need **at least one** backend configured before running RepoLens.
-
-For `--agent cursor`, set a runner command via `CURSOR_AGENT_RUNNER_CMD` that points to the Cursor Agent CLI binary.
-Model selection is controlled via `CURSOR_AGENT_MODEL` (default: `auto`), unless you already set `--model ...` directly in `CURSOR_AGENT_RUNNER_CMD`.
-RepoLens invokes it as:
-
-- `--print`
-- `--workspace <path>`
-- `<composed-lens-prompt>`
-
-Example:
-
-```bash
-export CURSOR_AGENT_RUNNER_CMD="cursor-agent --force --approve-mcps"
-export CURSOR_AGENT_MODEL="auto"   # default, safe for free plans
-export CURSOR_AGENT_TIMEOUT_SEC=600
-./repolens.sh --project ~/my-app --agent cursor --local --domain security
-```
-
-If you're on a Cursor Free plan, keep `CURSOR_AGENT_MODEL=auto` (named models are unavailable).
-If you want manual model control on paid plans, set for example `export CURSOR_AGENT_MODEL="gpt-5"`.
-If a named model is rejected by Cursor, RepoLens automatically retries once with `--model auto` so runs can continue without manual intervention.
-If Cursor returns usage-capacity errors (for example `You've hit your usage limit`), RepoLens now stops the affected lens early with status `agent-capacity` instead of burning through all 20 safety-cap iterations.
-
-### Cursor-specific run examples (local mode)
-
-```bash
-# Single lens — IDE handoff (no cursor-agent)
-./repolens.sh --project ~/my-app --agent cursor-ide --local --focus injection --yes
-
-# Security domain — IDE handoff
-./repolens.sh --project ~/my-app --agent cursor-ide --local --domain security --yes
-
-# Same flows with Cursor Agent CLI instead
-./repolens.sh --project ~/my-app --agent cursor --local --focus injection --yes
-./repolens.sh --project ~/my-app --agent cursor --local --domain security --yes
-./repolens.sh --project ~/my-app --agent cursor --local --yes
-./repolens.sh --project ~/my-app --agent cursor --local --output ~/reports/repolens --yes
-```
-
-For CLI-based agents (`claude`, `codex`, `opencode`), install commands and auth flows differ per CLI — see below.
-
-> [!NOTE]
-> Append `/<model>` to `claude`, `codex`, `opencode`, or `antigravity` to pin that run to a specific model — e.g. `--agent claude/claude-haiku-4-5` for a cheap, fast pass, or `--agent codex/<model>` / `--agent antigravity/<model>` to select any model your installed CLI and plan accept (including newly released ones). The model string is passed straight to the CLI. The `spark`/`sparc` presets do **not** take a `/<model>` suffix — use `codex/<model>` to choose a Codex model yourself. These `/<model>` forms are also valid [`--agent-override`](#optional-flags) targets. When RepoLens has no exact pricing for a model, its cost estimate is approximated from keywords in the model name (`flash`/`haiku`/`mini` price as cheap, `opus`/`ultra` as premium, everything else as standard).
-
-> [!TIP]
-> **Recommendation:** Use `claude` for complex audits — it produces the highest-quality findings, but is also the most expensive option. For a cheaper alternative, run `opencode` with a MiniMax model — costs are a fraction of Claude, with the trade-off of more false positives. Calibrate on a single lens or domain (`--focus` / `--domain`) before committing to a full parallel run. To get both in one run, keep a cheap default `--agent` and route only the reasoning-heavy domains (e.g. `security`, `architecture`) to `claude` with [`--agent-override`](#optional-flags).
-
-#### Claude Code (`claude`)
-
-**Install** — Linux, macOS, WSL:
-
-```bash
-curl -fsSL https://claude.ai/install.sh | bash
-```
-
-Other platforms: `brew install --cask claude-code` (macOS), `winget install Anthropic.ClaudeCode` (Windows), or see the [official setup guide](https://code.claude.com/docs/en/setup) for PowerShell and legacy npm options.
-
-**Authenticate:** run `claude` and follow the browser prompt. Requires a Claude **Pro, Max, Team, Enterprise, or Console** account — the free Claude.ai plan does not include Claude Code. Alternatives: export `ANTHROPIC_API_KEY`, or route through Amazon Bedrock / Google Vertex AI / Microsoft Foundry.
-
-#### OpenAI Codex (`codex`)
-
-**Install:**
-
-```bash
-npm install -g @openai/codex
-```
-
-Alternatives: `brew install --cask codex` (macOS), or prebuilt binaries from [github.com/openai/codex/releases](https://github.com/openai/codex/releases).
-
-**Authenticate** — pick one:
-
-- `codex login` — browser flow using a ChatGPT Plus / Pro / Business / Edu / Enterprise subscription (recommended; unlocks fast mode)
-- `printenv OPENAI_API_KEY | codex login --with-api-key` — pay-as-you-go API billing
-- Or export `OPENAI_API_KEY` in your shell
-
-The `spark` / `sparc` agent values reuse the same `codex` binary — installing once covers all three.
-
-#### opencode (`opencode`)
-
-**Install:**
-
-```bash
-curl -fsSL https://opencode.ai/install | bash
-```
-
-Alternatives: `npm install -g opencode-ai` (npm package is `opencode-ai`, binary is `opencode`), `brew install anomalyco/tap/opencode`, `paru -S opencode-bin` (Arch), or see [opencode.ai/docs](https://opencode.ai/docs/) for Windows / Docker options.
-
-**Authenticate:**
-
-```bash
-opencode auth login
-```
-
-Pick a provider from the interactive list — opencode supports 75+ providers (Anthropic, OpenAI, Bedrock, Vertex, Azure, Groq, DeepSeek, xAI, OpenRouter, Together AI, MiniMax, local Ollama, …). Credentials are stored in `~/.local/share/opencode/auth.json`.
-
-#### Google Antigravity (`antigravity`)
-
-**Install** — macOS, Linux:
-
-```bash
-curl -fsSL https://antigravity.google/cli/install.sh | bash
-```
-
-This installs the `agy` binary, which RepoLens invokes when you pass `--agent antigravity`. See [antigravity.google](https://antigravity.google/) for other platforms and options.
-
-**Authenticate:** run `agy` and choose **Sign in with Google** for the browser flow. On a headless or SSH session, `agy` falls back to a device-code flow you complete in a local browser. For non-interactive API-key auth, follow the official Antigravity CLI documentation.
-
-Antigravity's very large context window (up to 1M tokens) makes it well suited to auditing large codebases without splitting them across runs.
-
-> [!NOTE]
-> Antigravity replaces the earlier `--agent gemini` support. Google deprecated the standalone Gemini CLI for individual users, so `--agent gemini` is no longer accepted — use `--agent antigravity` instead.
-
-### Quickstart
-
-```bash
-# 1. Clone RepoLens
-git clone https://github.com/TheMorpheus407/RepoLens.git
-cd RepoLens
-
-# 2. Make the entry point executable
-chmod +x repolens.sh
-
-# 3. Authenticate your forge CLI (if not already done; not needed for --local)
-gh auth login                  # GitHub
-tea login add                  # Gitea
-fj -H codeberg.org auth login  # Codeberg; use your Forgejo host for self-hosted instances
-
-# 4. Run your first audit — single lens, fast feedback
-./repolens.sh --project ~/my-app --agent claude --focus injection
-
-# 5. Audit an entire domain
-./repolens.sh --project ~/my-app --agent claude --domain security
-
-# 6. Full parallel audit (248 audit-visible lenses)
-./repolens.sh --project ~/my-app --agent claude --parallel --max-parallel 8
-```
+> **Cursor Edition:** Start with the [README](../../README.md) and [operator guide](operator.md).
+> This page is the **long CLI / modes / domains reference** (mostly upstream content).
+> Day-to-day path for this fork: `--agent cursor-ide --local`. Findings go to `logs/<run-id>/`.
+
+# CLI & modes reference
+
+Upstream-oriented reference for flags, modes, domains, and troubleshooting.
+Lens counts drift over time — see `config/domains.json` for the live registry
+(currently on the order of **~35+ domains** and **~350 lenses**).
+
+<p align="right">
+  <a href="../../README.md">README</a> ·
+  <a href="operator.md">Operator</a> ·
+  <a href="handoff.md">Handoff</a>
+</p>
 
 ## Warnings & Limits
 
@@ -333,7 +21,7 @@ RepoLens is a power tool. Before you point it at anything you care about — or 
 ### Cost — RepoLens can be very expensive
 
 > [!CAUTION]
-> A default full audit runs **248 audit-visible lenses across 27 code/toolgate/logs domains**. RepoLens has 337 lenses across 34 domains in total for issue and backlog modes, but `discover`, `deploy`, `opensource`, `content`, `greenfield`, and `spec-change` lenses are mode-specific and do not run in the default audit mode. The separate polish pass has its own 16 suggestion lenses and also does not run in the default audit mode. Each audit lens loops until the agent emits `DONE` three times in a row. That adds up to **hundreds — often thousands — of agent invocations per run**, and cost scales with your model choice (Claude Opus is dramatically more expensive than smaller models or Codex). Real-world runs can easily reach hundreds of dollars on a single repo.
+> A default full audit runs **hundreds of lenses** (exact counts live in `config/domains.json` and change over time). Mode-specific domains such as `discover`, `deploy`, `opensource`, `content`, `greenfield`, and `spec-change` are not part of the default audit fan-out; polish has its own suggestion lenses. Each audit lens may loop until the agent emits `DONE` repeatedly. That adds up to **hundreds — often thousands — of agent invocations per run**. On pay-per-token backends cost scales with the model; with **Cursor Edition** (`cursor-ide --local`) you mainly pay in **time and Cursor quota**, not forge API dollars — but a full audit is still a large run. Prefer `--domain` / `--focus` first.
 
 **Before launching a full audit:**
 
@@ -874,7 +562,9 @@ This writes a `.superseded` marker into `logs/<run-id>/` and changes two behavio
 
 The `<run-id>` must be a direct child of `logs/` and a genuine run dir (one carrying `summary.json` or `status.json`). Ids containing `/`, `.`, or `..` are rejected, and superseding a missing or non-run directory exits non-zero with a message.
 
-## Domains & Lenses (337 total across 34 domains)
+## Domains & Lenses
+
+Counts change as lenses are added. Authoritative list: `config/domains.json` (on the order of 35+ domains / ~350 lenses). Snapshot tables below may lag.
 
 ### Code Analysis Domains (used by `audit`, `feature`, `bugfix`, `custom`)
 

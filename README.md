@@ -99,14 +99,15 @@ Helpers: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 
 | | |
 |---|---|
-| [Handoff protocol](docs/en/handoff.md) | File contract & env vars |
-| [Operator notes](docs/en/operator.md) | First runs, quota, triage |
-| [CLI reference](docs/en/full-reference.md) | Modes, flags, domains |
+| [Docs index](docs/README.md) | Reading order (start here for docs) |
+| [Operator guide](docs/en/operator.md) | First runs, domains, resume, toolgate |
+| [IDE handoff](docs/en/handoff.md) | Prompt → response → done |
+| [CLI & modes reference](docs/en/full-reference.md) | Long flag/mode reference |
 | [Upstream sync](UPSTREAM.md) | Merging TheMorpheus407/RepoLens |
 | [Changelog](CHANGELOG.md) | Cursor Edition + upstream history |
 | [Methodology](METHODOLOGY.md) | How lenses are designed |
 
-German copies of handoff/operator live under [`docs/de/`](docs/de/).
+Deutsch: [docs/de/](docs/de/) (Index, Operator, Handoff).
 
 ## License
 

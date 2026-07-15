@@ -1,5 +1,21 @@
 # Finding Registry Schema (`findings.jsonl` + `findings.csv`)
 
+<p align="right">
+  <a href="README.md">Docs index</a> ·
+  <a href="en/operator.md">Operator</a>
+</p>
+
+## In plain terms
+
+After a run, RepoLens can build a **table of all findings** under `logs/<run-id>/final/`:
+
+- `findings.jsonl` — one JSON object per finding (for scripts)
+- `findings.csv` — same data as a spreadsheet
+
+That table is a **copy for convenience**. The original markdown under `issues/` (and any synthesizer manifest) remains the source material.
+
+---
+
 ## Overview
 
 RepoLens writes a canonical finding registry at `logs/<run-id>/final/findings.jsonl`

@@ -99,14 +99,15 @@ Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 
 | | |
 |---|---|
-| [Handoff-Protokoll](docs/de/handoff.md) | Dateivertrag & Env-Vars |
-| [Operator-Hinweise](docs/de/operator.md) | Erste Läufe, Quota, Triage |
-| [CLI-Referenz](docs/en/full-reference.md) | Modes, Flags, Domains (EN) |
+| [Docs-Index](docs/de/README.md) | Lesereihenfolge (hier starten) |
+| [Operator-Guide](docs/de/operator.md) | Erste Läufe, Domains, Resume, Toolgate |
+| [IDE-Handoff](docs/de/handoff.md) | Prompt → Antwort → Done |
+| [CLI- & Modes-Referenz](docs/en/full-reference.md) | Lange Flag-/Mode-Referenz (EN) |
 | [Upstream-Sync](UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |
-| [Changelog](CHANGELOG.md) | Cursor Edition + Upstream-Historie |
-| [Methodik](METHODOLOGY.md) | Lens-Design |
+| [Changelog](CHANGELOG.md) | Cursor Edition + Upstream |
+| [Methodik](METHODOLOGY.md) | Lens-Design (EN) |
 
-Englische Varianten unter [`docs/en/`](docs/en/).
+English index: [docs/README.md](docs/README.md).
 
 ## Lizenz
 

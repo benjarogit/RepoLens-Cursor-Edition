@@ -1,43 +1,48 @@
 # Upstream sync (RepoLens Cursor Edition)
 
-This repository is a **standalone fork** of [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) with Cursor IDE handoff (`cursor-ide`), local-first defaults, and helper scripts (`repolens_until_done.sh`, `repolens_agent_or_ide.sh`).
+How to pull changes from [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) into this fork.
 
-GitHub: [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition) (`master`).
+GitHub: [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition) (`master`).  
+Pinned SHA: [`UPSTREAM_REVISION`](UPSTREAM_REVISION).
 
-## Remotes (typical)
+## Remotes in this clone (typical)
 
 ```bash
 git remote -v
-# origin / fork  →  benjarogit/RepoLens-Cursor-Edition
-# origin upstream remote often named:
-# origin  → TheMorpheus407/RepoLens   (fetch upstream)
+# origin  → TheMorpheus407/RepoLens          (upstream)
 # fork    → benjarogit/RepoLens-Cursor-Edition
 ```
 
 ```bash
-git fetch origin master   # upstream, if origin points there
+git fetch origin master
 git log -1 --oneline origin/master
-cat UPSTREAM_REVISION
+cat UPSTREAM_REVISION   # should match after a successful sync
 ```
 
-## Merge workflow
+## Merge steps
 
 1. Clean working tree (commit or stash).
-2. `git merge origin/master` (or `upstream/master`).
-3. Resolve conflicts: prefer **upstream** for neutral tooling (lenses, ledger, triage, tests); prefer **fork** for Cursor handoff (`lib/cursor_runner.sh`, `cursor-ide` branches in `repolens.sh` / `lib/core.sh`).
-4. `bash -n repolens.sh lib/core.sh lib/summary.sh lib/cursor_runner.sh`
-5. Update [`UPSTREAM_REVISION`](UPSTREAM_REVISION) to the upstream SHA you merged.
-6. Smoke: `./repolens.sh --help` and a narrow `--domain security --local --dry-run` if available.
+2. `git merge origin/master`.
+3. On conflicts:
+   - **Take upstream** for lenses, ledger, triage, tests, neutral `lib/*.sh`
+   - **Keep fork** for Cursor handoff (`lib/cursor_runner.sh`, `cursor-ide` paths in `repolens.sh` / `lib/core.sh` / `lib/summary.sh`)
+4. Sanity: `bash -n repolens.sh lib/core.sh lib/summary.sh lib/cursor_runner.sh`
+5. Write the merged upstream SHA into `UPSTREAM_REVISION`.
+6. Optional smoke: `./repolens.sh --help`
 
-### Fork-specific paths (review carefully)
+## Fork-only paths (review every sync)
 
 | Area | Paths |
 |------|--------|
-| Cursor IDE / CTL | `repolens.sh`, `lib/cursor_runner.sh`, `lib/core.sh`, `lib/summary.sh` |
-| Resume wrappers | `repolens_until_done.sh`, `repolens_agent_or_ide.sh` |
-| Cursor rules / skill | `.cursor/rules/`, `.cursor/skills/audit-pipeline/` |
-| Docs / branding | `README.md`, `README.de.md`, `docs/`, this file |
+| Cursor IDE | `repolens.sh`, `lib/cursor_runner.sh`, `lib/core.sh`, `lib/summary.sh` |
+| Wrappers | `repolens_until_done.sh`, `repolens_agent_or_ide.sh` |
+| Cursor UX | `.cursor/rules/`, `.cursor/skills/audit-pipeline/` |
+| Docs / brand | `README.md`, `README.de.md`, `docs/`, this file |
 
 ## Publish
 
-Push to `fork` / `benjarogit/RepoLens-Cursor-Edition` after merge and docs updates. Do not add Cursor co-author trailers to commits.
+```bash
+git push fork master
+```
+
+Do not add Cursor co-author trailers to commits.

@@ -1,47 +1,60 @@
-# IDE handoff protocol
+# IDE handoff (simple)
 
 <p align="right">
   <strong>English</strong> · <a href="../de/handoff.md">Deutsch</a>
+  · <a href="../README.md">Docs index</a>
   · <a href="../../README.md">README</a>
 </p>
 
-When `--agent cursor-ide` is set, RepoLens does not spawn an external agent CLI. It waits for the Cursor chat agent to finish each lens iteration via files.
+With `--agent cursor-ide`, RepoLens does **not** call Claude/Codex/`cursor-agent`.  
+It writes a prompt file and waits until the **Cursor chat** answers via files.
 
-## Flow
+## In one sentence
+
+**Read prompt → write answer → touch done** — repeat until the run finishes.
+
+## Step by step
 
 ```
-repolens.sh  →  writes prompt  →  REPOLENS_CTL (stderr + ndjson)
-     ↑                                      ↓
-  touch done  ←  agent writes response  ←  Cursor Agent
+repolens.sh  →  writes prompt  →  prints REPOLENS_CTL
+     ↑                                    ↓
+  touch done  ←  you/agent write response
 ```
 
-1. Read CTL event: stderr `REPOLENS_CTL {…}` or `logs/<run-id>/repolens-ctl.ndjson` (`kind: ide_handoff`)
-2. Open `files.prompt`
-3. Run the lens in chat (project context)
-4. Write the full answer to `files.response` (≥ `REPOLENS_IDE_MIN_RESPONSE_BYTES`, default 400)
-5. `touch files.done`
+1. Watch the terminal (or `logs/<run-id>/repolens-ctl.ndjson`) for `REPOLENS_CTL` with `"kind":"ide_handoff"`.
+2. Open `files.prompt` from that JSON.
+3. Run the lens in chat (look at the **target** project).
+4. Save the **full** answer to `files.response` (at least ~400 bytes; no empty stubs).
+5. `touch files.done`.
 
-## Quality
+Then RepoLens continues with the next iteration or lens.
 
-- Real findings or `DONE` — no stub boilerplate
-- Per finding: path, severity, one-line exploit, fix
-- Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1`
+## Good answers look like
 
-## Useful env
+- Real findings, or a clear `DONE` if nothing to report
+- Per finding: **path**, **severity**, one-line **risk**, **fix**
+- No filler (“automatic run”, empty placeholders)
 
-| Variable | Role |
-|----------|------|
-| `REPOLENS_IDE_AUTONOMOUS=1` | Mark handoffs for autonomous agents |
-| `REPOLENS_IDE_FAIL_FAST=1` | Stop lens on rejected/missing response (default) |
-| `REPOLENS_CURSOR_IDE_POLL_SEC` | Poll interval while waiting |
+Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
+
+## Useful environment variables
+
+| Variable | Meaning |
+|----------|---------|
+| `REPOLENS_IDE_AUTONOMOUS=1` | Handoffs marked for an autonomous agent |
+| `REPOLENS_IDE_FAIL_FAST=1` | Stop the lens on bad/missing response (default) |
+| `REPOLENS_CURSOR_IDE_POLL_SEC` | How often to check for `done` |
 | `REPOLENS_CURSOR_IDE_MAX_WAIT_SEC` | Max wait per iteration |
 
-## Stall / resume
+## Stuck?
 
-Check `logs/<run-id>/summary.json`, then:
+1. Check `logs/<run-id>/summary.json`.
+2. Resume:
 
-```bash
-./repolens.sh --resume <run-id> --project <path> --agent cursor-ide --local --yes
-```
+   ```bash
+   ./repolens.sh --resume <run-id> \
+     --project /path/to/repo \
+     --agent cursor-ide --local --yes
+   ```
 
-See also: [Operator notes](operator.md)
+See also: [Operator guide](operator.md) · [Cursor rules](../../.cursor/rules/repolens-ide-handoff.mdc)

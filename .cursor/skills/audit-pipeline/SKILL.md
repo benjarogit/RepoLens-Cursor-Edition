@@ -4,53 +4,37 @@ description: Struktur-Audit dann RepoLens (Cursor Edition) auf ein Projekt aus d
 disable-model-invocation: true
 ---
 
-# Audit-Pipeline: Struktur-Audit → RepoLens
+# Audit-Pipeline: Struktur zuerst, dann RepoLens
 
-Zweistufiger Lauf aus **einem Chat**:
+Zwei Phasen in **einem** Cursor-Chat:
 
-1. **Struktur-Audit** (read-only, kein Code ändern)
-2. **RepoLens Cursor Edition** (`cursor-ide`, `--local`) — Lenses mit Handoff-Protokoll
+1. **Struktur-Audit** — nur lesen, nichts am Zielcode ändern  
+2. **RepoLens** — `--agent cursor-ide --local` mit IDE-Handoff
 
-## Agent-Pflicht (dieser Fork)
+## Immer so starten
 
-**Immer** `--agent cursor-ide --local`. Niemals `claude`, `codex`, `opencode`, `cursor` (CLI) o. Ä. — auch nicht als „schneller Fallback“. Andere Backends brauchen externe Logins und umgehen `REPOLENS_CTL`-Handoff.
-
-Siehe Rules: `repolens-agent-cursor-ide-only`, `repolens-ide-handoff`.
-
-## Voraussetzungen
-
-- `bash` 4+, `git`, `jq`, `timeout` installiert
-- RepoLens-Root: dieses Repo (oder `REPOLENS_ROOT` auf den Clone zeigen)
-- Zielprojekt: `--project` Pfad oder Workspace-Root
-- Cursor-Chat, der IDE-Handoffs bedient (dieser Agent)
-
-## Chat-Befehle (Beispiele)
-
-```
-Audit-Pipeline für /pfad/zu/projekt — Domain security
-Struktur-Audit und RepoLens auf dieses Repo
-Starte audit-pipeline mit --domain security --human-review
+```bash
+--agent cursor-ide --local
 ```
 
-## Phase 1 — Struktur-Audit
+Nicht `claude` / `codex` / `opencode` / `cursor` (CLI) — die umgehen den Handoff.
 
-1. Lies die Architektur-/Datenfluss-Oberfläche des Zielprojekts (Entry points, Auth, Secrets, Persistenz).
-2. **Keine Code-Änderungen** am Zielprojekt.
-3. Schreibe den Bericht nach:
+Rules: `repolens-agent-cursor-ide-only`, `repolens-ide-handoff`.  
+Menschliche Doku: `docs/de/operator.md`, `docs/de/handoff.md`.
+
+## Phase 1 — Struktur
+
+1. Zielprojekt grob verstehen (Einstiege, Auth, Secrets, Datenfluss).
+2. Bericht schreiben nach:
 
    ```
    <ZIELPROJEKT>/.audit/struktur-audit-<YYYY-MM-DD>.md
    ```
 
-   Verzeichnis `.audit/` anlegen falls nötig. Kurz in Phase-2-Prompt referenzieren (Architektur-Risiken, Datenfluss-Brüche).
-
-## Phase 2 — RepoLens starten
-
-Im Terminal (Hintergrund, `block_until_ms: 0`):
+## Phase 2 — RepoLens
 
 ```bash
 export REPOLENS_IDE_AUTONOMOUS=1
-# Default: dieses Repo, wenn der Skill aus dem Fork-Workspace läuft
 export REPOLENS_ROOT="${REPOLENS_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 "$REPOLENS_ROOT/repolens.sh" \
@@ -62,40 +46,27 @@ export REPOLENS_ROOT="${REPOLENS_ROOT:-$(git rev-parse --show-toplevel 2>/dev/nu
   ${HUMAN_REVIEW:+--human-review}
 ```
 
-Optionale Variablen vom Nutzer:
+Optionen vom Nutzer: `--domain`, `--focus`, `--human-review`, `--mode audit` (nur wenn explizit gewünscht), `--resume <run-id>`.
 
-| Parameter | Flag / Env |
-|-----------|------------|
-| Domain | `--domain security` (Default), `architecture`, `llm-security`, … |
-| Eine Lens | `--focus injection` (+ `--domain security`) |
-| Noise-Budget | `--human-review` |
-| Voller Audit | `--mode audit` (lang, teuer — nur wenn explizit gewünscht) |
-| Resume | `--resume <run-id>` |
+## Handoff (Pflicht)
 
-`run-id` steht in der Terminal-Ausgabe und unter `$REPOLENS_ROOT/logs/<run-id>/`.
+Bei `REPOLENS_CTL` / `kind: ide_handoff`:
 
-## Phase 2 — IDE-Handoff (Pflicht)
+1. `files.prompt` lesen  
+2. Lens hier im Chat ausführen (Struktur-Bericht als Kontext)  
+3. Volle Antwort → `files.response` (≥ ~400 Bytes)  
+4. `touch files.done`
 
-RepoLens wartet auf **dich (den Agent)**. Bei jeder Zeile `REPOLENS_CTL {…}` mit `"kind":"ide_handoff"`:
+Bei Abbruch: `summary.json` → `--resume`.
 
-1. `files.prompt` lesen
-2. Lens in **diesem Chat** ausführen (Projekt-Kontext + Struktur-Audit-Bericht als Hintergrund)
-3. **Vollständige** Antwort nach `files.response` schreiben (≥ 400 Bytes, keine Stub-Texte)
-4. `touch files.done` im Terminal
-
-Terminal-Output auf `REPOLENS_CTL` oder `ide_handoff` prüfen. Bei Rate-Limit / Abbruch: `summary.json` lesen, mit `--resume <run-id>` fortsetzen.
-
-Stub nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1`.
-
-## Abschluss
+## Ende
 
 - Findings: `$REPOLENS_ROOT/logs/<run-id>/issues/`
-- Mit `--human-review`: auch `final/`-Triage-Artefakte
-- Kurze Chat-Zusammenfassung: Anzahl Findings, Top-3, Pfad zum Run
+- Kurze Chat-Zusammenfassung: Anzahl, Top-3, Run-Pfad
 
-## Was nicht tun
+## Nicht tun
 
-- **Kein** `--agent claude|codex|opencode|cursor` — nur `cursor-ide`
-- Keinen Subagent für die Handoff-Schleife (Terminal-Verlust)
-- Phase 1 nicht überspringen, wenn der Nutzer „Struktur-Audit und RepoLens“ sagt
-- Nicht `--mode audit` ohne explizite Nutzerfreigabe (Kosten/Zeit)
+- Andere `--agent`-Werte als Fallback
+- Subagent nur für die Handoff-Schleife (Terminal weg)
+- Phase 1 überspringen, wenn der Nutzer beides will
+- Großes `--mode audit` ohne Freigabe

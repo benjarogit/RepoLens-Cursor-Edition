@@ -1,12 +1,14 @@
 # Lens-Based Auditing: The RepoLens Methodology
 
-> **Version:** v0.1 — This document is a preliminary draft/stub. Sections will be expanded in future revisions.
+> **Operators of Cursor Edition:** start with [README](README.md) / [docs](docs/README.md). This file explains *why* lenses exist; it is not a how-to.
+
+> **Version:** draft. Lens/domain counts below may lag — live numbers live in `config/domains.json` (on the order of 35+ domains / ~350 lenses).
 
 ---
 
 ## Abstract
 
-RepoLens implements **Lens-Based Auditing (LBA)**, a methodology for automated code analysis that decomposes the audit problem into 337 narrow-focus specialist agents ("lenses") across 34 domains. Rather than asking a single generalist agent to review an entire codebase for every possible concern, LBA assigns each concern to a dedicated expert lens — one that examines the code through a single, specific perspective.
+RepoLens implements **Lens-Based Auditing (LBA)**, a methodology for automated code analysis that decomposes the audit problem into many narrow-focus specialist agents ("lenses") across dozens of domains. Rather than asking a single generalist agent to review an entire codebase for every possible concern, LBA assigns each concern to a dedicated expert lens — one that examines the code through a single, specific perspective.
 
 The tool currently supports 12 modes of operation (audit, feature, bugfix, bugreport, discover, deploy, opensource, content, greenfield, custom, polish, spec-change), multiple agent backends, parallel execution, automated issue creation, and ranked polishing shortlists. This document describes the methodology behind the tool: what Lensing is, why it works, and how its components fit together.
 

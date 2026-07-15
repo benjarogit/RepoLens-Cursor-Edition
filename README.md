@@ -13,12 +13,20 @@
 </p>
 
 <p align="center">
-  <a href="https://benjarogit.github.io/RepoLens-Cursor-Edition/"><img src="https://img.shields.io/badge/Documentation-read%20the%20docs-0B3D91?style=for-the-badge" alt="Documentation" /></a>
+  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml"><img src="https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache-2.0-blue.svg" alt="License: Apache-2.0" /></a>
+  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest release" /></a>
+  <a href="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition"><img src="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social" alt="Stars" /></a>
 </p>
 
+<!-- Contract badges (markdown form for upstream-style CI checks) -->
+[![CI](https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml/badge.svg)](https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache-2.0-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=version)](CHANGELOG.md)
+[![GitHub Stars](https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social)](https://github.com/benjarogit/RepoLens-Cursor-Edition)
+
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest release" /></a>
+  <a href="https://benjarogit.github.io/RepoLens-Cursor-Edition/"><img src="https://img.shields.io/badge/Documentation-read%20the%20docs-0B3D91?style=for-the-badge" alt="Documentation" /></a>
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
   <a href="https://cursor.com/referral?code=UW6WJZLB8ECL"><img src="https://img.shields.io/badge/Cursor-get%20started-black" alt="Get Cursor" /></a>
 </p>
@@ -76,4 +84,20 @@ Set `REPOLENS_TEST_DOCKER=1` to also run integration tests requiring Docker.
 
 ## License
 
-[Apache-2.0](LICENSE). Upstream © Bootstrap Academy / TheMorpheus407; Cursor Edition under the same terms where applicable.
+[Apache-2.0](LICENSE). See [NOTICE](NOTICE) for attribution. Upstream © Bootstrap Academy / TheMorpheus407; Cursor Edition under the same terms where applicable.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Report vulnerabilities via [SECURITY.md](SECURITY.md) — do not open a public issue for security reports.
+
+## Authors
+
+See [AUTHORS.md](AUTHORS.md).

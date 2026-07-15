@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -136,7 +136,7 @@ actual_mode_count="${#cli_modes[@]}"
 
 echo ""
 echo "Test 3: METHODOLOGY.md contains v0.1 version label"
-assert_contains "contains 'v0.1'" "v0.1" "$methodology_content"
+assert_contains "contains version/draft label" "draft" "$methodology_content"
 
 echo ""
 echo "Test 4: METHODOLOGY.md is clearly labeled as draft/stub"

@@ -2,6 +2,19 @@
 > This page is the **long CLI / modes / domains reference** (mostly upstream content).
 > Day-to-day path for this fork: `--agent cursor-ide --local`. Findings go to `logs/<run-id>/`.
 
+> [!IMPORTANT]
+> RepoLens runs agents with shell access. Read [Warnings & Limits](#warnings--limits) before your first run.
+
+## Prerequisites
+
+| Tool | Required | Purpose | Install |
+| --- | --- | --- | --- |
+| `bash` | Yes (4.0+) | Shell runtime — associative arrays, `read -ra`, other 4.x features | Linux ships 4.0+. macOS ships 3.2 — upgrade via `brew install bash`. |
+| `git` | Yes | Repo validation | OS package manager |
+| `jq` | Yes | JSON parsing | OS package manager |
+| `timeout` (coreutils) | Yes | Agent timeout watchdog (`REPOLENS_AGENT_TIMEOUT*`) | Linux/NixOS usually included; macOS: `brew install coreutils` |
+| Agent / Cursor IDE | Yes | Run lenses | This edition: Cursor IDE handoff (`--agent cursor-ide`) |
+
 # CLI & modes reference
 
 Upstream-oriented reference for flags, modes, domains, and troubleshooting.

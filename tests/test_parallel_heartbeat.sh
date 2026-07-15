@@ -24,6 +24,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
 source "$SCRIPT_DIR/lib/logging.sh"
 source "$SCRIPT_DIR/lib/parallel.sh"
@@ -211,7 +214,7 @@ assert_contains "sem_acquire emits heartbeat while blocked" "_repolens_emit_hear
 assert_contains "repolens.sh documents REPOLENS_HEARTBEAT_INTERVAL" \
                 "REPOLENS_HEARTBEAT_INTERVAL" "$(grep 'REPOLENS_HEARTBEAT_INTERVAL' "$SCRIPT_DIR/repolens.sh" || true)"
 assert_contains "README.md documents REPOLENS_HEARTBEAT_INTERVAL" \
-                "REPOLENS_HEARTBEAT_INTERVAL" "$(grep 'REPOLENS_HEARTBEAT_INTERVAL' "$SCRIPT_DIR/README.md" || true)"
+                "REPOLENS_HEARTBEAT_INTERVAL" "$(grep 'REPOLENS_HEARTBEAT_INTERVAL' "$OPERATOR_DOC" || true)"
 
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="

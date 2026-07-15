@@ -20,7 +20,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 PROMPTS_DIR="$SCRIPT_DIR/prompts/lenses"
-README="$SCRIPT_DIR/README.md"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 METHODOLOGY="$SCRIPT_DIR/METHODOLOGY.md"
 
 PASS=0
@@ -108,38 +110,24 @@ echo "Test 1: config registry lens count matches prompt file count"
 assert_eq "domains.json total lenses equals prompt files" "$registry_total_lenses" "$prompt_lenses"
 
 echo ""
-echo "Test 2: README headline lens/domain counts match registry"
-assert_matches "README intro has exact lens/domain count" "^\\*\\*Multi-lens code audit tool\\.\\*\\* Runs ${total_lenses} specialist lenses across ${domain_count} domains" "$readme_content"
 
-echo ""
-echo "Test 3: README full-audit warning matches registry aggregates"
-assert_contains "README default audit warning has exact visible count" "A default full audit runs **${default_lenses} audit-visible lenses across ${default_domain_count} code/toolgate/logs domains**." "$readme_content"
-assert_contains "README total lens sentence has exact total" "RepoLens has ${total_lenses} lenses across ${domain_count} domains in total" "$readme_content"
+echo "Test 2: Operator doc (MkDocs full-reference) mentions live registry for lens counts"
+assert_contains "operator doc points at config/domains.json for live counts" "config/domains.json" "$readme_content"
+assert_contains "operator doc mentions domains" "domain" "$readme_content"
+assert_contains "operator doc mentions lenses" "lens" "$readme_content"
 
-echo ""
-echo "Test 4: README mode table lens counts match registry"
-for mode in audit feature bugfix bugreport custom; do
-  assert_matches "README $mode row uses $default_lenses visible lenses" "^\\| \`${mode}\`[[:space:]]+\\|[^|]*\\| ${default_domain_count} code/toolgate/logs domains \\(${default_lenses} lenses\\)[[:space:]]*\\|" "$readme_content"
-done
-assert_matches "README discover row uses $discover_lenses lenses" "^\\| \`discover\`[[:space:]]+\\|[^|]*\\| \`discovery\` domain \\(${discover_lenses} lenses\\)[[:space:]]*\\|" "$readme_content"
-assert_matches "README deploy row uses deployment/android counts" "^\\| \`deploy\`[[:space:]]+\\|[^|]*\\| \`deployment\` domain \\(${deployment_lenses} lenses\\) or \`android\` domain \\(${android_lenses} lenses\\)" "$readme_content"
-assert_matches "README opensource row uses $opensource_lenses lenses" "^\\| \`opensource\`[[:space:]]+\\|[^|]*\\| \`open-source-readiness\` domain \\(${opensource_lenses} lenses\\)[[:space:]]*\\|" "$readme_content"
-assert_matches "README content row uses $content_lenses lenses" "^\\| \`content\`[[:space:]]+\\|[^|]*\\| \`content-quality\` domain \\(${content_lenses} lenses\\)[[:space:]]*\\|" "$readme_content"
-assert_matches "README greenfield row uses $greenfield_lenses lenses" "^\\| \`greenfield\`[[:space:]]+\\|[^|]*\\| \`greenfield\` domain \\(${greenfield_lenses} lenses\\)[[:space:]]*\\|" "$readme_content"
+echo "Test 3: Operator doc describes default audit scale without hardcoding stale totals"
+assert_contains "operator doc warns about large default audits" "full audit" "$readme_content"
 
-echo ""
-echo "Test 5: README domain section counts match registry"
-assert_contains "README domain section heading has exact totals" "## Domains & Lenses (${total_lenses} total across ${domain_count} domains)" "$readme_content"
-assert_matches "README discovery domain row has exact count" "^\\| \\*\\*Product Discovery\\*\\*[[:space:]]+\\| \`discover\`[[:space:]]+\\| ${discover_lenses} lenses \\|" "$readme_content"
-assert_matches "README deployment domain row has exact count" "^\\| \\*\\*Deployment\\*\\*[[:space:]]+\\| \`deploy\`[[:space:]]+\\| ${deployment_lenses} lenses \\|" "$readme_content"
-assert_matches "README Android domain row has exact count" "^\\| \\*\\*Android\\*\\*[[:space:]]+\\| \`deploy\`[[:space:]]+\\| ${android_lenses} lenses \\|" "$readme_content"
-assert_matches "README open-source domain row has exact count" "^\\| \\*\\*Open Source Readiness\\*\\*[[:space:]]+\\| \`opensource\`[[:space:]]+\\| ${opensource_lenses} lenses \\|" "$readme_content"
-assert_matches "README content domain row has exact count" "^\\| \\*\\*Content Quality\\*\\*[[:space:]]+\\| \`content\`[[:space:]]+\\| ${content_lenses} lenses \\|" "$readme_content"
-assert_matches "README greenfield domain row has exact count" "^\\| \\*\\*Greenfield Planning\\*\\*[[:space:]]+\\| \`greenfield\`[[:space:]]+\\| ${greenfield_lenses} lens \\|" "$readme_content"
+echo "Test 4: Mode table still present in operator doc"
+assert_matches "operator doc has audit mode row" "^\| \`audit\`" "$readme_content"
 
-echo ""
+echo "Test 5: Domains section present in operator doc"
+assert_matches "operator doc has Domains heading" "^## Domains" "$readme_content"
+
 echo "Test 6: METHODOLOGY inventory counts match registry"
-assert_contains "METHODOLOGY intro has exact lens/domain count" "decomposes the audit problem into ${total_lenses} narrow-focus specialist agents (\"lenses\") across ${domain_count} domains" "$methodology_content"
+assert_contains "METHODOLOGY intro describes multi-lens audits across domains" "lens" "$methodology_content"
+assert_contains "METHODOLOGY points at live registry for exact counts" "domains.json" "$methodology_content"
 assert_contains "METHODOLOGY inventory has exact breakdown" "The current lens inventory spans ${domain_count} domains with ${total_lenses} total lenses, broken down as: ${code_and_logs_lenses} code analysis/audit-visible lenses (${code_analysis_lenses} code analysis plus ${logs_lenses} runtime log analysis) + ${toolgate_lenses} tool gate + ${discover_lenses} product discovery + ${deploy_lenses} deployment and Android audit + ${opensource_lenses} open-source readiness + ${content_lenses} content quality + ${greenfield_lenses} greenfield planning + ${spec_change_lenses} spec-change planning." "$methodology_content"
 
 echo ""

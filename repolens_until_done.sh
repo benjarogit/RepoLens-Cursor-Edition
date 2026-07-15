@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Run RepoLens to completion across Cursor CLI quota windows: call repolens.sh,
 # then --resume the same RUN_ID after sleeps when rate-limited or when lenses

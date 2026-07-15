@@ -21,8 +21,11 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 REPOLENS="$SCRIPT_DIR/repolens.sh"
-README_FILE="$SCRIPT_DIR/README.md"
+README_FILE="$LANDING_README"
 CI_FILE="$SCRIPT_DIR/.github/workflows/ci.yml"
 CONTRIBUTING_FILE="$SCRIPT_DIR/CONTRIBUTING.md"
 REMOTE_KEY="$SCRIPT_DIR/tests/fixtures/test_key"

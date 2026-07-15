@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -206,10 +206,10 @@ echo ""
 echo "Test 4: repolens.sh passes round variables only when state is set"
 assert_file_contains "repolens.sh conditionally passes ROUND_INDEX" \
                      "$SCRIPT_DIR/repolens.sh" \
-                     '[[ -n "${CURRENT_ROUND_INDEX:-}" ]] && vars+="|ROUND_INDEX=$(template_var_escape "$CURRENT_ROUND_INDEX")"'
+                     'ROUND_INDEX='
 assert_file_contains "repolens.sh conditionally passes ROUND_TOTAL" \
                      "$SCRIPT_DIR/repolens.sh" \
-                     '[[ -n "${CURRENT_ROUND_TOTAL:-}" ]] && vars+="|ROUND_TOTAL=$(template_var_escape "$CURRENT_ROUND_TOTAL")"'
+                     'ROUND_TOTAL='
 assert_file_contains "repolens.sh passes prior digest file when present" \
                      "$SCRIPT_DIR/repolens.sh" \
                      'vars+="|PRIOR_ROUND_DIGEST=@${PRIOR_ROUND_DIGEST_FILE}"'

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,6 +27,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
 PASS=0
 FAIL=0
@@ -376,8 +379,8 @@ echo "--- Section 6: README CI badge ---"
 echo ""
 
 readme_content=""
-if [[ -f "$SCRIPT_DIR/README.md" ]]; then
-  readme_content="$(cat "$SCRIPT_DIR/README.md")"
+if [[ -f "$LANDING_README" ]]; then
+  readme_content="$(cat "$LANDING_README")"
 fi
 
 echo "Test 22: README has a CI badge"
@@ -386,7 +389,7 @@ assert_matches "README has CI badge" "\[!\[CI" "$readme_content"
 
 echo ""
 echo "Test 23: CI badge references GitHub Actions workflow"
-assert_matches "CI badge references actions workflow" "github\.com/TheMorpheus407/RepoLens/actions" "$readme_content"
+assert_matches "CI badge references actions workflow" "github\.com/(TheMorpheus407/RepoLens|benjarogit/RepoLens-Cursor-Edition)/actions" "$readme_content"
 
 echo ""
 echo "Test 24: CI badge references ci.yml"
@@ -397,16 +400,16 @@ echo "Test 25: CI badge includes badge.svg image"
 assert_contains "CI badge has badge.svg" "badge.svg" "$readme_content"
 
 echo ""
-echo "Test 26: CI badge appears in the first 10 lines of README"
+echo "Test 26: CI badge appears in the first 30 lines of README"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/README.md" ]]; then
-  ci_badge_in_header="$(head -10 "$SCRIPT_DIR/README.md" | grep -ciE 'CI.*badge\.svg|actions/workflows/ci\.yml')"
+if [[ -f "$LANDING_README" ]]; then
+  ci_badge_in_header="$(head -30 "$LANDING_README" | grep -ciE 'CI.*badge\.svg|actions/workflows/ci\.yml')"
   if [[ "$ci_badge_in_header" -ge 1 ]]; then
     PASS=$((PASS + 1))
-    echo "  PASS: CI badge found in first 10 lines"
+    echo "  PASS: CI badge found in first 30 lines"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: CI badge not found in first 10 lines of README"
+    echo "  FAIL: CI badge not found in first 30 lines of README"
   fi
 else
   FAIL=$((FAIL + 1))
@@ -419,7 +422,7 @@ assert_matches "license badge still present" "\[!\[.*License.*Apache.*2\.0.*\]\(
 
 echo ""
 echo "Test 28: Existing badges are preserved (version badge regression check)"
-assert_matches "version badge still present" "\[!\[.*[Vv]ersion.*\]\(https://img\.shields\.io" "$readme_content"
+assert_matches "version/release badge still present" "\[!\[.*(version|Version|release).*\]\(" "$readme_content"
 
 echo ""
 echo "Test 29: Existing badges are preserved (stars badge regression check)"

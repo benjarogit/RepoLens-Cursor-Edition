@@ -26,6 +26,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/logging.sh"
@@ -413,7 +416,7 @@ else
 fi
 
 TOTAL=$((TOTAL + 1))
-if grep -q 'REPOLENS_CLEANUP_GRACE' "$SCRIPT_DIR/README.md"; then
+if grep -q 'REPOLENS_CLEANUP_GRACE' "$OPERATOR_DOC"; then
   PASS=$((PASS + 1))
   echo "  PASS: README.md documents REPOLENS_CLEANUP_GRACE"
 else

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -138,7 +138,7 @@ TOTAL=$((TOTAL + 1))
 wrong_year=()
 for f in "${sh_files[@]}"; do
   line2="$(sed -n '2p' "$f")"
-  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens)." ]]; then
+  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy" ]]; then
     wrong_year+=("$(basename "$f")")
   fi
 done
@@ -358,12 +358,12 @@ echo "Test 12: NOTICE upstream copyright is on line 2 (Bootstrap Academy)"
 TOTAL=$((TOTAL + 1))
 if [[ -f "$SCRIPT_DIR/NOTICE" ]]; then
   line2="$(sed -n '2p' "$SCRIPT_DIR/NOTICE")"
-  if [[ "$line2" == "Copyright 2025-2026 Bootstrap Academy (upstream RepoLens)." ]]; then
+  if [[ "$line2" == "Copyright 2025-2026 Bootstrap Academy" ]]; then
     PASS=$((PASS + 1))
     echo "  PASS: NOTICE line 2 is upstream RepoLens copyright (Bootstrap Academy)"
   else
     FAIL=$((FAIL + 1))
-    echo "  FAIL: NOTICE line 2 is '$line2', expected 'Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).'"
+    echo "  FAIL: NOTICE line 2 is '$line2', expected 'Copyright 2025-2026 Bootstrap Academy'"
   fi
 else
   FAIL=$((FAIL + 1))

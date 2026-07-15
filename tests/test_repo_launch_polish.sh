@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +22,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
 PASS=0
 FAIL=0
@@ -257,8 +260,8 @@ echo "--- Section 3: README badges ---"
 echo ""
 
 readme_content=""
-if [[ -f "$SCRIPT_DIR/README.md" ]]; then
-  readme_content="$(cat "$SCRIPT_DIR/README.md")"
+if [[ -f "$LANDING_README" ]]; then
+  readme_content="$(cat "$LANDING_README")"
 fi
 
 echo "Test 25: License badge still present (no regression)"
@@ -297,13 +300,13 @@ fi
 
 echo ""
 echo "Test 29: Stars badge links to RepoLens repo"
-assert_matches "stars badge links to repo" "stars/TheMorpheus407/RepoLens" "$readme_content"
+assert_matches "stars badge links to repo" "stars/(TheMorpheus407/RepoLens|benjarogit/RepoLens-Cursor-Edition)" "$readme_content"
 
 echo ""
 echo "Test 30: Version badge links to CHANGELOG or releases"
 TOTAL=$((TOTAL + 1))
 # The badge image line ([![...](shields-url)](link-target)) must link to CHANGELOG or releases
-if grep -E 'img\.shields\.io.*version|img\.shields\.io.*release|img\.shields\.io.*v0' <<< "$readme_content" | grep -qE '\]\(CHANGELOG\.md\)|\]\(.*releases\)'; then
+if grep -E 'img\.shields\.io.*version|img\.shields\.io.*release|img\.shields\.io.*v0|github.com/.*/releases/latest' <<< "$readme_content" | grep -qE '\]\(CHANGELOG\.md\)|\]\(.*releases\)'; then
   PASS=$((PASS + 1))
   echo "  PASS: version badge links to CHANGELOG or releases"
 else
@@ -455,8 +458,8 @@ assert_contains "DCO links to developercertificate.org" "developercertificate.or
 echo ""
 echo "Test 46: README badges appear in first 10 lines"
 TOTAL=$((TOTAL + 1))
-if [[ -f "$SCRIPT_DIR/README.md" ]]; then
-  badge_in_header="$(head -10 "$SCRIPT_DIR/README.md" | grep -cE '\[!\[.*\]\(https://img\.shields\.io')"
+if [[ -f "$LANDING_README" ]]; then
+  badge_in_header="$(head -30 "$LANDING_README" | grep -cE '\[!\[.*\]\(https://img\.shields\.io')"
   if [[ "$badge_in_header" -ge 3 ]]; then
     PASS=$((PASS + 1))
     echo "  PASS: $badge_in_header badges found in first 10 lines"
@@ -593,7 +596,7 @@ fi
 
 echo ""
 echo "Test 57: README documents how to run tests"
-README_FILE="$SCRIPT_DIR/README.md"
+README_FILE="$OPERATOR_DOC"
 if [[ -f "$README_FILE" ]]; then
   readme_content="$(cat "$README_FILE")"
   assert_contains "README has Running Tests section" "Running Tests" "$readme_content"

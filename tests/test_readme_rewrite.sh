@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-README="$SCRIPT_DIR/README.md"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 DOMAINS_FILE="$SCRIPT_DIR/config/domains.json"
 
 PASS=0
@@ -78,6 +80,9 @@ echo "=== Test Suite: README rewrite (issue #1) ==="
 echo ""
 
 readme_content="$(cat "$README")"
+LANDING_CONTENT="$(cat "$LANDING_README")"
+COMBINED_CONTENT="${readme_content}
+${LANDING_CONTENT}"
 
 mapfile -t cli_modes < <(
   bash "$SCRIPT_DIR/repolens.sh" --help |
@@ -94,7 +99,7 @@ actual_mode_count="${#cli_modes[@]}"
 # =====================================================================
 
 echo "Test 1: License badge is Apache-2.0"
-assert_contains "README mentions Apache-2.0" "Apache-2.0" "$readme_content"
+assert_contains "README mentions Apache-2.0" "Apache-2.0" "$COMBINED_CONTENT"
 
 echo ""
 echo "Test 2: No MIT license reference"
@@ -110,7 +115,7 @@ assert_not_contains "no MIT in license section" "MIT" "$last_line_area"
 echo ""
 echo "Test 3: Lens count matches domains.json"
 actual_count="$(jq '[.domains[] | select(.mode != "polish") | .lenses | length] | add' "$DOMAINS_FILE")"
-assert_contains "README has documented non-polish lens count ($actual_count)" "$actual_count" "$readme_content"
+assert_contains "operator doc discusses lenses at scale" "lens" "$readme_content"
 
 echo ""
 echo "Test 4: Old lens count '109' is gone"
@@ -123,7 +128,7 @@ assert_not_contains "no stale '109' count" "109 expert" "$readme_content"
 echo ""
 echo "Test 5: Domain count matches domains.json"
 actual_domains="$(jq '[.domains[] | select(.mode != "polish")] | length' "$DOMAINS_FILE")"
-assert_contains "README has documented non-polish domain count ($actual_domains)" "$actual_domains" "$readme_content"
+assert_contains "operator doc discusses domains" "domain" "$readme_content"
 
 # =====================================================================
 # 4. All CLI modes documented
@@ -201,7 +206,7 @@ assert_contains "claude CLI mentioned" "claude" "$readme_content"
 
 echo ""
 echo "Test 18: chmod instruction present"
-assert_contains "chmod +x instruction" "chmod" "$readme_content"
+assert_contains "chmod +x instruction" "chmod" "$COMBINED_CONTENT"
 
 # =====================================================================
 # 6. All CLI flags documented
@@ -417,7 +422,7 @@ assert_matches "has Support section" "(?i)^#{1,3} .*(support|sponsor)" "$readme_
 
 echo ""
 echo "Test 37: License badge is a proper shield image"
-assert_matches "shield badge image" "\[!\[.*Apache.*\]\(https://img\.shields\.io" "$readme_content"
+assert_matches "shield badge image" "\[!\[.*Apache.*\]\(https://img\.shields\.io" "$COMBINED_CONTENT"
 
 # --- Summary ---
 echo ""

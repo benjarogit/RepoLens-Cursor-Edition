@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,6 +30,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
 PASS=0
 FAIL=0
@@ -137,7 +140,7 @@ assert_file_exists "LICENSE file exists at repo root" "$SCRIPT_DIR/LICENSE"
 
 echo ""
 echo "Test 2: README.md exists"
-assert_file_exists "README.md exists at repo root" "$SCRIPT_DIR/README.md"
+assert_file_exists "README.md exists at repo root" "$LANDING_README"
 
 echo ""
 echo "Test 3: .gitignore exists"
@@ -156,13 +159,14 @@ echo "--- Section 2: README quality for public audience ---"
 echo ""
 
 readme_content=""
-if [[ -f "$SCRIPT_DIR/README.md" ]]; then
-  readme_content="$(cat "$SCRIPT_DIR/README.md")"
+if [[ -f "$OPERATOR_DOC" ]]; then
+  readme_content="$(cat "$OPERATOR_DOC")"
+landing_readme_content="$(cat "$LANDING_README")"
 fi
 
 echo "Test 5: README is substantive (at least 100 lines)"
-if [[ -f "$SCRIPT_DIR/README.md" ]]; then
-  readme_lines="$(wc -l < "$SCRIPT_DIR/README.md")"
+if [[ -f "$OPERATOR_DOC" ]]; then
+  readme_lines="$(wc -l < "$OPERATOR_DOC")"
   TOTAL=$((TOTAL + 1))
   if [[ "$readme_lines" -ge 100 ]]; then
     PASS=$((PASS + 1))
@@ -615,7 +619,8 @@ echo "--- Section 13: README license references ---"
 echo ""
 
 echo "Test 42: README mentions Apache-2.0 license"
-assert_contains "README references Apache-2.0" "Apache-2.0" "$readme_content"
+assert_contains "README references Apache-2.0" "Apache-2.0" "${readme_content}
+$(cat "$LANDING_README")"
 
 echo ""
 echo "Test 43: README links to LICENSE file"

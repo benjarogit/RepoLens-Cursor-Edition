@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -347,7 +347,7 @@ TOTAL=$((TOTAL + 1))
 wrong_position=()
 for f in "${sh_files[@]}"; do
   line2="$(sed -n '2p' "$f")"
-  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens)." ]]; then
+  if [[ "$line2" != "# Copyright 2025-2026 Bootstrap Academy" ]]; then
     wrong_position+=("$(basename "$f")")
   fi
 done
@@ -627,7 +627,7 @@ echo "Test 21: Header text matches the canonical Apache 2.0 boilerplate"
 TOTAL=$((TOTAL + 1))
 # The canonical 13-line Apache 2.0 boilerplate (as a bash comment block)
 read -r -d '' EXPECTED_HEADER << 'ENDOFHEADER' || true
-# Copyright 2025-2026 Bootstrap Academy (upstream RepoLens).
+# Copyright 2025-2026 Bootstrap Academy
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.

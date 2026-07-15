@@ -61,6 +61,11 @@
       "label": "generic premium class (keyword-matched)",
       "input_per_mtok": 15.00,
       "output_per_mtok": 75.00
+    },
+    "auto": {
+      "label": "Cursor Auto (IDE routing)",
+      "input_per_mtok": 0.00,
+      "output_per_mtok": 0.00
     }
   },
   "agent_default_model": {

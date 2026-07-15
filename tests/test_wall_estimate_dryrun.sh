@@ -48,7 +48,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="$SCRIPT_DIR/repolens.sh"
-README="$SCRIPT_DIR/README.md"
+# Cursor Edition: operator/community contracts → MkDocs source
+# shellcheck source=helpers/docs_contract.sh
+source "$SCRIPT_DIR/tests/helpers/docs_contract.sh"
 
 TMP_PARENT="$SCRIPT_DIR/logs/test-wall-estimate"
 mkdir -p "$TMP_PARENT"

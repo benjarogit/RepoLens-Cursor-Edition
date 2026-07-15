@@ -15,6 +15,7 @@
 
 | Doc | Use when |
 |-----|----------|
+| [Toolgate tools](en/toolgate-tools.md) | Which real scanners/linters toolgate may run |
 | [CLI & modes reference](en/full-reference.md) | Flags, modes, longer upstream-style reference |
 | [Finding registry schema](finding-registry-schema.md) | Shape of `findings.jsonl` / CSV |
 | [Upstream sync](../UPSTREAM.md) | Merging TheMorpheus407/RepoLens into this fork |

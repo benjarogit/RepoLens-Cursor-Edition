@@ -74,6 +74,8 @@ Helpers: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`.
 `toolgate` lenses try to **run tools on your machine** (ESLint/Biome, PHPCS, PHPStan/Psalm, ruff, and similar).  
 If a tool is missing, you usually get a `[SETUP]` finding instead of a silent “all clear”.
 
+Full inventory (static + DAST): **[Toolgate tools](toolgate-tools.md)**.
+
 ```bash
 ./repolens.sh ... --domain toolgate --yes
 # or: --domain toolgate --focus lint
@@ -85,6 +87,7 @@ Full multi-lens runs against **vendored library or interpreter mirrors** (for ex
 
 ## More detail
 
+- [Toolgate tools](toolgate-tools.md)
 - [IDE handoff](handoff.md)
 - [CLI & modes reference](full-reference.md)
 - [Audit-pipeline skill](../../.cursor/skills/audit-pipeline/SKILL.md)

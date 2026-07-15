@@ -102,6 +102,7 @@ Helpers: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 |---|---|
 | [Docs index](docs/README.md) | Suggested reading order |
 | [Operator guide](docs/en/operator.md) | First runs, domains, resume, toolgate |
+| [Toolgate tools](docs/en/toolgate-tools.md) | Real scanners/linters toolgate may run |
 | [IDE handoff](docs/en/handoff.md) | Prompt → response → done |
 | [CLI & modes reference](docs/en/full-reference.md) | Longer flag and mode reference |
 | [Upstream sync](UPSTREAM.md) | Merging TheMorpheus407/RepoLens |

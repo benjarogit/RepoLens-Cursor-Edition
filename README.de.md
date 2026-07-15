@@ -102,6 +102,7 @@ Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`
 |---|---|
 | [Docs-Index](docs/de/README.md) | Empfohlene Lesereihenfolge |
 | [Operator-Guide](docs/de/operator.md) | Erste Läufe, Domains, Resume, Toolgate |
+| [Toolgate-Tools](docs/de/toolgate-tools.md) | Echte Scanner/Linter, die Toolgate starten kann |
 | [IDE-Handoff](docs/de/handoff.md) | Prompt → Antwort → Done |
 | [CLI- & Modes-Referenz](docs/en/full-reference.md) | Längere Flag- und Mode-Referenz (EN) |
 | [Upstream-Sync](UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |

@@ -74,6 +74,8 @@ Hilfsskripte: `repolens_until_done.sh`, `repolens_agent_or_ide.sh`.
 `toolgate`-Lenses versuchen, **Tools auf deinem Rechner** zu starten (ESLint/Biome, PHPCS, PHPStan/Psalm, ruff und Ähnliches).  
 Fehlt ein Tool, kommt oft ein `[SETUP]`-Finding statt eines stillen „alles in Ordnung“.
 
+Volle Liste (statisch + DAST): **[Toolgate-Tools](toolgate-tools.md)**.
+
 ```bash
 ./repolens.sh ... --domain toolgate --yes
 # oder: --domain toolgate --focus lint
@@ -85,6 +87,7 @@ Volle Multi-Lens-Läufe gegen **Vendor- oder Interpreter-Spiegel** (z. B. `php
 
 ## Mehr Details
 
+- [Toolgate-Tools](toolgate-tools.md)
 - [IDE-Handoff](handoff.md)
 - [CLI- & Modes-Referenz](../en/full-reference.md) (EN)
 - [Audit-Pipeline-Skill](../../.cursor/skills/audit-pipeline/SKILL.md)

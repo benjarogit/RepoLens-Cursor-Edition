@@ -15,6 +15,7 @@
 
 | Doc | Wann |
 |-----|------|
+| [Toolgate-Tools](toolgate-tools.md) | Welche Scanner/Linter Toolgate starten kann |
 | [CLI- & Modes-Referenz](../en/full-reference.md) | Flags, Modes, längere Upstream-Referenz (EN) |
 | [Finding-Registry-Schema](../finding-registry-schema.md) | Aufbau von `findings.jsonl` / CSV (EN) |
 | [Upstream-Sync](../UPSTREAM.md) | Merge von TheMorpheus407/RepoLens |

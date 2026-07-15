@@ -6,21 +6,9 @@ hide:
   - toc
 ---
 
-<div class="rl-hero" markdown>
-
-<div class="rl-hero__mark" markdown>
-![RepoLens](assets/logo-light.png){ width="88" }
-</div>
-
-<div class="rl-hero__copy" markdown>
-
 # RepoLens Cursor Edition
 
 Multi-Lens-Audits **in der Cursor-IDE** — Findings als lokale Dateien, ohne separate Agent-CLI.
-
-</div>
-
-</div>
 
 Hier starten, Referenz nutzen wenn Flags und Schemas gebraucht werden.
 

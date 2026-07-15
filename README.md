@@ -29,6 +29,9 @@
 
 <p align="center">
   <a href="https://benjarogit.github.io/RepoLens-Cursor-Edition/"><img src="https://img.shields.io/badge/Documentation-read%20the%20docs-0B3D91?style=for-the-badge" alt="Documentation" /></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
   <a href="https://cursor.com/referral?code=UW6WJZLB8ECL"><img src="https://img.shields.io/badge/Cursor-get%20started-black" alt="Get Cursor" /></a>
 </p>

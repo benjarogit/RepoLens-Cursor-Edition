@@ -14,13 +14,16 @@
 
 <p align="center">
   <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml"><img src="https://github.com/benjarogit/RepoLens-Cursor-Edition/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Lizenz: Apache-2.0" /></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=version" alt="Version" /></a>
+  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition"><img src="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social" alt="Stars" /></a>
+</p>
+
+<p align="center">
   <a href="https://benjarogit.github.io/RepoLens-Cursor-Edition/de/"><img src="https://img.shields.io/badge/Dokumentation-Docs%20lesen-0B3D91?style=for-the-badge" alt="Dokumentation" /></a>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Lizenz" /></a>
-  <a href="https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/latest"><img src="https://img.shields.io/github/v/release/benjarogit/RepoLens-Cursor-Edition?label=release" alt="Latest Release" /></a>
-  <a href="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social"><img src="https://img.shields.io/github/stars/benjarogit/RepoLens-Cursor-Edition?style=social" alt="Stars" /></a>
   <a href="https://github.com/TheMorpheus407/RepoLens"><img src="https://img.shields.io/badge/upstream-RepoLens-informational" alt="Upstream" /></a>
   <a href="https://cursor.com/referral?code=UW6WJZLB8ECL"><img src="https://img.shields.io/badge/Cursor-starten-black" alt="Cursor starten" /></a>
 </p>

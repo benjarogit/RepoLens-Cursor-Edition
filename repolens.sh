@@ -402,8 +402,12 @@ Environment:
   REPOLENS_IDE_MIN_RESPONSE_BYTES
                            Minimum size (bytes) for ide-response-iter-N.txt after
                            stripping padding lines, when stubs are not allowed
-                           (default: 400). Replies also need a path/proof anchor;
-                           # continuity / # pad filler blocks are rejected.
+                           (default: 400). Replies need Method+Findings, ≥2
+                           existing path:line anchors, and must not be automation
+                           / grep-worker templates (# continuity padding rejected).
+  REPOLENS_IDE_MIN_PATH_LINE_ANCHORS
+                           Minimum distinct repo-relative path:line anchors
+                           required in an ide-response (default: 2).
   REPOLENS_IDE_FAIL_FAST   If 1/true (default), cursor-ide stops the lens on the
                            first failed handoff and logs repolens-errors.ndjson.
                            Set to 0 to retry further iterations (legacy).
@@ -4139,6 +4143,23 @@ run_lens() {
     local done_detected=false
     if [[ "$agent_rc" -eq 0 ]] && check_done "$output_file"; then
       done_detected=true
+      # cursor-ide: DONE without new findings still needs stronger proof (≥3
+      # verified path:line anchors). Blocks "empty DONE×3" after shallow greps.
+      if [[ "$effective_agent" == "cursor-ide" || "$AGENT" == "cursor-ide" ]] \
+          && (( iter_issues == 0 )); then
+        local _done_anchors=0
+        if declare -F repolens_ide_count_path_line_anchors >/dev/null 2>&1; then
+          _done_anchors="$(repolens_ide_count_path_line_anchors "$output_file")"
+          [[ "$_done_anchors" =~ ^[0-9]+$ ]] || _done_anchors=0
+        fi
+        if (( _done_anchors < 3 )) \
+            || { declare -F repolens_ide_verified_anchor_files >/dev/null 2>&1 \
+                 && [[ -n "${PROJECT_PATH:-}" ]] \
+                 && ! REPOLENS_CURSOR_IDE_PROJECT="$PROJECT_PATH" repolens_ide_verified_anchor_files "$output_file" 3; }; then
+          log_warn "[$domain/$lens_id] DONE ignored — empty finding pass needs ≥3 verified path:line anchors (got ${_done_anchors})"
+          done_detected=false
+        fi
+      fi
     fi
 
     local output_bytes output_issue_urls degraded_iteration

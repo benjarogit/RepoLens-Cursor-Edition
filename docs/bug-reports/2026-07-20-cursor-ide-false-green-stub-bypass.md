@@ -259,3 +259,12 @@ Umgesetzt in `lib/cursor_runner.sh` / `repolens.sh` / `lib/rounds.sh` / `tests/t
 4. Resume-Logging: `resuming (N completed…)` statt irreführendem Fresh-`starting`; Lens-Zeile nennt next/skip.
 
 **Hinweis:** Run `20260720T141345Z-025e65c4` bleibt trust-ungültig; neuer Audit nach Fix erforderlich.
+
+### Follow-up (gleiche Session) — False-Green v2 (grep-worker)
+
+Ein Handoff-Worker lieferte grep+fingerprint-Templates, die den ersten Gate bestanden → erneut False-Green (viele `completed`, kaum Findings). Behoben:
+
+- Reject von Automation-Templates (`Distinct pass fingerprint`, …)
+- Pflicht: Method+Findings, ≥2 existierende `path:line`-Anchors
+- DONE ohne Finding: ≥3 verifizierte Anchors
+- Run `20260720T145717Z-3cb9dec4`: Worker-`completed` invalidiert (nur injection/xss-csrf behalten)

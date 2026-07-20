@@ -33,10 +33,11 @@ RepoLens then continues with the next iteration or lens.
 
 - Real findings, or a clear `DONE` if there is nothing to report
 - Per finding: **path**, **severity**, one-line **risk**, **fix**
-- At least one concrete path/proof anchor (e.g. `core/env-file.sh:39`)
-- No filler (“automatic run”, empty placeholders, `# continuity` / `# pad` byte-padding)
+- **Method** + **Findings** sections
+- At least two concrete `path:line` anchors that exist in the repo (e.g. `core/env-file.sh:39`)
+- No filler, byte-padding (`# continuity` / `# pad`), or automation/grep-worker templates
 
-RepoLens rejects padded or anchor-less replies (`IDE_RESPONSE_REJECTED`). Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
+RepoLens rejects shallow or templated replies (`IDE_RESPONSE_REJECTED`). `DONE` without new findings still needs ≥3 verified anchors. Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
 
 ## Useful environment variables
 

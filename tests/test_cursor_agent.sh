@@ -115,11 +115,11 @@ assert_ok "cursor-ide handoff reads substantive ide-response when done marker ap
 # security/injection — iteration 1
 
 ## Method
-Grepped launcher and recipes for eval/shell sinks. Checked core/env-file.sh:39
-and recipes/wiso-steuer/launch.sh call sites.
+Read validator and entrypoint. Checked lib/cursor_runner.sh:73 and
+repolens.sh:400 for ide-response policy and env docs.
 
 ## Findings
-Confirmed unsanitized eval in env_file_get; see proof anchors above.
+Confirmed substantive-check helpers exist; see proof anchors above.
 
 EOF
       python3 -c "print((\"Detail line about the sink and remediation notes. \" * 8).strip())"
@@ -128,7 +128,7 @@ EOF
   ) &
   errf="$d/stderr.txt"
   out="$(run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" 2>"$errf")"
-  grep -q "env-file.sh" <<< "$out"
+  grep -q "cursor_runner.sh" <<< "$out"
   grep -q "REPOLENS_CTL" "$errf"
   grep -q "ide_handoff" "$errf"
   grep -q "ide_handoff_ok" "$errf"
@@ -259,6 +259,7 @@ assert_ok "cursor-ide validator accepts real short analysis with path anchors" b
   source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
   unset REPOLENS_IDE_ALLOW_STUB
   unset REPOLENS_CURSOR_IDE_PREV_RESPONSE
+  export REPOLENS_CURSOR_IDE_PROJECT="'"$SCRIPT_DIR"'"
   d="$(mktemp -d)"
   trap "rm -rf \"$d\"" EXIT
   {
@@ -266,15 +267,63 @@ assert_ok "cursor-ide validator accepts real short analysis with path anchors" b
 # security/injection — iteration 1
 
 ## Method
-Reviewed core/env-file.sh:39 and call sites in recipes/wiso-steuer/launch.sh.
+Reviewed lib/cursor_runner.sh:73 and repolens.sh:400 for response policy.
 
 ## Findings
-Command injection via unsanitized eval on env file values.
+Substantive validation requires Method/Findings plus verified path:line anchors.
 
 EOF
     python3 -c "print((\"Notes on impact and fix. \" * 12).strip())"
   } > "$d/r.txt"
   repolens_ide_validate_cursor_ide_response "$d/r.txt"
+'
+
+assert_fail_with "cursor-ide rejects grep-worker automation templates" "IDE_RESPONSE_REJECTED" bash -c '
+  set -u
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_RUN_ID="test-run"
+  export REPOLENS_CTL_DOMAIN="code-quality"
+  export REPOLENS_CTL_LENS_ID="naming"
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  unset REPOLENS_IDE_ALLOW_STUB
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1
+    {
+      cat <<'"'"'EOF'"'"'
+# code-quality/naming — initial surface scan
+
+## Distinct pass fingerprint
+uniq=71d90a59d61774db3c6df36908f86313a486dbddc6593ad16b102838a04fe2e2
+
+## Method
+Focus: initial surface scan. Primary proof anchor: lib/cursor_runner.sh:73
+
+## Evidence
+lib/cursor_runner.sh:73: stuff
+repolens.sh:400: stuff
+
+## Findings
+No new fileable finding with additional proof_anchors beyond prior work for this lens.
+
+## Next
+Shift evidence window and re-check related call sites (pass fingerprint uniq=abc).
+EOF
+      python3 -c "print((\"padding prose for byte floor. \" * 10).strip())"
+    } > "$d/ide-response-iter-1.txt"
+    touch "$d/ide-done-iter-1"
+  ) &
+  set +e
+  out="$(run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" 2>&1)"
+  ec=$?
+  set -e
+  printf "%s\n" "$out"
+  exit "$ec"
 '
 
 assert_ok "cursor-ide ALLOW_STUB accepts minimal ide-response" bash -c '

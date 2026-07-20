@@ -85,28 +85,98 @@ repolens_ide_strip_response_padding() {
   '
 }
 
+# Extension list for proof anchors (source/config artifacts).
+_REPOLENS_IDE_ANCHOR_EXT='sh|bash|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|go|java|kt|md|json|ya?ml|toml|c|cc|cpp|h|hpp|css|html|vue|svelte|rb|php|swift|m|mm|cs|sql|proto|txt|env'
+
+# True if response looks like an automation / grep-worker template (False-Green v2).
+repolens_ide_response_is_automation_template() {
+  local f="$1"
+  [[ -f "$f" ]] || return 1
+  grep -qiE \
+    'Distinct pass fingerprint|[[:space:]]uniq=[0-9a-f]{32,}|No new fileable finding with additional proof_anchors beyond|Shift evidence window and re-check related call sites|Expanded analysis for validator byte floor|Prose expansion for .+ pass .+ about|Evidence window \(iter-shifted\)|pass fingerprint uniq=' \
+    "$f"
+}
+
+# Emit unique path:line anchors (repo-relative when possible) on stdout.
+repolens_ide_extract_path_line_anchors() {
+  local f="$1"
+  local project="${REPOLENS_CURSOR_IDE_PROJECT:-}"
+  [[ -f "$f" ]] || return 0
+  local ext_re="[A-Za-z0-9_.+/-]+\\.(${_REPOLENS_IDE_ANCHOR_EXT}):[0-9]+"
+  grep -oE "$ext_re" "$f" 2>/dev/null | while IFS= read -r anchor; do
+    [[ -n "$anchor" ]] || continue
+    if [[ -n "$project" && "$anchor" == "$project"/* ]]; then
+      anchor="${anchor#"$project"/}"
+    fi
+    # Drop absolute paths that are not under the project — not proof for this repo.
+    [[ "$anchor" == /* ]] && continue
+    printf '%s\n' "$anchor"
+  done | sort -u
+}
+
+# Count unique repo-relative path:line anchors.
+repolens_ide_count_path_line_anchors() {
+  local f="$1"
+  local n
+  n="$(repolens_ide_extract_path_line_anchors "$f" | wc -l)"
+  n="${n//[[:space:]]/}"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s\n' "$n"
+}
+
+# True if at least `need` cited path:line files exist under the project tree.
+repolens_ide_verified_anchor_files() {
+  local f="$1" need="${2:-2}"
+  local project="${REPOLENS_CURSOR_IDE_PROJECT:-}"
+  [[ -n "$project" && -d "$project" ]] || return 0  # skip existence check if no project
+  [[ "$need" =~ ^[0-9]+$ ]] || need=2
+  local anchor rel verified=0
+  while IFS= read -r anchor; do
+    [[ -n "$anchor" ]] || continue
+    rel="${anchor%%:*}"
+    if [[ -f "$project/$rel" ]]; then
+      verified=$((verified + 1))
+      if (( verified >= need )); then
+        return 0
+      fi
+    fi
+  done < <(repolens_ide_extract_path_line_anchors "$f")
+  return 1
+}
+
 # True if response cites a concrete repo path / proof anchor (not just prose).
 repolens_ide_response_has_path_anchor() {
   local f="$1"
   [[ -f "$f" ]] || return 1
-  # `path/to/file.ext` or path/to/file.ext(:line)?
+  # Prefer path:line (stronger). Fall back to bare path with extension.
+  local n
+  n="$(repolens_ide_count_path_line_anchors "$f")"
+  (( n >= 1 )) && return 0
   grep -qE '`[^`[:space:]]+\.[A-Za-z0-9]+`' "$f" && return 0
-  grep -qE '(^|[[:space:]/(\"'\''`])[A-Za-z0-9_.+/-]+\.(sh|bash|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|go|java|kt|md|json|ya?ml|toml|c|cc|cpp|h|hpp|css|html|vue|svelte|rb|php|swift|m|mm|cs|sql|proto|txt|env)(:[0-9]+)?\+?' "$f" && return 0
+  grep -qE "(^|[[:space:]/(\"'\\''\`])[A-Za-z0-9_.+/-]+\\.(${_REPOLENS_IDE_ANCHOR_EXT})(:[0-9]+)?\\+?" "$f" && return 0
   return 1
 }
 
 # Substantive cursor-ide reply check (default: strict). Set REPOLENS_IDE_ALLOW_STUB=1 to disable.
-# Rejects: empty/short (after padding strip), known stub phrases, padding-filler
-# blocks, template-only replies without path/proof anchors, near-duplicate of
-# the previous iteration (when REPOLENS_CURSOR_IDE_PREV_RESPONSE is set).
+# Rejects: empty/short (after padding strip), known stub phrases, padding-filler,
+# automation/grep-worker templates, replies without enough path:line proof,
+# near-duplicates, and (when project is set) anchors that do not exist on disk.
 repolens_ide_validate_cursor_ide_response() {
   local f="$1"
   repolens_ide_stub_allowed && return 0
   [[ -f "$f" && -s "$f" ]] || return 1
   local min_b="${REPOLENS_IDE_MIN_RESPONSE_BYTES:-400}"
   [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=400
+  local min_anchors="${REPOLENS_IDE_MIN_PATH_LINE_ANCHORS:-2}"
+  [[ "$min_anchors" =~ ^[0-9]+$ ]] || min_anchors=2
+  (( min_anchors < 1 )) && min_anchors=1
 
   if grep -qiE 'Automatischer Durchlauf \(Chat-Agent-Monitor\)|automated pass by monitoring agent|no substantive audit|Stub-Antwort|Chat-Agent-Monitor|stub run' "$f"; then
+    return 1
+  fi
+
+  # Grep-worker / automation templates are False-Green even with path hits.
+  if repolens_ide_response_is_automation_template "$f"; then
     return 1
   fi
 
@@ -125,9 +195,28 @@ repolens_ide_validate_cursor_ide_response() {
   [[ "$sz" =~ ^[0-9]+$ ]] || return 1
   [[ "$sz" -ge "$min_b" ]] || return 1
 
-  # Every accepted reply must cite at least one concrete path/proof anchor.
-  if ! repolens_ide_response_has_path_anchor "$f"; then
+  # Require Method + Findings structure (real lens write-up, not a blob of hits).
+  if ! grep -qiE '^#+[[:space:]]*method\b|^##[[:space:]]*method\b|^method[[:space:]]*$' "$f"; then
+    if ! grep -qiE '^#+[[:space:]]*(investigation|analyse|analysis|follow-ups?)\b' "$f"; then
+      return 1
+    fi
+  fi
+  if ! grep -qiE '^#+[[:space:]]*findings?\b|^##[[:space:]]*findings?\b' "$f"; then
     return 1
+  fi
+
+  # At least N distinct repo-relative path:line anchors (default 2).
+  local anchor_n
+  anchor_n="$(repolens_ide_count_path_line_anchors "$f")"
+  if (( anchor_n < min_anchors )); then
+    return 1
+  fi
+
+  # When project root is known, cited files must exist (blocks invented paths).
+  if [[ -n "${REPOLENS_CURSOR_IDE_PROJECT:-}" && -d "${REPOLENS_CURSOR_IDE_PROJECT}" ]]; then
+    if ! repolens_ide_verified_anchor_files "$f" "$min_anchors"; then
+      return 1
+    fi
   fi
 
   # Near-duplicate of previous iteration (same stub template, lens name swapped).
@@ -137,9 +226,11 @@ repolens_ide_validate_cursor_ide_response() {
     prev_stripped="$(repolens_ide_strip_response_padding <"$prev")"
     cur_norm="$(printf '%s\n' "$stripped" | sed -E \
       -e 's/iteration[[:space:]]*[0-9]+/iteration N/Ig' \
+      -e 's/uniq=[0-9a-fA-F]+/uniq=X/g' \
       -e 's|^#[[:space:]]*[^/[:space:]]+/[^[:space:]]+|# lens|')"
     prev_norm="$(printf '%s\n' "$prev_stripped" | sed -E \
       -e 's/iteration[[:space:]]*[0-9]+/iteration N/Ig' \
+      -e 's/uniq=[0-9a-fA-F]+/uniq=X/g' \
       -e 's|^#[[:space:]]*[^/[:space:]]+/[^[:space:]]+|# lens|')"
     if [[ -n "$cur_norm" && "$cur_norm" == "$prev_norm" ]]; then
       return 1
@@ -327,6 +418,10 @@ run_cursor_ide_agent() {
   prompt_f="$ide_dir/ide-prompt-iter-${iteration}.md"
   response_f="$ide_dir/ide-response-iter-${iteration}.txt"
   done_f="$ide_dir/ide-done-iter-${iteration}"
+  # Anchor existence checks resolve against the audited project root.
+  if [[ -n "$project_path" && -d "$project_path" ]]; then
+    export REPOLENS_CURSOR_IDE_PROJECT="$(cd -- "$project_path" && pwd)"
+  fi
   # Near-duplicate guard: compare against the previous iteration's accepted reply.
   unset REPOLENS_CURSOR_IDE_PREV_RESPONSE
   if (( iteration > 1 )); then
@@ -446,7 +541,7 @@ EOF
       '{v: $v, kind: $kind, code: $code, response_file: $response_file, min_bytes: $min_bytes, hint: "Write a real lens reply (see ide-prompt). Pipeline tests only: REPOLENS_IDE_ALLOW_STUB=1"}')"
     repolens_ctl_emit_json "$rj"
     rm -f "$done_f" "$response_f"
-    echo "REPOLENS_IDE_RESPONSE_REJECTED: Antwort zu kurz, Stub/Padding, ohne Pfad-Anchors oder Near-Duplicate. Echte Lens-Analyse mit Dateipfaden in $response_f erforderlich (oder REPOLENS_IDE_ALLOW_STUB=1 nur für Demos)." >&2
+    echo "REPOLENS_IDE_RESPONSE_REJECTED: Keine echte Lens-Analyse (Stub/Padding/Automation-Template, zu wenig path:line-Anchors, fehlende Method/Findings, erfundene Pfade oder Near-Duplicate). Schreiben nach $response_f (ALLOW_STUB=1 nur für Demos)." >&2
     return 1
   fi
 

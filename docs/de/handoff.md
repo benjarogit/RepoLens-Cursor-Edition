@@ -33,10 +33,11 @@ Danach macht RepoLens mit der nächsten Iteration oder Lens weiter.
 
 - Echte Findings oder klares `DONE`, wenn nichts zu melden ist
 - Pro Finding: **Pfad**, **Severity** (Schweregrad), ein Satz **Risiko**, **Fix**
-- Mindestens ein konkreter Pfad-/Proof-Anchor (z. B. `core/env-file.sh:39`)
-- Kein Fülltext („automatischer Durchlauf“, leere Platzhalter, `# continuity` / `# pad`)
+- Abschnitte **Method** + **Findings**
+- Mindestens zwei konkrete `path:line`-Anchors, die im Repo existieren (z. B. `core/env-file.sh:39`)
+- Kein Fülltext, Byte-Padding (`# continuity` / `# pad`) oder Automation-/Grep-Worker-Templates
 
-RepoLens lehnt gepaddete oder ankerlose Antworten ab (`IDE_RESPONSE_REJECTED`). Nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1` (nicht für echte Audits).
+RepoLens lehnt flache/templated Antworten ab (`IDE_RESPONSE_REJECTED`). `DONE` ohne neue Findings braucht ≥3 verifizierte Anchors. Nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1`.
 
 ## Nützliche Umgebungsvariablen
 

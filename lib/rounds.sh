@@ -2566,6 +2566,15 @@ run_rounds() {
       fi
     else
       log_info "Running in sequential mode"
+      if [[ -n "${RESUME_RUN_ID:-}" ]]; then
+        local _seq_done=0
+        if [[ -n "${completed_lenses_file:-}" && -f "$completed_lenses_file" ]]; then
+          _seq_done="$(grep -cve '^[[:space:]]*$' "$completed_lenses_file" 2>/dev/null || echo 0)"
+          _seq_done="${_seq_done//[[:space:]]/}"
+          [[ "$_seq_done" =~ ^[0-9]+$ ]] || _seq_done=0
+        fi
+        log_info "Resume: ${_seq_done} lens(es) already in .completed; queue size this round: $lens_total"
+      fi
       local_count=0
       for lens_entry in "${active_lens_list[@]}"; do
         # Check for an agent abort from a previous lens in this run.
@@ -2593,7 +2602,12 @@ run_rounds() {
         fi
 
         local_count=$((local_count + 1))
-        log_info "--- Lens $local_count/$lens_total ---"
+        local _lens_label="${lens_entry%%|*}"
+        if declare -F is_lens_completed >/dev/null 2>&1 && is_lens_completed "$_lens_label"; then
+          log_info "--- Lens $local_count/$lens_total (skip already completed: $_lens_label) ---"
+        else
+          log_info "--- Lens $local_count/$lens_total (next: $_lens_label) ---"
+        fi
         run_lens "$lens_entry"
       done
     fi

@@ -400,8 +400,10 @@ Environment:
   REPOLENS_IDE_ALLOW_STUB  If 1/true, cursor-ide accepts missing/empty responses and
                            skips substantive checks (CI/pipeline demos only).
   REPOLENS_IDE_MIN_RESPONSE_BYTES
-                           Minimum size (bytes) for ide-response-iter-N.txt when
-                           stubs are not allowed (default: 400).
+                           Minimum size (bytes) for ide-response-iter-N.txt after
+                           stripping padding lines, when stubs are not allowed
+                           (default: 400). Replies also need a path/proof anchor;
+                           # continuity / # pad filler blocks are rejected.
   REPOLENS_IDE_FAIL_FAST   If 1/true (default), cursor-ide stops the lens on the
                            first failed handoff and logs repolens-errors.ndjson.
                            Set to 0 to retry further iterations (legacy).
@@ -2369,7 +2371,18 @@ fi
 # REPOLENS_AUTO_CLEAN=true). Never blocks or fails the run.
 maybe_auto_clean
 
-log_info "RepoLens run $RUN_ID starting"
+if [[ -n "$RESUME_RUN_ID" ]]; then
+  _resume_done_n=0
+  if [[ -f "$LOG_BASE/.completed" ]]; then
+    _resume_done_n="$(grep -cve '^[[:space:]]*$' "$LOG_BASE/.completed" 2>/dev/null || echo 0)"
+    _resume_done_n="${_resume_done_n//[[:space:]]/}"
+    [[ "$_resume_done_n" =~ ^[0-9]+$ ]] || _resume_done_n=0
+  fi
+  log_info "RepoLens run $RUN_ID resuming ($_resume_done_n completed in .completed; continuing remaining lenses)"
+  unset _resume_done_n
+else
+  log_info "RepoLens run $RUN_ID starting"
+fi
 log_info "Project: $PROJECT_PATH ($FORGE_REPO_SLUG)"
 log_info "Agent: $AGENT | Mode: $MODE | Parallel: $PARALLEL"
 log_info "Agent timeout: ${AGENT_TIMEOUT_SECS}s"
@@ -3927,7 +3940,7 @@ run_lens() {
         local ide_msg="cursor-ide iteration failed (see iteration log)"
         if grep -q "IDE_RESPONSE_REJECTED" "$output_file" 2>/dev/null; then
           ide_code="IDE_RESPONSE_REJECTED"
-          ide_msg="ide-response rejected (too short, empty, or stub text)"
+          ide_msg="ide-response rejected (too short, padding/stub, missing path anchors, or near-duplicate)"
         elif grep -q "IDE_MISSING_RESPONSE" "$output_file" 2>/dev/null; then
           ide_code="IDE_MISSING_RESPONSE"
           ide_msg="missing or empty ide-response file (strict mode)"
@@ -4199,7 +4212,7 @@ run_lens() {
     fi
   done
 
-  # Update global counter
+  # Update global counter (attempt delta — used for --max-issues budget).
   GLOBAL_ISSUES_CREATED=$((GLOBAL_ISSUES_CREATED + lens_issues))
 
   # Record result. Incomplete exit statuses are NOT marked completed so --resume
@@ -4212,7 +4225,20 @@ run_lens() {
   lens_end_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   lens_duration_seconds=$((lens_end_epoch - lens_start_epoch))
   (( lens_duration_seconds < 0 )) && lens_duration_seconds=0
-  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$lens_issues" "$rate_limit_sleep_seconds" \
+  # Local mode: if findings already existed before this attempt (resume baseline),
+  # delta stays 0 while NNN-*.md are on disk — report the absolute on-disk count
+  # so summary.json does not false-zero issues_created.
+  local summary_lens_issues="$lens_issues"
+  if $LOCAL_MODE; then
+    local abs_local_issues
+    abs_local_issues="$(count_dry_run_issues "$lens_local_dir")"
+    [[ "$abs_local_issues" =~ ^[0-9]+$ ]] || abs_local_issues=0
+    if (( abs_local_issues > lens_issues )); then
+      log_info "[$domain/$lens_id] Local findings on disk: $abs_local_issues (attempt delta: $lens_issues) — recording absolute count in summary"
+      summary_lens_issues="$abs_local_issues"
+    fi
+  fi
+  record_lens "$SUMMARY_FILE" "$domain" "$lens_id" "$iteration" "$exit_status" "$summary_lens_issues" "$rate_limit_sleep_seconds" \
     "$lens_start_iso" "$lens_end_iso" "$lens_duration_seconds"
   if [[ "$exit_status" != "rate-limited" && "$exit_status" != "ide-handoff-failed" && \
         "$exit_status" != "max-iterations" && "$exit_status" != "agent-timeout" && \
@@ -4238,7 +4264,7 @@ run_lens() {
     _REPOLENS_LENS_HEARTBEAT_WRITER_PID=""
   fi
 
-  log_info "[$domain/$lens_id] Finished after $iteration iteration(s), $lens_issues issue(s)"
+  log_info "[$domain/$lens_id] Finished after $iteration iteration(s), $summary_lens_issues issue(s)"
 }
 
 # --- Phase execution state ---

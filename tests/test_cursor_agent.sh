@@ -109,11 +109,26 @@ assert_ok "cursor-ide handoff reads substantive ide-response when done marker ap
   export REPOLENS_CTL_LOG="$d/ctl.ndjson"
   unset REPOLENS_IDE_ALLOW_STUB
   : >>"$REPOLENS_CTL_LOG"
-  # Strict mode: response must meet min byte count (no stub phrases).
-  ( sleep 1; python3 -c "print(\"Lens summary: \" + (\"x\" * 450))" > "$d/ide-response-iter-1.txt"; touch "$d/ide-done-iter-1" ) &
+  ( sleep 1
+    {
+      cat <<'"'"'EOF'"'"'
+# security/injection — iteration 1
+
+## Method
+Grepped launcher and recipes for eval/shell sinks. Checked core/env-file.sh:39
+and recipes/wiso-steuer/launch.sh call sites.
+
+## Findings
+Confirmed unsanitized eval in env_file_get; see proof anchors above.
+
+EOF
+      python3 -c "print((\"Detail line about the sink and remediation notes. \" * 8).strip())"
+    } > "$d/ide-response-iter-1.txt"
+    touch "$d/ide-done-iter-1"
+  ) &
   errf="$d/stderr.txt"
   out="$(run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" 2>"$errf")"
-  grep -q "Lens summary" <<< "$out"
+  grep -q "env-file.sh" <<< "$out"
   grep -q "REPOLENS_CTL" "$errf"
   grep -q "ide_handoff" "$errf"
   grep -q "ide_handoff_ok" "$errf"
@@ -142,6 +157,124 @@ assert_fail_with "cursor-ide rejects too-short ide-response (no stub)" "IDE_RESP
   set -e
   printf "%s\n" "$out"
   exit "$ec"
+'
+
+assert_fail_with "cursor-ide rejects # continuity padding stubs" "IDE_RESPONSE_REJECTED" bash -c '
+  set -u
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_RUN_ID="test-run"
+  export REPOLENS_CTL_DOMAIN="security"
+  export REPOLENS_CTL_LENS_ID="secrets"
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  unset REPOLENS_IDE_ALLOW_STUB
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1
+    {
+      cat <<'"'"'EOF'"'"'
+DONE
+
+# security/secrets — iteration 1
+
+## Method
+Targeted pass for secrets.
+
+## Findings
+No new fileable finding with proof_anchors this iteration.
+
+DONE
+
+EOF
+      yes "# continuity" | head -n 40
+    } > "$d/ide-response-iter-1.txt"
+    touch "$d/ide-done-iter-1"
+  ) &
+  set +e
+  out="$(run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" 2>&1)"
+  ec=$?
+  set -e
+  printf "%s\n" "$out"
+  exit "$ec"
+'
+
+assert_fail_with "cursor-ide rejects # pad padding stubs" "IDE_RESPONSE_REJECTED" bash -c '
+  set -u
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_RUN_ID="test-run"
+  export REPOLENS_CTL_DOMAIN="security"
+  export REPOLENS_CTL_LENS_ID="injection"
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  unset REPOLENS_IDE_ALLOW_STUB
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1
+    { printf "DONE\n"; yes "# pad" | head -n 80; } > "$d/ide-response-iter-1.txt"
+    touch "$d/ide-done-iter-1"
+  ) &
+  set +e
+  out="$(run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" 2>&1)"
+  ec=$?
+  set -e
+  printf "%s\n" "$out"
+  exit "$ec"
+'
+
+assert_fail_with "cursor-ide rejects long reply without path anchors" "IDE_RESPONSE_REJECTED" bash -c '
+  set -u
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_RUN_ID="test-run"
+  export REPOLENS_CTL_DOMAIN="security"
+  export REPOLENS_CTL_LENS_ID="injection"
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  unset REPOLENS_IDE_ALLOW_STUB
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1; python3 -c "print(\"Lens summary: \" + (\"x\" * 450))" > "$d/ide-response-iter-1.txt"; touch "$d/ide-done-iter-1" ) &
+  set +e
+  out="$(run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" 2>&1)"
+  ec=$?
+  set -e
+  printf "%s\n" "$out"
+  exit "$ec"
+'
+
+assert_ok "cursor-ide validator accepts real short analysis with path anchors" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  unset REPOLENS_IDE_ALLOW_STUB
+  unset REPOLENS_CURSOR_IDE_PREV_RESPONSE
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  {
+    cat <<'"'"'EOF'"'"'
+# security/injection — iteration 1
+
+## Method
+Reviewed core/env-file.sh:39 and call sites in recipes/wiso-steuer/launch.sh.
+
+## Findings
+Command injection via unsanitized eval on env file values.
+
+EOF
+    python3 -c "print((\"Notes on impact and fix. \" * 12).strip())"
+  } > "$d/r.txt"
+  repolens_ide_validate_cursor_ide_response "$d/r.txt"
 '
 
 assert_ok "cursor-ide ALLOW_STUB accepts minimal ide-response" bash -c '

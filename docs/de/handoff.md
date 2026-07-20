@@ -33,9 +33,10 @@ Danach macht RepoLens mit der nächsten Iteration oder Lens weiter.
 
 - Echte Findings oder klares `DONE`, wenn nichts zu melden ist
 - Pro Finding: **Pfad**, **Severity** (Schweregrad), ein Satz **Risiko**, **Fix**
-- Kein Fülltext („automatischer Durchlauf“, leere Platzhalter)
+- Mindestens ein konkreter Pfad-/Proof-Anchor (z. B. `core/env-file.sh:39`)
+- Kein Fülltext („automatischer Durchlauf“, leere Platzhalter, `# continuity` / `# pad`)
 
-Nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1` (nicht für echte Audits).
+RepoLens lehnt gepaddete oder ankerlose Antworten ab (`IDE_RESPONSE_REJECTED`). Nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1` (nicht für echte Audits).
 
 ## Nützliche Umgebungsvariablen
 
@@ -43,6 +44,7 @@ Nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1` (nicht für echte Audits).
 |----------|-----------|
 | `REPOLENS_IDE_AUTONOMOUS=1` | Markiert Handoffs für einen autonomen Agenten |
 | `REPOLENS_IDE_FAIL_FAST=1` | Stoppt die Lens bei schlechter oder fehlender Antwort (Standard) |
+| `REPOLENS_IDE_MIN_RESPONSE_BYTES` | Mindestgröße nach Padding-Strip (Standard 400); Pfad-Anchors Pflicht |
 | `REPOLENS_CURSOR_IDE_POLL_SEC` | Wie oft nach `done` geschaut wird |
 | `REPOLENS_CURSOR_IDE_MAX_WAIT_SEC` | Maximale Wartezeit pro Iteration |
 

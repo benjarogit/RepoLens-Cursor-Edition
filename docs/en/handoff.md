@@ -33,9 +33,10 @@ RepoLens then continues with the next iteration or lens.
 
 - Real findings, or a clear `DONE` if there is nothing to report
 - Per finding: **path**, **severity**, one-line **risk**, **fix**
-- No filler (“automatic run”, empty placeholders)
+- At least one concrete path/proof anchor (e.g. `core/env-file.sh:39`)
+- No filler (“automatic run”, empty placeholders, `# continuity` / `# pad` byte-padding)
 
-Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
+RepoLens rejects padded or anchor-less replies (`IDE_RESPONSE_REJECTED`). Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
 
 ## Useful environment variables
 
@@ -43,6 +44,7 @@ Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
 |----------|---------|
 | `REPOLENS_IDE_AUTONOMOUS=1` | Marks handoffs for an autonomous agent |
 | `REPOLENS_IDE_FAIL_FAST=1` | Stops the lens on a bad or missing response (default) |
+| `REPOLENS_IDE_MIN_RESPONSE_BYTES` | Min size after stripping padding (default 400); path anchors required |
 | `REPOLENS_CURSOR_IDE_POLL_SEC` | How often to check for `done` |
 | `REPOLENS_CURSOR_IDE_MAX_WAIT_SEC` | Maximum wait per iteration |
 

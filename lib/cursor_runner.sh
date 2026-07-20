@@ -69,19 +69,83 @@ repolens_ide_stub_allowed() {
   return 1
 }
 
+# Drop byte-padding comment lines used to inflate ide-response size.
+# Strips lines that are only "# continuity" / "# pad" / "# filler" / "# padding"
+# (optional trailing tokens). Used for min-byte checks — raw file still scanned
+# for pad density and stub phrases.
+repolens_ide_strip_response_padding() {
+  awk '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      lower = tolower(line)
+    }
+    lower ~ /^[[:space:]]*#[[:space:]]*(continuity|pad|filler|padding)([[:space:]]+|$)/ { next }
+    { print line }
+  '
+}
+
+# True if response cites a concrete repo path / proof anchor (not just prose).
+repolens_ide_response_has_path_anchor() {
+  local f="$1"
+  [[ -f "$f" ]] || return 1
+  # `path/to/file.ext` or path/to/file.ext(:line)?
+  grep -qE '`[^`[:space:]]+\.[A-Za-z0-9]+`' "$f" && return 0
+  grep -qE '(^|[[:space:]/(\"'\''`])[A-Za-z0-9_.+/-]+\.(sh|bash|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|go|java|kt|md|json|ya?ml|toml|c|cc|cpp|h|hpp|css|html|vue|svelte|rb|php|swift|m|mm|cs|sql|proto|txt|env)(:[0-9]+)?\+?' "$f" && return 0
+  return 1
+}
+
 # Substantive cursor-ide reply check (default: strict). Set REPOLENS_IDE_ALLOW_STUB=1 to disable.
+# Rejects: empty/short (after padding strip), known stub phrases, padding-filler
+# blocks, template-only replies without path/proof anchors, near-duplicate of
+# the previous iteration (when REPOLENS_CURSOR_IDE_PREV_RESPONSE is set).
 repolens_ide_validate_cursor_ide_response() {
   local f="$1"
   repolens_ide_stub_allowed && return 0
   [[ -f "$f" && -s "$f" ]] || return 1
   local min_b="${REPOLENS_IDE_MIN_RESPONSE_BYTES:-400}"
   [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=400
-  local sz
-  sz=$(wc -c <"$f")
-  [[ "$sz" -ge "$min_b" ]] || return 1
+
   if grep -qiE 'Automatischer Durchlauf \(Chat-Agent-Monitor\)|automated pass by monitoring agent|no substantive audit|Stub-Antwort|Chat-Agent-Monitor|stub run' "$f"; then
     return 1
   fi
+
+  # Padding used as byte-filler (≥3 pad lines) is never a real lens reply.
+  local pad_n
+  pad_n="$(grep -ciE '^[[:space:]]*#[[:space:]]*(continuity|pad|filler|padding)([[:space:]]+|$)' "$f" 2>/dev/null || true)"
+  [[ "$pad_n" =~ ^[0-9]+$ ]] || pad_n=0
+  if (( pad_n >= 3 )); then
+    return 1
+  fi
+
+  local stripped sz
+  stripped="$(repolens_ide_strip_response_padding <"$f")"
+  sz="$(printf '%s' "$stripped" | wc -c)"
+  sz="${sz//[[:space:]]/}"
+  [[ "$sz" =~ ^[0-9]+$ ]] || return 1
+  [[ "$sz" -ge "$min_b" ]] || return 1
+
+  # Every accepted reply must cite at least one concrete path/proof anchor.
+  if ! repolens_ide_response_has_path_anchor "$f"; then
+    return 1
+  fi
+
+  # Near-duplicate of previous iteration (same stub template, lens name swapped).
+  local prev="${REPOLENS_CURSOR_IDE_PREV_RESPONSE:-}"
+  if [[ -n "$prev" && -f "$prev" && -s "$prev" ]]; then
+    local cur_norm prev_norm prev_stripped
+    prev_stripped="$(repolens_ide_strip_response_padding <"$prev")"
+    cur_norm="$(printf '%s\n' "$stripped" | sed -E \
+      -e 's/iteration[[:space:]]*[0-9]+/iteration N/Ig' \
+      -e 's|^#[[:space:]]*[^/[:space:]]+/[^[:space:]]+|# lens|')"
+    prev_norm="$(printf '%s\n' "$prev_stripped" | sed -E \
+      -e 's/iteration[[:space:]]*[0-9]+/iteration N/Ig' \
+      -e 's|^#[[:space:]]*[^/[:space:]]+/[^[:space:]]+|# lens|')"
+    if [[ -n "$cur_norm" && "$cur_norm" == "$prev_norm" ]]; then
+      return 1
+    fi
+  fi
+
   return 0
 }
 
@@ -259,10 +323,18 @@ run_cursor_ide_agent() {
   [[ "$max_wait" =~ ^[0-9]+$ ]] || die "REPOLENS_CURSOR_IDE_MAX_WAIT_SEC must be a non-negative integer"
 
   mkdir -p "$ide_dir"
-  local prompt_f response_f done_f
+  local prompt_f response_f done_f prev_response_f
   prompt_f="$ide_dir/ide-prompt-iter-${iteration}.md"
   response_f="$ide_dir/ide-response-iter-${iteration}.txt"
   done_f="$ide_dir/ide-done-iter-${iteration}"
+  # Near-duplicate guard: compare against the previous iteration's accepted reply.
+  unset REPOLENS_CURSOR_IDE_PREV_RESPONSE
+  if (( iteration > 1 )); then
+    prev_response_f="$ide_dir/ide-response-iter-$((iteration - 1)).txt"
+    if [[ -f "$prev_response_f" && -s "$prev_response_f" ]]; then
+      export REPOLENS_CURSOR_IDE_PREV_RESPONSE="$prev_response_f"
+    fi
+  fi
 
   rm -f "$done_f"
   printf '%s\n' "$prompt" >"$prompt_f"
@@ -374,7 +446,7 @@ EOF
       '{v: $v, kind: $kind, code: $code, response_file: $response_file, min_bytes: $min_bytes, hint: "Write a real lens reply (see ide-prompt). Pipeline tests only: REPOLENS_IDE_ALLOW_STUB=1"}')"
     repolens_ctl_emit_json "$rj"
     rm -f "$done_f" "$response_f"
-    echo "REPOLENS_IDE_RESPONSE_REJECTED: Antwort zu kurz, leer oder Stub-Platzhalter. Echte Analyse in $response_f erforderlich (oder REPOLENS_IDE_ALLOW_STUB=1)." >&2
+    echo "REPOLENS_IDE_RESPONSE_REJECTED: Antwort zu kurz, Stub/Padding, ohne Pfad-Anchors oder Near-Duplicate. Echte Lens-Analyse mit Dateipfaden in $response_f erforderlich (oder REPOLENS_IDE_ALLOW_STUB=1 nur für Demos)." >&2
     return 1
   fi
 

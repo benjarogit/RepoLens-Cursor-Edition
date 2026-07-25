@@ -2382,7 +2382,9 @@ if [[ -n "$RESUME_RUN_ID" ]]; then
     _resume_done_n="${_resume_done_n//[[:space:]]/}"
     [[ "$_resume_done_n" =~ ^[0-9]+$ ]] || _resume_done_n=0
   fi
-  log_info "RepoLens run $RUN_ID resuming ($_resume_done_n completed in .completed; continuing remaining lenses)"
+  # Keep the "RepoLens run <id> starting" shape: tooling and tests parse it to
+  # learn which run dir an invocation actually used. The resume detail follows.
+  log_info "RepoLens run $RUN_ID starting (resume: $_resume_done_n completed in .completed; continuing remaining lenses)"
   unset _resume_done_n
 else
   log_info "RepoLens run $RUN_ID starting"
@@ -4664,6 +4666,14 @@ summary_time_breakdown "$SUMMARY_FILE" 10
 _ro_outcome="$(jq -r '.run_outcome // "unknown"' "$SUMMARY_FILE" 2>/dev/null || printf 'unknown')"
 printf '\nREPOLENS_RUN_OUTCOME %s run_id=%s summary=%s errors=%s/repolens-errors.ndjson\n' \
   "$_ro_outcome" "$RUN_ID" "$SUMMARY_FILE" "$LOG_BASE"
+
+# Terminal handoff signal: the chat agent waits for this to leave the loop and
+# start the analysis/plan phase. Emitted on every exit path below.
+if [[ "$AGENT" == "cursor-ide" ]]; then
+  export REPOLENS_CTL_LOG="${REPOLENS_CTL_LOG:-$LOG_BASE/repolens-ctl.ndjson}"
+  repolens_ctl_emit_run_complete \
+    "$RUN_ID" "$_ro_outcome" "$SUMMARY_FILE" "${OUTPUT_DIR:-$LOG_BASE/final}"
+fi
 
 # the machine-readable finding index (findings.jsonl + findings.csv under final/).
 if $LOCAL_MODE; then

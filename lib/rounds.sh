@@ -2544,6 +2544,10 @@ run_rounds() {
           return 1
         fi
         parallel_count=$((parallel_count + 1))
+        export REPOLENS_CTL_LENS_INDEX="$parallel_count"
+        export REPOLENS_CTL_LENS_TOTAL="$lens_total"
+        export REPOLENS_CTL_ROUND="$round"
+        export REPOLENS_CTL_ROUNDS_TOTAL="$rounds_total"
         if ! spawn_lens "$lens_entry" run_lens "$lens_entry"; then
           if abort_reason="$(_rounds_agent_abort_reason)"; then
             log_warn "Agent abort detected ($abort_reason). Skipping remaining lenses."
@@ -2608,6 +2612,12 @@ run_rounds() {
         else
           log_info "--- Lens $local_count/$lens_total (next: $_lens_label) ---"
         fi
+        # Progress for the cursor-ide handoff protocol: the chat agent needs to
+        # know how far along the queue is, and which handoff is the last one.
+        export REPOLENS_CTL_LENS_INDEX="$local_count"
+        export REPOLENS_CTL_LENS_TOTAL="$lens_total"
+        export REPOLENS_CTL_ROUND="$round"
+        export REPOLENS_CTL_ROUNDS_TOTAL="$rounds_total"
         run_lens "$lens_entry"
       done
     fi

@@ -22,12 +22,28 @@ repolens.sh  →  writes prompt  →  prints REPOLENS_CTL
 ```
 
 1. Watch the terminal (or `logs/<run-id>/repolens-ctl.ndjson`) for `REPOLENS_CTL` with `"kind":"ide_handoff"`.
-2. Open `files.prompt` from that JSON.
+2. Open `files.prompt` from that JSON. Every prompt ends with the handoff protocol, including the current position (`lens 7/42`).
 3. Run the lens in chat (inspect the **target** project).
 4. Save the **full** answer to `files.response` (at least ~400 bytes; no empty stubs).
 5. Create `files.done` with `touch`.
 
 RepoLens then continues with the next iteration or lens.
+
+## Running a full audit in one chat
+
+A full audit is a long queue of handoffs, and the chat is supposed to serve all of them. Two fields keep that manageable:
+
+- Every `ide_handoff` carries `lens_index`, `lens_total`, and `last_lens`, so the agent knows where it stands.
+- The run ends with `"kind":"run_complete"` — until that arrives, more handoffs are coming.
+
+The discipline that keeps a long run inside the context budget:
+
+- **One chat line per handoff**, e.g. `Lens 7/42 security/injection — 3 findings (1 high)`. The analysis belongs in the response file, not in the chat.
+- **Never stop to ask.** Do not offer to shorten the run and do not declare it too large for the chat.
+- **A lens that does not fit the project is not a reason to stop.** Answer `NOT APPLICABLE` with a reason and at least two real `path:line` anchors proving what was inspected, then touch the done file.
+- **On error**, write the cause into the response file, say it in one line, and move on to the next handoff.
+
+After `run_complete`, read the findings from `files.findings_dir` and `files.summary`, switch to Plan mode, and raise every open decision as an interactive question — where **option A is always the best-practice recommendation** (the usual, defensible route, not necessarily the theoretically best one).
 
 ## Good answers look like
 
@@ -37,7 +53,7 @@ RepoLens then continues with the next iteration or lens.
 - At least two concrete `path:line` anchors that exist in the repo (e.g. `core/env-file.sh:39`)
 - No filler, byte-padding (`# continuity` / `# pad`), or automation/grep-worker templates
 
-RepoLens rejects shallow or templated replies (`IDE_RESPONSE_REJECTED`). `DONE` without new findings still needs ≥3 verified anchors. Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
+RepoLens rejects shallow or templated replies (`IDE_RESPONSE_REJECTED`) and repeats the same iteration. The error carries a `reason` field naming the failing check (`reply is 315 bytes, needs at least 400`, `missing a '## Findings' section`, …) — fix exactly that and rewrite the response file. `DONE` without new findings still needs ≥3 verified anchors. Demo-only stubs: `REPOLENS_IDE_ALLOW_STUB=1` (not for real audits).
 
 ## Useful environment variables
 

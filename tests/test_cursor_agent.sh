@@ -348,6 +348,114 @@ assert_ok "cursor-ide ALLOW_STUB accepts minimal ide-response" bash -c '
   grep -q "ide_handoff_ok" "$errf"
 '
 
+# --- Handoff loop protocol: progress, prompt footer, reject reason, run_complete ---
+# The chat agent only keeps a full audit running when it can see how far along it
+# is, what to fix after a reject, and when the queue ends.
+
+assert_ok "handoff CTL carries lens progress and flags the last lens" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_RUN_ID="test-run"
+  export REPOLENS_CTL_DOMAIN="security"
+  export REPOLENS_CTL_LENS_ID="injection"
+  export REPOLENS_CTL_LENS_INDEX=42
+  export REPOLENS_CTL_LENS_TOTAL=42
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  export REPOLENS_IDE_ALLOW_STUB=1
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1; printf "DONE\n" > "$d/ide-response-iter-1.txt"; touch "$d/ide-done-iter-1" ) &
+  run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" >/dev/null 2>"$d/stderr.txt"
+  [[ "$(jq -r "select(.kind == \"ide_handoff\") | .lens_index" "$REPOLENS_CTL_LOG")" == "42" ]]
+  [[ "$(jq -r "select(.kind == \"ide_handoff\") | .lens_total" "$REPOLENS_CTL_LOG")" == "42" ]]
+  [[ "$(jq -r "select(.kind == \"ide_handoff\") | .last_lens" "$REPOLENS_CTL_LOG")" == "true" ]]
+'
+
+assert_ok "handoff CTL reports a mid-queue lens as not last" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_CTL_LENS_INDEX=7
+  export REPOLENS_CTL_LENS_TOTAL=42
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  export REPOLENS_IDE_ALLOW_STUB=1
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1; printf "DONE\n" > "$d/ide-response-iter-1.txt"; touch "$d/ide-done-iter-1" ) &
+  run_cursor_ide_agent "prompt" "'"$SCRIPT_DIR"'" >/dev/null 2>"$d/stderr.txt"
+  [[ "$(jq -r "select(.kind == \"ide_handoff\") | .last_lens" "$REPOLENS_CTL_LOG")" == "false" ]]
+'
+
+assert_ok "ide-prompt carries the continue-until-run_complete protocol" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$d"
+  export REPOLENS_CURSOR_IDE_ITERATION=1
+  export REPOLENS_CURSOR_IDE_POLL_SEC=1
+  export REPOLENS_CTL_LENS_INDEX=7
+  export REPOLENS_CTL_LENS_TOTAL=42
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  export REPOLENS_IDE_ALLOW_STUB=1
+  : >>"$REPOLENS_CTL_LOG"
+  ( sleep 1; printf "DONE\n" > "$d/ide-response-iter-1.txt"; touch "$d/ide-done-iter-1" ) &
+  run_cursor_ide_agent "LENS BODY" "'"$SCRIPT_DIR"'" >/dev/null 2>"$d/stderr.txt"
+  p="$d/ide-prompt-iter-1.md"
+  grep -q "LENS BODY" "$p"
+  grep -q "lens 7/42" "$p"
+  grep -q "run_complete" "$p"
+  grep -q "one status line per handoff" "$p"
+  grep -q "NOT APPLICABLE" "$p"
+'
+
+assert_ok "last-lens prompt says it is the last in the queue" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  export REPOLENS_CTL_LENS_INDEX=42
+  export REPOLENS_CTL_LENS_TOTAL=42
+  repolens_ide_prompt_protocol_footer 1 /tmp/resp.txt /tmp/done | grep -q "last lens in the queue"
+'
+
+assert_ok "reject reason names the failing check" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  unset REPOLENS_IDE_ALLOW_STUB
+  printf "too short\n" > "$d/short.txt"
+  ! repolens_ide_validate_cursor_ide_response "$d/short.txt"
+  grep -q "needs at least 400" <<< "$REPOLENS_IDE_REJECT_REASON"
+  printf "%s\n" "## Findings" "$(head -c 500 /dev/zero | tr "\0" "x")" > "$d/nomethod.txt"
+  ! repolens_ide_validate_cursor_ide_response "$d/nomethod.txt"
+  grep -q "Method" <<< "$REPOLENS_IDE_REJECT_REASON"
+'
+
+assert_ok "run_complete tells the agent to move into the plan phase" bash -c '
+  set -euo pipefail
+  source "'"$SCRIPT_DIR"'/lib/core.sh"
+  source "'"$SCRIPT_DIR"'/lib/cursor_runner.sh"
+  d="$(mktemp -d)"
+  trap "rm -rf \"$d\"" EXIT
+  export REPOLENS_CTL_LOG="$d/ctl.ndjson"
+  repolens_ctl_emit_run_complete "run-1" "findings" "$d/summary.json" "$d/out" 2>/dev/null
+  [[ "$(jq -r ".kind" "$REPOLENS_CTL_LOG")" == "run_complete" ]]
+  [[ "$(jq -r ".next_action" "$REPOLENS_CTL_LOG")" == "plan_mode" ]]
+  [[ "$(jq -r ".files.summary" "$REPOLENS_CTL_LOG")" == "$d/summary.json" ]]
+'
+
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
 exit "$FAIL"

@@ -161,10 +161,20 @@ repolens_ide_response_has_path_anchor() {
 # Rejects: empty/short (after padding strip), known stub phrases, padding-filler,
 # automation/grep-worker templates, replies without enough path:line proof,
 # near-duplicates, and (when project is set) anchors that do not exist on disk.
+# Set by repolens_ide_validate_cursor_ide_response: which check failed, phrased
+# so the chat agent can correct the reply instead of guessing and retrying.
+REPOLENS_IDE_REJECT_REASON=""
+
+repolens_ide_reject() {
+  REPOLENS_IDE_REJECT_REASON="$1"
+  return 1
+}
+
 repolens_ide_validate_cursor_ide_response() {
   local f="$1"
+  REPOLENS_IDE_REJECT_REASON=""
   repolens_ide_stub_allowed && return 0
-  [[ -f "$f" && -s "$f" ]] || return 1
+  [[ -f "$f" && -s "$f" ]] || repolens_ide_reject "response file is missing or empty" || return 1
   local min_b="${REPOLENS_IDE_MIN_RESPONSE_BYTES:-400}"
   [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=400
   local min_anchors="${REPOLENS_IDE_MIN_PATH_LINE_ANCHORS:-2}"
@@ -172,11 +182,13 @@ repolens_ide_validate_cursor_ide_response() {
   (( min_anchors < 1 )) && min_anchors=1
 
   if grep -qiE 'Automatischer Durchlauf \(Chat-Agent-Monitor\)|automated pass by monitoring agent|no substantive audit|Stub-Antwort|Chat-Agent-Monitor|stub run' "$f"; then
+    repolens_ide_reject "reply contains a known stub phrase — write a real analysis of this lens"
     return 1
   fi
 
   # Grep-worker / automation templates are False-Green even with path hits.
   if repolens_ide_response_is_automation_template "$f"; then
+    repolens_ide_reject "reply looks like an automation/grep-worker template — describe what you actually read and concluded"
     return 1
   fi
 
@@ -185,6 +197,7 @@ repolens_ide_validate_cursor_ide_response() {
   pad_n="$(grep -ciE '^[[:space:]]*#[[:space:]]*(continuity|pad|filler|padding)([[:space:]]+|$)' "$f" 2>/dev/null || true)"
   [[ "$pad_n" =~ ^[0-9]+$ ]] || pad_n=0
   if (( pad_n >= 3 )); then
+    repolens_ide_reject "reply uses padding comment lines as byte filler — remove them and add real content"
     return 1
   fi
 
@@ -192,16 +205,21 @@ repolens_ide_validate_cursor_ide_response() {
   stripped="$(repolens_ide_strip_response_padding <"$f")"
   sz="$(printf '%s' "$stripped" | wc -c)"
   sz="${sz//[[:space:]]/}"
-  [[ "$sz" =~ ^[0-9]+$ ]] || return 1
-  [[ "$sz" -ge "$min_b" ]] || return 1
+  [[ "$sz" =~ ^[0-9]+$ ]] || { repolens_ide_reject "reply size could not be determined"; return 1; }
+  if (( sz < min_b )); then
+    repolens_ide_reject "reply is ${sz} bytes, needs at least ${min_b}"
+    return 1
+  fi
 
   # Require Method + Findings structure (real lens write-up, not a blob of hits).
   if ! grep -qiE '^#+[[:space:]]*method\b|^##[[:space:]]*method\b|^method[[:space:]]*$' "$f"; then
     if ! grep -qiE '^#+[[:space:]]*(investigation|analyse|analysis|follow-ups?)\b' "$f"; then
+      repolens_ide_reject "missing a '## Method' section (or Investigation/Analysis)"
       return 1
     fi
   fi
   if ! grep -qiE '^#+[[:space:]]*findings?\b|^##[[:space:]]*findings?\b' "$f"; then
+    repolens_ide_reject "missing a '## Findings' section (use it for 'no findings' too)"
     return 1
   fi
 
@@ -209,12 +227,14 @@ repolens_ide_validate_cursor_ide_response() {
   local anchor_n
   anchor_n="$(repolens_ide_count_path_line_anchors "$f")"
   if (( anchor_n < min_anchors )); then
+    repolens_ide_reject "only ${anchor_n} distinct path:line anchors, needs ${min_anchors} (cite what you inspected, e.g. src/app.py:42)"
     return 1
   fi
 
   # When project root is known, cited files must exist (blocks invented paths).
   if [[ -n "${REPOLENS_CURSOR_IDE_PROJECT:-}" && -d "${REPOLENS_CURSOR_IDE_PROJECT}" ]]; then
     if ! repolens_ide_verified_anchor_files "$f" "$min_anchors"; then
+      repolens_ide_reject "fewer than ${min_anchors} cited paths exist under ${REPOLENS_CURSOR_IDE_PROJECT} — cite real files, repo-relative"
       return 1
     fi
   fi
@@ -233,6 +253,7 @@ repolens_ide_validate_cursor_ide_response() {
       -e 's/uniq=[0-9a-fA-F]+/uniq=X/g' \
       -e 's|^#[[:space:]]*[^/[:space:]]+/[^[:space:]]+|# lens|')"
     if [[ -n "$cur_norm" && "$cur_norm" == "$prev_norm" ]]; then
+      repolens_ide_reject "reply is a near-duplicate of the previous iteration — add new evidence or answer DONE with proof"
       return 1
     fi
   fi
@@ -240,8 +261,19 @@ repolens_ide_validate_cursor_ide_response() {
   return 0
 }
 
+# Non-negative integer from an env var, or 0 when unset/garbage. Progress fields
+# must never make a CTL payload unparsable.
+repolens_ctl_uint() {
+  local raw="${1:-}"
+  [[ "$raw" =~ ^[0-9]+$ ]] || raw=0
+  printf '%s' "$((10#$raw))"
+}
+
 repolens_ctl_emit_lens_start() {
   printf 'REPOLENS_PHASE lens_start\n' >&2
+  local idx total
+  idx="$(repolens_ctl_uint "${REPOLENS_CTL_LENS_INDEX:-}")"
+  total="$(repolens_ctl_uint "${REPOLENS_CTL_LENS_TOTAL:-}")"
   local json
   json="$(jq -nc \
     --argjson v 1 \
@@ -250,7 +282,35 @@ repolens_ctl_emit_lens_start() {
     --arg domain "${REPOLENS_CTL_DOMAIN:-}" \
     --arg lens "${REPOLENS_CTL_LENS_ID:-}" \
     --arg lens_name "${REPOLENS_CTL_LENS_NAME:-}" \
-    '{v: $v, kind: $kind, run_id: $run_id, domain: $domain, lens: $lens, lens_name: $lens_name}')"
+    --argjson lens_index "$idx" \
+    --argjson lens_total "$total" \
+    --argjson round "$(repolens_ctl_uint "${REPOLENS_CTL_ROUND:-}")" \
+    --argjson rounds_total "$(repolens_ctl_uint "${REPOLENS_CTL_ROUNDS_TOTAL:-}")" \
+    '{v: $v, kind: $kind, run_id: $run_id, domain: $domain, lens: $lens, lens_name: $lens_name,
+      lens_index: $lens_index, lens_total: $lens_total, round: $round, rounds_total: $rounds_total}')"
+  repolens_ctl_emit_json "$json"
+}
+
+# repolens_ctl_emit_run_complete <run_id> <outcome> <summary_file> <findings_dir>
+#
+# Terminal event of a cursor-ide run: tells the chat agent that no further
+# handoff will arrive and that the analysis/plan phase starts now.
+repolens_ctl_emit_run_complete() {
+  local run_id="${1:-}" outcome="${2:-unknown}" summary="${3:-}" findings_dir="${4:-}"
+  printf 'REPOLENS_PHASE run_complete\n' >&2
+  local json
+  json="$(jq -nc \
+    --argjson v 1 \
+    --arg kind "run_complete" \
+    --arg run_id "$run_id" \
+    --arg outcome "$outcome" \
+    --arg summary_file "$summary" \
+    --arg findings_dir "$findings_dir" \
+    --arg next_action "plan_mode" \
+    '{v: $v, kind: $kind, run_id: $run_id, outcome: $outcome,
+      files: {summary: $summary_file, findings_dir: $findings_dir},
+      next_action: $next_action,
+      instruction: "No further handoff. Aggregate every collected finding, switch to Plan mode, and raise open decisions as interactive questions where option A is the best-practice default."}')"
   repolens_ctl_emit_json "$json"
 }
 
@@ -388,6 +448,62 @@ run_cursor_agent() {
   return "$status"
 }
 
+# repolens_ide_prompt_protocol_footer <iteration> <response_file> <done_file>
+#
+# Appended to every ide-prompt. The prompt file is the only channel guaranteed to
+# reach the chat agent (workspace rules belong to the audited project, not to
+# RepoLens), so the loop discipline that keeps a full audit running has to live
+# here: progress, one-line chat updates, and never stopping before run_complete.
+repolens_ide_prompt_protocol_footer() {
+  local iteration="$1" response_f="$2" done_f="$3"
+  local idx total position
+  idx="$(repolens_ctl_uint "${REPOLENS_CTL_LENS_INDEX:-}")"
+  total="$(repolens_ctl_uint "${REPOLENS_CTL_LENS_TOTAL:-}")"
+  if (( total > 0 )); then
+    position="lens ${idx}/${total}"
+    if (( idx >= total )); then
+      position="$position (last lens in the queue)"
+    fi
+  else
+    position="lens ${REPOLENS_CTL_LENS_ID:-?}"
+  fi
+
+  cat <<EOF
+
+---
+
+## RepoLens handoff protocol — ${position}, iteration ${iteration}
+
+1. Answer the lens above completely. Write the full reply to:
+   \`${response_f}\`
+2. Signal completion: \`touch ${done_f}\`
+3. RepoLens then emits the next handoff. Serve every one of them in this chat
+   until you see a \`REPOLENS_CTL\` event with \`"kind":"run_complete"\`.
+
+**Chat discipline.** Post exactly one status line per handoff, for example
+\`${position} ${REPOLENS_CTL_DOMAIN:-domain}/${REPOLENS_CTL_LENS_ID:-lens} — 3 findings (1 high)\`
+or \`… — no findings\`. The full write-up goes into the response file, never into
+the chat. A complete audit is a long queue of handoffs; that is expected, not a
+reason to stop. Do not ask whether to continue, do not offer to shorten the run,
+and do not declare the run too large for the chat.
+
+**Lens does not fit this project?** Do not stop the run. Write a reply that says
+\`NOT APPLICABLE\`, name the reason, and cite at least two real \`path:line\`
+anchors that prove what you inspected (for example the manifest or config that
+shows the technology is absent). Then touch the done file. Skipping happens
+through the response file.
+
+**Something failed?** Write what failed into the response file, say it in one
+chat line, and continue with the next handoff.
+
+**Response requirements** (otherwise RepoLens rejects the reply and repeats the
+iteration): a \`## Method\` section, a \`## Findings\` section, at least
+${REPOLENS_IDE_MIN_PATH_LINE_ANCHORS:-2} distinct \`path:line\` anchors pointing at
+files that really exist, and at least ${REPOLENS_IDE_MIN_RESPONSE_BYTES:-400} bytes
+of substance. No filler, no padding comments, no repeat of the previous iteration.
+EOF
+}
+
 # run_cursor_ide_agent <prompt> <project_path>
 #
 # Handoff to the Cursor IDE (Composer/Chat): no cursor-agent. RepoLens writes
@@ -420,7 +536,9 @@ run_cursor_ide_agent() {
   done_f="$ide_dir/ide-done-iter-${iteration}"
   # Anchor existence checks resolve against the audited project root.
   if [[ -n "$project_path" && -d "$project_path" ]]; then
-    export REPOLENS_CURSOR_IDE_PROJECT="$(cd -- "$project_path" && pwd)"
+    local project_abs
+    project_abs="$(cd -- "$project_path" && pwd)"
+    export REPOLENS_CURSOR_IDE_PROJECT="$project_abs"
   fi
   # Near-duplicate guard: compare against the previous iteration's accepted reply.
   unset REPOLENS_CURSOR_IDE_PREV_RESPONSE
@@ -432,10 +550,18 @@ run_cursor_ide_agent() {
   fi
 
   rm -f "$done_f"
-  printf '%s\n' "$prompt" >"$prompt_f"
+  {
+    printf '%s\n' "$prompt"
+    repolens_ide_prompt_protocol_footer "$iteration" "$response_f" "$done_f"
+  } >"$prompt_f"
 
   local auto_json=false
   repolens_ctl_autonomous_detect && auto_json=true
+
+  local lens_index lens_total is_last
+  lens_index="$(repolens_ctl_uint "${REPOLENS_CTL_LENS_INDEX:-}")"
+  lens_total="$(repolens_ctl_uint "${REPOLENS_CTL_LENS_TOTAL:-}")"
+  if (( lens_total > 0 && lens_index >= lens_total )); then is_last=true; else is_last=false; fi
 
   local handoff_json
   handoff_json="$(jq -nc \
@@ -445,6 +571,9 @@ run_cursor_ide_agent() {
     --arg domain "${REPOLENS_CTL_DOMAIN:-}" \
     --arg lens "${REPOLENS_CTL_LENS_ID:-}" \
     --argjson iteration "$iteration" \
+    --argjson lens_index "$lens_index" \
+    --argjson lens_total "$lens_total" \
+    --argjson last_lens "$is_last" \
     --arg prompt_file "$prompt_f" \
     --arg response_file "$response_f" \
     --arg done_file "$done_f" \
@@ -456,9 +585,12 @@ run_cursor_ide_agent() {
       domain: $domain,
       lens: $lens,
       iteration: $iteration,
+      lens_index: $lens_index,
+      lens_total: $lens_total,
+      last_lens: $last_lens,
       files: {prompt: $prompt_file, response: $response_file, done: $done_file},
       autonomous_env_hint: $autonomous_env,
-      instruction: "IDE/Agent: read files.prompt, execute lens in Composer, write full reply to files.response, then touch files.done"
+      instruction: "IDE/Agent: read files.prompt, execute lens in Composer, write full reply to files.response, then touch files.done, then keep serving handoffs until kind=run_complete"
     }')"
 
   printf 'REPOLENS_PHASE handoff_wait\n' >&2
@@ -529,8 +661,10 @@ EOF
   if ! repolens_ide_validate_cursor_ide_response "$response_f"; then
     local _rj_min="${REPOLENS_IDE_MIN_RESPONSE_BYTES:-400}"
     [[ "$_rj_min" =~ ^[0-9]+$ ]] || _rj_min=400
+    local _rj_why="${REPOLENS_IDE_REJECT_REASON:-reply did not pass the lens-evidence checks}"
     printf 'REPOLENS_PHASE error\n' >&2
-    printf 'REPOLENS_ERROR IDE_RESPONSE_REJECTED file=%s min_bytes=%s\n' "$response_f" "$_rj_min" >&2
+    printf 'REPOLENS_ERROR IDE_RESPONSE_REJECTED file=%s min_bytes=%s reason=%s\n' \
+      "$response_f" "$_rj_min" "$_rj_why" >&2
     local rj
     rj="$(jq -nc \
       --argjson v 1 \
@@ -538,10 +672,11 @@ EOF
       --arg code "IDE_RESPONSE_REJECTED" \
       --arg response_file "$response_f" \
       --argjson min_bytes "$_rj_min" \
-      '{v: $v, kind: $kind, code: $code, response_file: $response_file, min_bytes: $min_bytes, hint: "Write a real lens reply (see ide-prompt). Pipeline tests only: REPOLENS_IDE_ALLOW_STUB=1"}')"
+      --arg reason "$_rj_why" \
+      '{v: $v, kind: $kind, code: $code, response_file: $response_file, min_bytes: $min_bytes, reason: $reason, hint: "Fix exactly what reason names and rewrite the response file; the same iteration repeats. Pipeline tests only: REPOLENS_IDE_ALLOW_STUB=1"}')"
     repolens_ctl_emit_json "$rj"
     rm -f "$done_f" "$response_f"
-    echo "REPOLENS_IDE_RESPONSE_REJECTED: Keine echte Lens-Analyse (Stub/Padding/Automation-Template, zu wenig path:line-Anchors, fehlende Method/Findings, erfundene Pfade oder Near-Duplicate). Schreiben nach $response_f (ALLOW_STUB=1 nur für Demos)." >&2
+    echo "REPOLENS_IDE_RESPONSE_REJECTED: $_rj_why. Antwort erneut nach $response_f schreiben (ALLOW_STUB=1 nur für Demos)." >&2
     return 1
   fi
 

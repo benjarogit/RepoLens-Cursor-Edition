@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 Fork releases for **RepoLens Cursor Edition** use calendar tags (`cursor-edition-YYYY.MM.DD`) and are listed first below. Upstream SemVer sections follow afterward.
 
+## [Cursor Edition 2026.07.30] - 2026-07-30
+
+Release of [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition). Last full upstream merge pin remains [`14c0b78`](https://github.com/TheMorpheus407/RepoLens/commit/14c0b78cbefaa0d75d0f2477e234edcfaacd527c) ([`UPSTREAM_REVISION`](UPSTREAM_REVISION)); this release also selectively ports later upstream work (see below).
+
+### Cursor Edition
+
+- Harden `cursor-ide` handoffs to upstream’s request-binding protocol: per-request `request.json` / `prompt.md` / `response.md` / hashed `complete.json`, invocation-private snapshots, symlink- and line-bound `path:line` anchors, and always-sequential IDE waits (`lib/cursor_ide.sh`)
+- Keep Edition chat-loop overlays: CTL `lens_index` / `lens_total` / `last_lens`, strict False-Green defaults (≥400 bytes, ≥2 anchors, stub/padding/near-dup rejects), prompt footer discipline, and `run_complete` with `next_action: plan_mode` / batch-grilling
+- Full-audit chat discipline: one status line per handoff through the last lens; `NOT APPLICABLE` path instead of aborting mismatched lenses
+- Reject padding stubs and grep-worker template replies that previously produced false-green audits
+- Publish docs with **MkDocs Material** on GitHub Pages; thin README EN/DE entry + operator/handoff guides; CI doc contracts assert against MkDocs sources
+- Add `CONTEXT.md`, grilling / batch-grilling skills, and plan grill-gate rule for post-audit decisions
+- Release workflow packages CHANGELOG sections for `cursor-edition-*` tags (compare link + commit list)
+
+### Upstream (selective ports)
+
+- Multi-file specifications for `greenfield` and `spec-change`: `--spec-dir` with `--spec-glob` / `--spec-exclude` / `--spec-entry`, deterministic entry-first ordering, bundle artifacts, and resume identity checks ([#389](https://github.com/TheMorpheus407/RepoLens/issues/389))
+- Cursor IDE / CLI agent surface from upstream informed this Edition’s protocol port; CLI `--agent cursor` remains unsupported as the recommended Edition path
+
+### Fixed
+
+- Resume-pinned CI tests create a real `logs/<run-id>` directory before `--resume`, matching the multi-file symlink-escape hardening without weakening the check
+
+### Notes for operators of this fork
+
+- Recommended invocation remains `--agent cursor-ide --local` (plus typically `REPOLENS_IDE_AUTONOMOUS=1` and `--yes`)
+- Handoff completion is now hashed `complete.json` (not `touch done`); see [docs/cursor-ide.md](docs/cursor-ide.md) and [docs/en/handoff.md](docs/en/handoff.md)
+- Multi-file product specs: `--spec-dir` for greenfield / spec-change (details in the operator guide)
+
 ## [Cursor Edition 2026.07.15] - 2026-07-15
 
 Release of [benjarogit/RepoLens-Cursor-Edition](https://github.com/benjarogit/RepoLens-Cursor-Edition). Upstream pin: [`14c0b78`](https://github.com/TheMorpheus407/RepoLens/commit/14c0b78cbefaa0d75d0f2477e234edcfaacd527c) ([`UPSTREAM_REVISION`](UPSTREAM_REVISION)).
@@ -34,12 +63,6 @@ Highlights from TheMorpheus407/RepoLens (see `[Unreleased]` and linked issues fo
 
 ## [Unreleased]
 
-### Changed
-
-- Publish docs with **MkDocs Material** on GitHub Pages (`https://benjarogit.github.io/RepoLens-Cursor-Edition/`); README EN/DE shortened to entry + dominant docs CTA
-- Adapt CI doc contracts for Cursor Edition: assert against MkDocs `docs/en/full-reference.md` (and landing README for badges), not the slim entry README
-- Documentation refresh for Cursor Edition: docs index (EN/DE), simpler operator/handoff guides, full-reference preamble without csretro paths, accurate soft domain/lens counts pointing at `config/domains.json`
-
 ### Fixed
 
 - `config/agent-pricing.json` refreshed to current Anthropic pricing (2026-05-24): corrected `claude-opus-4-6` from $15/$75 to $5/$25 per MTok, added `claude-sonnet-4-6` ($3/$15) and `claude-opus-4-7` ($5/$25), and updated the default model for `--agent claude` from `claude-sonnet-4-5` to `claude-sonnet-4-6`. Cost estimates shown by `--dry-run` and the confirmation prompt are now within ±10% of current published pricing ([#249](https://github.com/TheMorpheus407/RepoLens/issues/249))
@@ -55,7 +78,6 @@ Highlights from TheMorpheus407/RepoLens (see `[Unreleased]` and linked issues fo
 
 ### Added
 
-- Multi-file specifications for `greenfield` and `spec-change`: use `--spec-dir` with repeatable or comma-separated `--spec-glob` and `--spec-exclude` filters plus an optional `--spec-entry`. RepoLens defaults to recursive Markdown selection, resolves a deterministic entry-first/file-sorted bundle, preserves source paths for planning provenance and conflict reporting, shows the resolved set under `--dry-run`, and persists a manifest and combined snapshots under `logs/<run-id>/`. Bundle resume restores only frozen specification selection: authorization and output routing must be repeated through the current `--mode`, `--local`/`--forge`, optional `--output`, and `--yes` flags, which interruption hints now include. The existing `--spec <file>` workflow remains supported and is mutually exclusive with `--spec-dir` ([#389](https://github.com/TheMorpheus407/RepoLens/issues/389))
 - Task-complexity estimation (1-5) and routing labels on findings: the audit model now estimates the **implementation effort to fix** each finding on a 1-5 scale (`1` Trivial, `2` Easy, `3` Medium, `4` High, `5` Critical/Complex) — orthogonal to severity, since a `critical` leaked secret may be a one-line fix (1) while a `low` cross-cutting refactor may be a major change (4). Audit findings (single-pass `audit` and multi-round `bugreport` synthesis) carry a `repolens/complexity/<1-5>` label and a `- **Complexity:** <n> (<Descriptor>)` body line, and the finding registry gains an optional `complexity` field (integer 1-5 or `null`) in `findings.jsonl` plus a `complexity` column appended at the end of `findings.csv`. This lets downstream automation route each fix to a cost/capability model tier by label (e.g. `gh issue list --label repolens/complexity/1`) instead of guessing from the domain. The value is authored by the model, never computed by RepoLens; an absent or out-of-range estimate is stored as `null` (rejected, never clamped). No other mode emits a complexity estimate ([#385](https://github.com/TheMorpheus407/RepoLens/issues/385))
 - `<agent>/<model>` model pinning for the native agents: `claude/<model>`, `codex/<model>`, and `antigravity/<model>` now select a specific model the same way `opencode/<model>` always has, so you can run a cheap, fast model (e.g. `--agent claude/claude-haiku-4-5`) or target a newly released one without waiting for RepoLens to hardcode it. The model string is passed straight to the underlying CLI, the `/<model>` forms are also valid `--agent-override` targets, and the `spark`/`sparc` presets keep no suffix (use `codex/<model>` to choose a Codex model). Cost estimation no longer falls back to an arbitrary high default for an unknown model: a model RepoLens has exact pricing for is priced directly, and any other is approximated from keywords in its name — `flash`/`haiku`/`mini`/`8b`/`lite`/`nano` price as cheap, `opus`/`ultra`/`preview` as premium, everything else as standard ([#384](https://github.com/TheMorpheus407/RepoLens/issues/384))
 - `--flat-rate` flag (with `REPOLENS_FLAT_RATE` env fallback): cost a run as a flat-rate subscription or free tier (Claude Pro, ChatGPT Plus, Gemini Advanced, Google AI Studio free tier, …) rather than pay-as-you-go tokens. Because the marginal per-token cost for these plans is `$0.00`, the confirmation prompt and `--dry-run` preview show `Estimated cost: ~$0.00` plus the expected number of LLM calls and how much of a typical 3-hour message cap or free-tier rate budget (e.g. Google AI Studio 15 RPM / 1500 RPD) the run will consume, so subscription users can pace or split a large audit instead of locking themselves out mid-run. It suppresses the per-token dollar estimate and the "2–5× higher" disclaimer; with a `$0.00` estimate the `--max-cost` guardrail never trips. Truthy env values (`true`/`1`/`yes`) enable it, and the CLI flag also enables it ([#384](https://github.com/TheMorpheus407/RepoLens/issues/384))
@@ -205,6 +227,7 @@ _This is the first public release. Previous development was private._
 - Test suite with 17 test suites
 - Modular library architecture (`lib/`)
 
+[Cursor Edition 2026.07.30]: https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/tag/cursor-edition-2026.07.30
 [Cursor Edition 2026.07.15]: https://github.com/benjarogit/RepoLens-Cursor-Edition/releases/tag/cursor-edition-2026.07.15
 [Unreleased]: https://github.com/TheMorpheus407/RepoLens/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/TheMorpheus407/RepoLens/compare/v0.1.0...v0.2.0

@@ -81,6 +81,9 @@ export REPOLENS_IDE_AUTONOMOUS=1
   --agent cursor-ide --local --domain security --yes
 ```
 
+
+Multi-file product specs (`greenfield` / `spec-change`): `--spec-dir <dir>` with optional `--spec-entry`, `--spec-glob`, `--spec-exclude`. Details: [operator guide](docs/en/full-reference.md).
+
 Need [Cursor](https://cursor.com/referral?code=UW6WJZLB8ECL)? Install it, open chat on this repo, then follow the [IDE handoff](https://benjarogit.github.io/RepoLens-Cursor-Edition/handoff/) when `REPOLENS_CTL` appears.
 
 More: [docs site](https://benjarogit.github.io/RepoLens-Cursor-Edition/) · [upstream sync](UPSTREAM.md) · [changelog](CHANGELOG.md)

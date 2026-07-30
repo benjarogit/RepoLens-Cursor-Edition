@@ -36,6 +36,8 @@ source "$SCRIPT_DIR/lib/core.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/cursor_runner.sh"
 # shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/cursor_ide.sh"
+# shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/logging.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/lib/remote.sh"
@@ -390,29 +392,31 @@ Environment:
                            orchestration wrappers).
   REPOLENS_CURSOR_IDE_POLL_SEC
                            For --agent cursor-ide, poll interval while waiting
-                           for ide-done-iter-N (default: 2).
+                           for complete.json (default: 1).
   REPOLENS_CURSOR_IDE_MAX_WAIT_SEC
                            For --agent cursor-ide, max seconds to wait per
-                           iteration (0 = unlimited, default: 0).
-  REPOLENS_IDE_AUTONOMOUS  If 1/true, mark REPOLENS_CTL.ide_handoff payloads with
-                           autonomous_env_hint (also TERM_PROGRAM=vscode /
-                           CURSOR_TRACE_ID set the hint). For IDE „Run Everything“.
-  REPOLENS_IDE_ALLOW_STUB  If 1/true, cursor-ide accepts missing/empty responses and
-                           skips substantive checks (CI/pipeline demos only).
+                           handoff for the hashed complete.json marker.
+  REPOLENS_CURSOR_IDE_MIN_RESPONSE_BYTES
+                           Minimum response size after padding strip (default 400).
+                           Alias: REPOLENS_IDE_MIN_RESPONSE_BYTES.
+  REPOLENS_CURSOR_IDE_MIN_PATH_LINE_ANCHORS
+                           Minimum verified in-bounds path:line anchors (default 2).
+                           Alias: REPOLENS_IDE_MIN_PATH_LINE_ANCHORS.
+  REPOLENS_IDE_AUTONOMOUS  If 1/true, mark handoffs for an autonomous chat agent
+                           (also TERM_PROGRAM=vscode / CURSOR_TRACE_ID).
+  REPOLENS_IDE_ALLOW_STUB  If 1/true, skip substance checks (CI/pipeline demos only).
   REPOLENS_IDE_MIN_RESPONSE_BYTES
-                           Minimum size (bytes) for ide-response-iter-N.txt after
-                           stripping padding lines, when stubs are not allowed
-                           (default: 400). Replies need Method+Findings, ≥2
-                           existing path:line anchors, and must not be automation
-                           / grep-worker templates (# continuity padding rejected).
+                           Alias for REPOLENS_CURSOR_IDE_MIN_RESPONSE_BYTES.
   REPOLENS_IDE_MIN_PATH_LINE_ANCHORS
-                           Minimum distinct repo-relative path:line anchors
-                           required in an ide-response (default: 2).
+                           Alias for REPOLENS_CURSOR_IDE_MIN_PATH_LINE_ANCHORS.
   REPOLENS_IDE_FAIL_FAST   If 1/true (default), cursor-ide stops the lens on the
                            first failed handoff and logs repolens-errors.ndjson.
                            Set to 0 to retry further iterations (legacy).
-  REPOLENS_CTL_LOG        Set by repolens for cursor-ide to append JSON lines
-                           (default: logs/<run-id>/repolens-ctl.ndjson).
+  REPOLENS_CTL_LOG        Legacy NDJSON control log (default:
+                           logs/<run-id>/repolens-ctl.ndjson).
+  REPOLENS_CURSOR_IDE_CTL_LOG
+                           Durable IDE events (default:
+                           logs/<run-id>/cursor-ide/events.ndjson).
   REPOLENS_CHILD_MAX_WAIT  Per-child parallel-worker deadline in seconds
                            (default: 144000). Outer safety net for parallel mode:
                            wait_all polls each background lens and SIGTERM/KILLs
@@ -3446,6 +3450,37 @@ if (( ROUNDS >= 4 )) && ! $EXPENSIVE_ACK; then
   fi
 fi
 
+# Cursor Composer has no unattended parallel API — IDE handoffs are always ordered.
+# Applied before --dry-run so previews show the sequential queue.
+if [[ "$AGENT" == "cursor-ide" ]] && $PARALLEL; then
+  log_warn "Forcing sequential execution: --agent cursor-ide uses one ordered Composer handoff queue."
+  PARALLEL=false
+fi
+if [[ "$AGENT" == "cursor" ]] && $PARALLEL; then
+  case "${CURSOR_SERIAL,,}" in
+    true|1|yes)
+      log_warn "Forcing sequential mode: cursor backend defaults to serial execution for quota stability (set REPOLENS_CURSOR_SERIAL=false to override)."
+      PARALLEL=false
+      ;;
+  esac
+fi
+
+CURSOR_IDE_ACTIVE=false
+if [[ "$AGENT" == "cursor-ide" ]]; then
+  CURSOR_IDE_ACTIVE=true
+fi
+if $CURSOR_IDE_ACTIVE; then
+  if [[ -z "${REPOLENS_CURSOR_IDE_CONTROL_FD:-}" ]]; then
+    exec {REPOLENS_CURSOR_IDE_CONTROL_FD}>&2
+    export REPOLENS_CURSOR_IDE_CONTROL_FD
+  fi
+  REPOLENS_CURSOR_IDE_CTL_LOG="${REPOLENS_CURSOR_IDE_CTL_LOG:-$LOG_BASE/cursor-ide/events.ndjson}"
+  export REPOLENS_CURSOR_IDE_CTL_LOG
+  mkdir -p "$(dirname "$REPOLENS_CURSOR_IDE_CTL_LOG")"
+  export REPOLENS_CTL_LOG="${REPOLENS_CTL_LOG:-$LOG_BASE/repolens-ctl.ndjson}"
+  : >>"$REPOLENS_CTL_LOG"
+fi
+
 # --- Dry-run output ---
 if $DRY_RUN; then
   echo ""
@@ -3625,14 +3660,6 @@ fi
 if $HOSTED && $PARALLEL; then
   log_warn "Forcing sequential mode: --hosted requires sequential execution to avoid concurrent DAST conflicts."
   PARALLEL=false
-fi
-if [[ "$AGENT" == "cursor" || "$AGENT" == "cursor-ide" ]] && $PARALLEL; then
-  case "${CURSOR_SERIAL,,}" in
-    true|1|yes)
-      log_warn "Forcing sequential mode: cursor backend defaults to serial execution for quota stability (set REPOLENS_CURSOR_SERIAL=false to override)."
-      PARALLEL=false
-      ;;
-  esac
 fi
 
 if [[ -n "$RESUME_RUN_ID" ]]; then
@@ -3831,12 +3858,14 @@ run_lens() {
 
   log_info "[$domain/$lens_id] Starting lens: $lens_name"
 
-  if [[ "$AGENT" == "cursor-ide" ]]; then
+  if [[ "$AGENT" == "cursor-ide" || "${CURSOR_IDE_ACTIVE:-false}" == "true" ]]; then
     export REPOLENS_RUN_ID="$RUN_ID"
     export REPOLENS_CTL_DOMAIN="$domain"
     export REPOLENS_CTL_LENS_ID="$lens_id"
     export REPOLENS_CTL_LENS_NAME="$lens_name"
-    export REPOLENS_CTL_LOG="$LOG_BASE/repolens-ctl.ndjson"
+    export REPOLENS_CURSOR_IDE_DOMAIN="$domain"
+    export REPOLENS_CURSOR_IDE_LENS="$lens_id"
+    export REPOLENS_CTL_LOG="${REPOLENS_CTL_LOG:-$LOG_BASE/repolens-ctl.ndjson}"
     : >>"$REPOLENS_CTL_LOG"
     repolens_ctl_emit_lens_start
   fi
@@ -3903,6 +3932,12 @@ run_lens() {
 
     export REPOLENS_CURSOR_IDE_LENS_LOG_DIR="$lens_log_dir"
     export REPOLENS_CURSOR_IDE_ITERATION="$iteration"
+    export REPOLENS_CURSOR_IDE_PHASE="lens"
+    export REPOLENS_CURSOR_IDE_DOMAIN="$domain"
+    export REPOLENS_CURSOR_IDE_LENS="$lens_id"
+    export REPOLENS_CURSOR_IDE_HANDOFF_DIR="${REPOLENS_CURSOR_IDE_HANDOFF_DIR:-${lens_log_dir}/cursor-ide}"
+    export REPOLENS_CURSOR_IDE_LENS_INDEX="${REPOLENS_CTL_LENS_INDEX:-}"
+    export REPOLENS_CURSOR_IDE_LENS_TOTAL="${REPOLENS_CTL_LENS_TOTAL:-}"
 
     local agent_rc=0
     local effective_timeout_secs="$effective_agent_timeout_secs"
@@ -3923,8 +3958,7 @@ run_lens() {
     fi
 
     if [[ "$effective_agent" == "cursor-ide" || "$AGENT" == "cursor-ide" ]]; then
-      run_agent "$effective_agent" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" 2>&1 | tee "$output_file"
-      agent_rc=${PIPESTATUS[0]}
+      run_agent "$effective_agent" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" "$envelope_file" >"$output_file" 2>&1 || agent_rc=$?
     else
       run_agent "$effective_agent" "$prompt" "$PROJECT_PATH" "$effective_timeout_secs" "$AGENT_KILL_GRACE_SECS" "$envelope_file" >"$output_file" 2>&1 || agent_rc=$?
     fi
@@ -4151,7 +4185,11 @@ run_lens() {
           && (( iter_issues == 0 )); then
         local _done_anchors=0
         if declare -F repolens_ide_count_path_line_anchors >/dev/null 2>&1; then
-          _done_anchors="$(repolens_ide_count_path_line_anchors "$output_file")"
+          # Always verify against PROJECT_PATH — a stale/wrong
+          # REPOLENS_CURSOR_IDE_PROJECT in the parent shell (e.g. RepoLens
+          # root) makes empty DONE passes report "got 0" despite valid
+          # anchors in the agent output.
+          _done_anchors="$(REPOLENS_CURSOR_IDE_PROJECT="${PROJECT_PATH:-}" repolens_ide_count_path_line_anchors "$output_file")"
           [[ "$_done_anchors" =~ ^[0-9]+$ ]] || _done_anchors=0
         fi
         if (( _done_anchors < 3 )) \
@@ -4669,9 +4707,10 @@ printf '\nREPOLENS_RUN_OUTCOME %s run_id=%s summary=%s errors=%s/repolens-errors
 
 # Terminal handoff signal: the chat agent waits for this to leave the loop and
 # start the analysis/plan phase. Emitted on every exit path below.
-if [[ "$AGENT" == "cursor-ide" ]]; then
+if [[ "${CURSOR_IDE_ACTIVE:-false}" == "true" || "$AGENT" == "cursor-ide" ]]; then
   export REPOLENS_CTL_LOG="${REPOLENS_CTL_LOG:-$LOG_BASE/repolens-ctl.ndjson}"
-  repolens_ctl_emit_run_complete \
+  export REPOLENS_CURSOR_IDE_CTL_LOG="${REPOLENS_CURSOR_IDE_CTL_LOG:-$LOG_BASE/cursor-ide/events.ndjson}"
+  cursor_ide_emit_run_complete \
     "$RUN_ID" "$_ro_outcome" "$SUMMARY_FILE" "${OUTPUT_DIR:-$LOG_BASE/final}"
 fi
 

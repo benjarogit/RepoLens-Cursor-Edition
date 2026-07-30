@@ -14,10 +14,12 @@ Concise domain vocabulary for agents and humans. Prefer these terms over paraphr
 
 | Term | Meaning |
 |------|---------|
-| **cursor-ide** | Only supported `--agent` here. Chat reads prompt files and writes response + done markers. |
-| **CTL** | Control channel: `REPOLENS_CTL` stderr JSON / `logs/<run-id>/repolens-ctl.ndjson` with `kind: ide_handoff`. |
-| **Handoff** | Per-lens cycle: read `files.prompt` → write `files.response` (≥ min bytes) → `touch files.done`. |
+| **cursor-ide** | Only supported `--agent` here. Chat reads prompt files and writes `response.md` + hashed `complete.json`. |
+| **CTL** | Control channel: `REPOLENS_CTL` stderr JSON / `logs/<run-id>/repolens-ctl.ndjson` with `kind: ide_handoff` (and terminal `kind: run_complete`). |
+| **Handoff** | Per-request cycle under `cursor-ide/lens/<request-id>/`: read `files.prompt` → write `files.response` (≥ min bytes) → publish hashed `files.complete` (`request_id` + `git hash-object`). |
 | **Ambient agent** | A real CLI (`claude`, `codex`, …) on PATH. Tests must not require one; CI strips them. |
+| **Frontier** | Post-audit: every decision whose prerequisites are already settled — ask the whole set in one round (`batch-grilling`). |
+| **Batch grilling** | Frontier-round interview after `run_complete` (many independent finding decisions). Distinct from one-at-a-time `grilling` for a single design fork. |
 
 Do **not** use `--agent claude|codex|opencode|cursor` (CLI) in this edition without an explicit human exception.
 

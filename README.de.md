@@ -53,9 +53,9 @@ Fork von [TheMorpheus407/RepoLens](https://github.com/TheMorpheus407/RepoLens) f
 
 | | |
 |---|---|
-| **Agent** | `--agent cursor-ide` |
+| **Agent** | `--agent cursor-ide` ([Handoff-Guide](docs/cursor-ide.md)) |
 | **Output** | `logs/<run-id>/` mit `--local` |
-| **Schleife** | `REPOLENS_CTL` → Prompt → Antwort → Done |
+| **Schleife** | `REPOLENS_CTL` → Prompt → Antwort → gehashtes `complete.json` |
 
 > [!IMPORTANT]
 > Agenten können Shell-Befehle ausführen. Starte mit einer Domain (z. B. `--domain security`). Immer `--local`.

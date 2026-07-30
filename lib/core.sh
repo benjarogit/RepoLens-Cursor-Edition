@@ -465,7 +465,10 @@ run_agent() {
         run_cursor_agent "$prompt" "$project_path"
         ;;
       cursor-ide)
-        run_cursor_ide_agent "$prompt" "$project_path"
+        if ! declare -F run_cursor_ide_agent >/dev/null 2>&1; then
+          die "Internal error: cursor-ide backend is unavailable (source lib/cursor_ide.sh)"
+        fi
+        run_cursor_ide_agent "$prompt" "$project_path" "$timeout_secs" "$envelope_file"
         ;;
       claude|claude/*)
         # <agent>/<model> selects a model via `claude --model <model>` (issue

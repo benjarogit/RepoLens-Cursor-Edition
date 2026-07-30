@@ -17,3 +17,5 @@ Do **not** implement or edit code until the user confirms shared understanding.
 Prefer terms from `CONTEXT.md` when the work is in this RepoLens tree.
 
 Keep questions short. No preamble essays.
+
+**Post-audit / many independent decisions:** use `batch-grilling` instead (frontier rounds). One-at-a-time grilling stays for a single design fork outside that flow.

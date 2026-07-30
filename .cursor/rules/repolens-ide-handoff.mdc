@@ -7,23 +7,25 @@ alwaysApply: true
 
 **Agent-Policy:** Nur `--agent cursor-ide` (siehe Rule `repolens-agent-cursor-ide-only`). Keine Claude-/Codex-/OpenCode-CLIs.
 
-Wenn `repolens.sh` mit `--agent cursor-ide` läuft oder `REPOLENS_CTL` / `ide-prompt-iter-*.md` / `repolens-ctl.ndjson` sichtbar ist:
+Wenn `repolens.sh` mit `--agent cursor-ide` läuft oder `REPOLENS_CTL` / `repolens-ctl.ndjson` / `cursor-ide/lens/<request-id>/` sichtbar ist:
 
 ## Pro Handoff (ohne Nachfrage)
 
-1. CTL-Event lesen: stderr-Zeile `REPOLENS_CTL {…}` oder Append in `logs/<run-id>/repolens-ctl.ndjson` (`kind: ide_handoff`, mit `lens_index`/`lens_total`/`last_lens`)
+1. CTL-Event lesen: stderr-Zeile `REPOLENS_CTL {…}` oder Append in `logs/<run-id>/repolens-ctl.ndjson` (`kind: ide_handoff`, mit `lens_index`/`lens_total`/`last_lens` und `request_id`)
 2. `files.prompt` öffnen und Lens ausführen (Projekt-Kontext)
-3. Volle Antwort nach `files.response` schreiben
-4. `touch files.done` (Pfad aus dem CTL-JSON)
+3. Volle Antwort nach `files.response` schreiben (`response.md`)
+4. Atomar abschließen: `complete.json` mit `request_id` + `git hash-object` von `response.md` (Pfade aus dem CTL-JSON / Prompt-Footer). **Kein** `touch done`.
 5. Direkt weiter zum nächsten Handoff
+
+Reject löscht nur `complete.json` — Response korrigieren und Marker neu publizieren. Resume erzeugt eine neue `request_id`.
 
 ## Durchlauf-Disziplin
 
 Ein vollständiges Audit besteht aus vielen Handoffs. Das ist der Normalfall, kein Grund abzubrechen.
 
-- Pro Handoff **eine** Chat-Zeile, z. B. `Lens 7/42 security/injection — 3 Findings (1 high)` oder `Lens 8/42 kubernetes/manifests — keine Findings`. Die Analyse gehört in `files.response`, nicht in den Chat: nur so bleibt der Kontext über den ganzen Lauf klein.
+- Pro Handoff **eine** Chat-Zeile, z. B. `Lens 7/42 security/injection — 3 Findings (1 high)` oder `Lens 8/42 devops/manifests — keine Findings`. Die Analyse gehört in `files.response`, nicht in den Chat: nur so bleibt der Kontext über den ganzen Lauf klein.
 - Nicht fragen, ob weitergemacht werden soll. Nicht anbieten, den Lauf zu kürzen. Nicht behaupten, das sei zu viel für den Chat.
-- Lens passt nicht zum Projekt → **nicht** stoppen: Antwort mit `NOT APPLICABLE`, Begründung und ≥ 2 echten `path:line`-Anchors schreiben, die belegen, was geprüft wurde. Dann `done` touchen. Überspringen läuft über die Response-Datei, nie über einen Abbruch.
+- Lens passt nicht zum Projekt → **nicht** stoppen: Antwort mit `NOT APPLICABLE`, Begründung und ≥ 2 echten `path:line`-Anchors schreiben, die belegen, was geprüft wurde. Dann `complete.json` publizieren. Überspringen läuft über die Response-Datei, nie über einen Abbruch.
 - Fehler (Datei fehlt, Reject, Tool bricht ab) → Ursache in `files.response`, eine Chat-Zeile, weiter. Dreimal derselbe Fehler in Folge: Ursache benennen und mit dem nächsten Lens weitermachen.
 - Schluss ist bei `kind: run_complete` oder wenn der `repolens.sh`-Prozess beendet ist — nicht früher.
 
@@ -32,18 +34,20 @@ Ein vollständiges Audit besteht aus vielen Handoffs. Das ist der Normalfall, ke
 Wird die Antwort abgelehnt, wiederholt RepoLens dieselbe Iteration. Deshalb:
 
 - Abschnitte `## Method` und `## Findings`
-- ≥ `REPOLENS_IDE_MIN_PATH_LINE_ANCHORS` (Default 2) verschiedene `path:line`-Anchors auf real existierende Dateien
-- ≥ `REPOLENS_IDE_MIN_RESPONSE_BYTES` (Default 400) Bytes Substanz
+- ≥ `REPOLENS_IDE_MIN_PATH_LINE_ANCHORS` (Default 2) verschiedene `path:line`-Anchors auf real existierende Dateien (keine Symlink-Komponenten; Zeile muss in der Datei existieren)
+- ≥ `REPOLENS_IDE_MIN_RESPONSE_BYTES` (Default 400) Bytes Substanz (nach Padding-Strip)
 - Keine Stub-Texte, kein Padding, keine Wiederholung der vorherigen Iteration
 - Pro Finding: Pfad, Severity, ein Satz Exploit, Fix
+- `DONE` ohne neue Findings braucht ≥3 verifizierte Anchors
 
 ## Nach `run_complete` — Auswertung und Plan
 
 1. Findings aus `files.findings_dir` und `files.summary` einlesen, nicht aus dem Chat-Verlauf rekonstruieren.
 2. In den **Plan-Modus** wechseln: Findings nach Severity ordnen, betroffene Pfade und Aufwand benennen, Reihenfolge der Fixes vorschlagen.
-3. Alles Uneindeutige als **interaktive Fragen** stellen (AskQuestion): Widersprüche zwischen Lenses, Optionen mit Trade-off, unklarer Scope, Security-Entscheidungen, alles Optionale.
+3. Offene Punkte als **Entscheidungsbaum** behandeln und mit Skill **`batch-grilling`** abfragen (Frontier-Runden): alle *jetzt* beantwortbaren Fragen in einer Runde (AskQuestion), warten, Frontier neu berechnen, nächste Runde. Nicht eine Frage nach der anderen, wenn >~3 unabhängige Entscheidungen offen sind. Fakten aus den Finding-Dateien / dem Repo nachschlagen — nicht den Nutzer fragen.
 4. **Antwort A bzw. 1 ist immer die Best-Practice-Empfehlung** — der übliche, verteidigbare Weg, nicht zwangsläufig die theoretisch beste Lösung. Im Label mit `(Empfohlen)` kennzeichnen, weitere Optionen danach.
-5. Erst nach den Antworten implementieren.
+5. Pro Runde höchstens ~8 Fragen (Severity/Security/Widersprüche zuerst); Rest in die nächste Runde.
+6. Erst wenn die Frontier leer ist und Verständnis bestätigt wurde, implementieren.
 
 ## Bei Stall
 

@@ -25,7 +25,7 @@ plus üblicherweise `REPOLENS_IDE_AUTONOMOUS=1` und `--yes`.
 
 ## Warum
 
-Andere Agenten brauchen externe Auth (`claude /login`, Codex-Keys, …) und umgehen das IDE-Handoff-Protokoll (`REPOLENS_CTL` → prompt/response/done). Das führt zu `agent-error` / „Not logged in“ und bricht den vorgesehenen Chat-Workflow.
+Andere Agenten brauchen externe Auth (`claude /login`, Codex-Keys, …) und umgehen das IDE-Handoff-Protokoll (`REPOLENS_CTL` → prompt/response/`complete.json`). Das führt zu `agent-error` / „Not logged in“ und bricht den vorgesehenen Chat-Workflow.
 
 ## Handoff
 

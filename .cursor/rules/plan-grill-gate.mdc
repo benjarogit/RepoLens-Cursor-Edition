@@ -9,7 +9,11 @@ alwaysApply: false
 
 When designing a plan (Plan mode or an explicit planning request):
 
-## Offer grilling when ANY of these hold
+## After a RepoLens audit (`run_complete`)
+
+Do **not** offer — **run** `batch-grilling` on the open finding decisions (frontier rounds, option A = Best Practice). That is the default wrap-up, not an optional design grill.
+
+## Offer one-at-a-time grilling when ANY of these hold (non-audit plans)
 
 - Multiple modules / libraries / workflows change
 - Irreversible choice (public API, data format, agent policy, release channel)
@@ -18,10 +22,12 @@ When designing a plan (Plan mode or an explicit planning request):
 
 Then: say you recommend `/grill-me` (or the `grilling` skill), ask one clarifying question if needed, and wait. Do not implement until they confirm the plan or decline grilling.
 
+If the non-audit plan already has **many independent** open decisions (>~3), prefer offering `/batch-grill-me` instead of one-at-a-time.
+
 ## Skip grilling when
 
 - Single-file / obvious bugfix
 - CI green-up, typo, or mechanical retarget
 - User already gave a locked decision and said to execute
 
-Do **not** auto-start a full grill on every plan — offer it, then proceed only after confirmation or an explicit “skip grill / just plan”.
+Do **not** auto-start a full one-at-a-time grill on every ordinary plan — offer it, then proceed only after confirmation or an explicit “skip grill / just plan”. Audit wrap-up is the exception (batch-grilling is mandatory).

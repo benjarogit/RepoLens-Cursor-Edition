@@ -67,11 +67,13 @@ Weitere Optionen vom Nutzer: `--domain`, `--focus`, `--human-review`, `--resume 
 
 Bei jedem `REPOLENS_CTL` mit `kind: ide_handoff`:
 
-1. `files.prompt` lesen
+1. `files.prompt` lesen (Pfad unter `cursor-ide/lens/<request-id>/`)
 2. Lens hier im Chat ausführen (Struktur-Bericht als Kontext)
 3. Volle Antwort → `files.response` (`## Method`, `## Findings`, ≥ 2 echte `path:line`-Anchors, ≥ 400 Bytes)
-4. `touch files.done`
+4. Atomar `files.complete` publizieren: `complete.json` mit `request_id` + `git hash-object` von `response.md` (Befehle im Prompt-Footer). **Kein** `touch done`.
 5. Sofort weiter zum nächsten Handoff
+
+Bei Reject nur `complete.json` neu schreiben (Response korrigieren). Resume vergibt eine neue `request_id`.
 
 Durchhalten bis `kind: run_complete`:
 
@@ -88,8 +90,8 @@ Stub nur für Demos: `REPOLENS_IDE_ALLOW_STUB=1`.
 
 1. Findings aus `$REPOLENS_ROOT/logs/<run-id>/issues/` bzw. `final/findings.jsonl` einlesen (mit `--human-review` zusätzlich `final/todo.md`, `needs_review.md`).
 2. In den **Plan-Modus** wechseln: Severity-Reihenfolge, betroffene Pfade, Aufwand, Fix-Reihenfolge.
-3. Widersprüche, Optionen, Security-Entscheidungen und alles Uneindeutige als **interaktive Fragen** stellen. **Antwort A/1 ist immer die Best-Practice-Empfehlung** (`(Empfohlen)` im Label) — der übliche Weg, nicht zwingend der theoretisch beste.
-4. Erst nach den Antworten implementieren.
+3. Skill **`batch-grilling`**: offene Punkte als Frontier-Runden abfragen (alle *jetzt* beantwortbaren Fragen auf einmal). **Antwort A/1 ist immer die Best-Practice-Empfehlung** (`(Empfohlen)` im Label) — der übliche Weg, nicht zwingend der theoretisch beste. Fakten aus den Finding-Dateien nachschlagen. Pro Runde ~8 Fragen; abhängige Entscheidungen erst in der nächsten Runde.
+4. Erst wenn die Frontier leer ist und Verständnis bestätigt wurde, implementieren.
 
 ## Nicht tun
 

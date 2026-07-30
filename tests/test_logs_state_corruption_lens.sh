@@ -254,6 +254,7 @@ chmod +x "$FAKE_BIN/claude"
 git init -q "$PROJECT_DIR"
 printf '2026-04-25T14:32:01Z assertion failed: refcount > 0 in src/cache.rs:142\n' > "$LOG_DIR/app.log"
 
+mkdir -p "$SCRIPT_DIR/logs/$RUN_ID"
 focus_output="$(PATH="$FAKE_BIN:$PATH" bash "$SCRIPT_DIR/repolens.sh" \
   --project "$PROJECT_DIR" \
   --agent claude \

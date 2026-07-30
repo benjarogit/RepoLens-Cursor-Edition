@@ -301,6 +301,7 @@ chmod +x "$FAKE_BIN/claude"
 git init -q "$PROJECT_DIR"
 printf '2026-01-01T00:00:00Z order_id=42 status=pending\n2026-01-01T00:00:01Z order_id=42 status=completed\n' > "$LOG_DIR/app.log"
 
+mkdir -p "$SCRIPT_DIR/logs/$RUN_ID"
 focus_output="$(PATH="$FAKE_BIN:$PATH" bash "$SCRIPT_DIR/repolens.sh" \
   --project "$PROJECT_DIR" \
   --agent claude \

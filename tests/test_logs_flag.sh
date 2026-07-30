@@ -99,6 +99,9 @@ printf 'started\n' > "$LOG_FILE"
 run_repolens() {
   local run_id="$1"
   shift
+  # Multi-file resume hardening requires a real logs/<run-id> directory
+  # (symlink escapes are rejected). Tests pin the run id via --resume.
+  mkdir -p "$SCRIPT_DIR/logs/$run_id"
   PATH="$FAKE_BIN:$PATH" bash "$SCRIPT_DIR/repolens.sh" \
     --project "$PROJECT_DIR" \
     --agent claude \
@@ -119,6 +122,7 @@ assert_contains "help includes logs domain example" "--domain logs" "$help_outpu
 
 echo ""
 echo "Test 2: Missing --logs argument fails with specific message"
+mkdir -p "$SCRIPT_DIR/logs/${RUN_PREFIX}-missing-arg"
 missing_arg_output="$(PATH="$FAKE_BIN:$PATH" bash "$SCRIPT_DIR/repolens.sh" \
   --project "$PROJECT_DIR" \
   --agent claude \

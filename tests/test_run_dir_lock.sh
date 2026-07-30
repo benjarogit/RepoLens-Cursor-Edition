@@ -82,6 +82,7 @@ kill_run_group_now() {
 
 run_repolens_foreground() {
   local run_id="$1" out_file="$2" mode="${3:-quick}" ready_file="${4:-}" fd_report="${5:-}"
+  mkdir -p "$STATUS_TEST_ROOT/logs/$run_id"
   env \
     PATH="$FAKE_BIN:$PATH" \
     REPOLENS_TEST_CODEX_MODE="$mode" \
@@ -104,6 +105,7 @@ run_repolens_foreground() {
 
 start_repolens_background() {
   local run_id="$1" out_file="$2" ready_file="$3" fd_report="${4:-}"
+  mkdir -p "$STATUS_TEST_ROOT/logs/$run_id"
   setsid env \
     PATH="$FAKE_BIN:$PATH" \
     REPOLENS_TEST_CODEX_MODE=sleep \
